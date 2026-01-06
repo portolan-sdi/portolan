@@ -1,2 +1,7 @@
-# cerulio
-Tools for Cloud-Native Geospatial Spatial Data Infrastructure
+# Cerulio
+
+The goal of Cerulio is to enable organizations to easily share open data in an low-cost, accessible, soveriegn, reliable and user-friendly manner. We are focused on enabling governments, but any organization that wants to share data with the world (or even internally) will benefit from the tools and standards Cerulio provides. The effort is run as a collaborative open source project - not controlled by any organization and with open decision-making from the start.
+
+The core of Cerulio is the [cloud native geospatial](https://cloudnativegeo.org) formats, can be hosted on any cloud (or any server that supports range requests). The formats scale incredibly well, and are cheaper than almost any option, as the only costs are for storage and ‘egress’. A small government with mostly vector data will pay just a few dollars a month, and even a full set of imagery and point clouds will likely be less than $50 a month. Organizations like [Source Cooperative](https://source.coop) currently provide free hosting for open data, and Cerulio runs easily on those. 
+
+Cerulio brings together a number of open source projects to make it easier to get data into those formats, and to make the data that is in those formats more friendly and accessible to all. A Cerulio node is a set of open geospatial data that as interactive as any geospatial ‘portal’, but is faster, more reliable, more scalable and much cheaper to run. Our goal is to enable thousands of Cerulio nodes, and make geospatial information truly accessible. Leveraging standard, accessible formats also enables AI to much more easily take advantage of the information, so Cerulio nodes become part of the broader data infrastructure with ease.
