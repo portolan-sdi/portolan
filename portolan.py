@@ -896,6 +896,319 @@ def web_deploy(ctx, remote: str | None):
     click.echo(f"  Private catalogs: {private_count}")
 
 
+# ============== IMPORT ==============
+
+@cli.group(name="import")
+def import_cmd():
+    """Import datasets from external catalogs."""
+    pass
+
+
+def fetch_json(url: str) -> dict:
+    """Fetch JSON from a URL."""
+    import httpx
+
+    response = httpx.get(url, follow_redirects=True, timeout=30)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_stac_links(stac_obj: dict, rel: str) -> list[dict]:
+    """Get links with a specific rel from a STAC object."""
+    return [link for link in stac_obj.get("links", []) if link.get("rel") == rel]
+
+
+def resolve_url(base_url: str, href: str) -> str:
+    """Resolve a relative URL against a base URL."""
+    from urllib.parse import urljoin
+    return urljoin(base_url, href)
+
+
+def extract_asset_format(asset: dict) -> str:
+    """Determine the format of a STAC asset."""
+    media_type = asset.get("type", "")
+    href = asset.get("href", "").lower()
+
+    # Check media type first
+    if "geotiff" in media_type or "tiff" in media_type:
+        return "cog"
+    if "geoparquet" in media_type or "parquet" in media_type:
+        return "geoparquet"
+    if "zarr" in media_type:
+        return "zarr"
+    if "pmtiles" in media_type:
+        return "pmtiles"
+    if "json" in media_type and "3dtiles" in href:
+        return "3dtiles"
+    if "las" in media_type or "copc" in media_type:
+        return "copc"
+
+    # Fall back to extension
+    if href.endswith(".tif") or href.endswith(".tiff"):
+        return "cog"
+    if href.endswith(".parquet") or href.endswith(".geoparquet"):
+        return "geoparquet"
+    if href.endswith(".zarr") or "zarr" in href:
+        return "zarr"
+    if href.endswith(".pmtiles"):
+        return "pmtiles"
+    if href.endswith(".copc.laz"):
+        return "copc"
+
+    return "unknown"
+
+
+def stac_item_to_resource(item: dict, item_url: str) -> dict:
+    """Convert a STAC item to a Portolan resource entry."""
+    # Extract bbox
+    bbox = item.get("bbox", [])
+    spatial_extent = None
+    if len(bbox) >= 4:
+        spatial_extent = {
+            "west": bbox[0],
+            "south": bbox[1],
+            "east": bbox[2],
+            "north": bbox[3],
+        }
+
+    # Extract temporal
+    properties = item.get("properties", {})
+    datetime_str = properties.get("datetime")
+    start_datetime = properties.get("start_datetime")
+    end_datetime = properties.get("end_datetime")
+
+    temporal_extent = None
+    if start_datetime and end_datetime:
+        temporal_extent = {"start": start_datetime, "end": end_datetime}
+    elif datetime_str:
+        temporal_extent = {"start": datetime_str, "end": datetime_str}
+
+    # Find the primary asset (prefer data assets, then the first one)
+    assets = item.get("assets", {})
+    primary_asset = None
+    primary_asset_key = None
+
+    # Priority order for asset keys
+    priority_keys = ["data", "visual", "image", "default", "asset"]
+    for key in priority_keys:
+        if key in assets:
+            primary_asset = assets[key]
+            primary_asset_key = key
+            break
+
+    # Fall back to first asset
+    if not primary_asset and assets:
+        primary_asset_key = next(iter(assets))
+        primary_asset = assets[primary_asset_key]
+
+    if not primary_asset:
+        return None
+
+    asset_format = extract_asset_format(primary_asset)
+
+    return {
+        "name": item.get("id", "unknown"),
+        "type": "external",
+        "format": asset_format,
+        "origin": primary_asset.get("href"),
+        "title": properties.get("title") or item.get("id"),
+        "abstract": properties.get("description", ""),
+        "spatial_extent": spatial_extent,
+        "temporal_extent": temporal_extent,
+        "crs": "EPSG:4326",  # STAC items are typically in WGS84
+        "stac_item_url": item_url,
+        "stac_collection": item.get("collection"),
+        "assets": {k: {"href": v.get("href"), "type": v.get("type")} for k, v in assets.items()},
+        "properties": properties,
+    }
+
+
+@import_cmd.command("stac")
+@click.argument("url")
+@click.option("--namespace", "-n", default="stac", help="Namespace for imported items")
+@click.option("--max-items", type=int, default=100, help="Maximum items to import (0 = all)")
+@click.option("--collections", "-c", multiple=True, help="Only import specific collections")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--dry-run", is_flag=True, help="Show what would be imported without saving")
+@click.pass_context
+def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tuple, verbose: bool, dry_run: bool):
+    """Import datasets from a STAC catalog.
+
+    Crawls a STAC catalog and registers items as external resources.
+    Supports STAC Catalogs, Collections, and Items.
+
+    \b
+    Examples:
+        portolan import stac https://earth-search.aws.element84.com/v1
+        portolan import stac https://example.com/stac/catalog.json --max-items 50
+        portolan import stac https://example.com/stac/catalog.json -c sentinel-2
+    """
+    catalog = get_catalog(ctx)
+
+    click.echo(f"Fetching STAC catalog from {url}...")
+
+    try:
+        root = fetch_json(url)
+    except Exception as e:
+        raise click.ClickException(f"Failed to fetch STAC catalog: {e}")
+
+    stac_type = root.get("type", "Catalog")
+    click.echo(f"Found STAC {stac_type}: {root.get('title', root.get('id', 'Unknown'))}")
+
+    # Collect items to import
+    items_to_import = []
+    collections_found = set()
+
+    def process_item(item: dict, item_url: str):
+        """Process a single STAC item."""
+        resource = stac_item_to_resource(item, item_url)
+        if resource:
+            items_to_import.append(resource)
+            if verbose:
+                click.echo(f"  Found item: {resource['name']} ({resource['format']})")
+
+    def crawl_catalog(catalog_url: str, catalog_obj: dict, depth: int = 0):
+        """Recursively crawl a STAC catalog."""
+        if max_items > 0 and len(items_to_import) >= max_items:
+            return
+
+        indent = "  " * depth
+
+        # Process child catalogs
+        child_links = get_stac_links(catalog_obj, "child")
+        for link in child_links:
+            if max_items > 0 and len(items_to_import) >= max_items:
+                break
+
+            child_url = resolve_url(catalog_url, link["href"])
+
+            try:
+                child = fetch_json(child_url)
+                child_type = child.get("type", "Catalog")
+                child_id = child.get("id", "unknown")
+
+                # Check collection filter
+                if collections and child_type == "Collection" and child_id not in collections:
+                    if verbose:
+                        click.echo(f"{indent}Skipping collection: {child_id}")
+                    continue
+
+                if child_type == "Collection":
+                    collections_found.add(child_id)
+
+                if verbose:
+                    click.echo(f"{indent}Crawling {child_type}: {child.get('title', child_id)}")
+
+                crawl_catalog(child_url, child, depth + 1)
+
+            except Exception as e:
+                if verbose:
+                    click.echo(f"{indent}Error fetching {child_url}: {e}", err=True)
+
+        # Process items in this catalog/collection
+        item_links = get_stac_links(catalog_obj, "item")
+        for link in item_links:
+            if max_items > 0 and len(items_to_import) >= max_items:
+                break
+
+            item_url = resolve_url(catalog_url, link["href"])
+
+            try:
+                item = fetch_json(item_url)
+                process_item(item, item_url)
+            except Exception as e:
+                if verbose:
+                    click.echo(f"{indent}Error fetching item {item_url}: {e}", err=True)
+
+        # Check for items link (STAC API style)
+        items_links = get_stac_links(catalog_obj, "items")
+        for link in items_links:
+            if max_items > 0 and len(items_to_import) >= max_items:
+                break
+
+            items_url = resolve_url(catalog_url, link["href"])
+
+            try:
+                items_response = fetch_json(items_url)
+                features = items_response.get("features", [])
+
+                for item in features:
+                    if max_items > 0 and len(items_to_import) >= max_items:
+                        break
+                    process_item(item, items_url)
+
+            except Exception as e:
+                if verbose:
+                    click.echo(f"{indent}Error fetching items {items_url}: {e}", err=True)
+
+    # Start crawling
+    with click.progressbar(length=max_items or 100, label="Crawling catalog") as bar:
+        crawl_catalog(url, root)
+        bar.update(len(items_to_import))
+
+    click.echo(f"\nFound {len(items_to_import)} items from {len(collections_found)} collections")
+
+    if not items_to_import:
+        click.echo("No items found to import.")
+        return
+
+    # Show format breakdown
+    format_counts = {}
+    for item in items_to_import:
+        fmt = item.get("format", "unknown")
+        format_counts[fmt] = format_counts.get(fmt, 0) + 1
+
+    click.echo("\nFormats:")
+    for fmt, count in sorted(format_counts.items()):
+        click.echo(f"  {fmt}: {count}")
+
+    if dry_run:
+        click.echo("\nDry run - would import:")
+        for item in items_to_import[:10]:
+            click.echo(f"  {item['name']} ({item['format']}): {item.get('origin', 'N/A')[:60]}...")
+        if len(items_to_import) > 10:
+            click.echo(f"  ... and {len(items_to_import) - 10} more")
+        return
+
+    # Save resources to catalog
+    click.echo(f"\nSaving to namespace '{namespace}'...")
+
+    resources_dir = catalog.path / "resources" / namespace
+    resources_dir.mkdir(parents=True, exist_ok=True)
+
+    # Save each resource as JSON
+    saved = 0
+    for item in items_to_import:
+        resource_file = resources_dir / f"{item['name']}.json"
+
+        # Add timestamps
+        item["created_at"] = datetime.now(timezone.utc).isoformat()
+        item["updated_at"] = item["created_at"]
+
+        with open(resource_file, "w") as f:
+            json.dump(item, f, indent=2)
+        saved += 1
+
+    # Save a summary/index file
+    index = {
+        "namespace": namespace,
+        "source": url,
+        "source_type": "stac",
+        "imported_at": datetime.now(timezone.utc).isoformat(),
+        "total_items": len(items_to_import),
+        "collections": list(collections_found),
+        "formats": format_counts,
+    }
+
+    with open(resources_dir / "_index.json", "w") as f:
+        json.dump(index, f, indent=2)
+
+    click.echo()
+    click.echo(click.style(f"Imported {saved} resources!", fg="green"))
+    click.echo(f"  Location: {resources_dir}")
+    click.echo(f"\nRun 'portolan sync' to push to remote storage.")
+
+
 # ============== MAIN ==============
 
 def main():
