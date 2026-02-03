@@ -11,7 +11,7 @@
 | **AI-Ready** | Rich semantics via STAC, ISO 19115, and [Open Semantic Interchange](https://opensemanticinterchange.org/) make data discoverable by humans and machines |
 | **Cheap** | Only pay for storage and egress—no servers to run, a few dollars/month for most catalogs |
 | **Sovereign** | Host anywhere (any cloud, on-prem, air-gapped), use any query engine you choose |
-| **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Spark, Trino, and other non-GIS tools just work |
+| **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Snowflake, BigQuery, Databricks, Oracle, Trino, and other non-GIS tools just work |
 
 Portolan is a collaborative open source project—not controlled by any organization and with open decision-making from the start. Organizations like [Source Cooperative](https://source.coop) provide free hosting for open data, and Portolan runs seamlessly on those.
 
@@ -95,7 +95,7 @@ Portolan creates a **static Iceberg REST catalog** that can be hosted on any clo
 - **Local-first workflow**: Work locally, sync to remote when ready
 - **Pluggable storage**: AWS S3, Google Cloud Storage, Azure Blob, or local filesystem
 - **Standard formats**: Uses [GeoParquet](https://geoparquet.org/) for vectors and [Raquet](https://github.com/geoparquet/raquet) for rasters
-- **Iceberg metadata**: Full compatibility with Iceberg-aware tools like DuckDB, Spark, and Trino
+- **Iceberg metadata**: Full compatibility with Iceberg-aware tools like DuckDB, Snowflake, BigQuery, Databricks, Oracle, and Trino
 - **STAC + ISO 19115**: Metadata tables include both STAC and ISO 19115 fields for SDI compliance
 
 ### Supported Storage Backends
