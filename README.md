@@ -8,7 +8,7 @@
 |---------|-----|
 | **Scalable** | Built on cloud object storage that scales to petabytes |
 | **Open** | 100% open source using open formats (GeoParquet, Raquet, Iceberg) |
-| **AI-Ready** | Rich semantics via STAC + ISO 19115 metadata make data discoverable by humans and machines |
+| **AI-Ready** | Rich semantics via STAC, ISO 19115, and [Open Semantic Interchange](https://opensemanticinterchange.org/) make data discoverable by humans and machines |
 | **Cheap** | Only pay for storage and egress—no servers to run, a few dollars/month for most catalogs |
 | **Sovereign** | Host anywhere (any cloud, on-prem, air-gapped), use any query engine you choose |
 | **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Spark, Trino, and other non-GIS tools just work |
