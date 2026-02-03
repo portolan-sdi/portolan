@@ -1,23 +1,24 @@
 [project]
 name = "portolan"
-version = "0.1.0"
+version = "0.2.0"
 description = "Geospatial data infrastructure tools for sharing open data using cloud-native formats"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "click>=8.0",
     "fastavro>=1.12.1",
     "geopandas>=1.1.2",
-    "geoparquet-io",
     "httpx>=0.25.0",
+    "obstore>=0.3.0",
     "pyarrow>=14.0.0",
     "pyiceberg>=0.10.0",
 ]
 
-# Note: geoparquet-io with `gpio extract arcgis` command required
-# For development, install from local:
-#   uv add /path/to/geoparquet-io
-# Once released to PyPI with arcgis support:
-#   uv add geoparquet-io
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "ruff>=0.1.0",
+]
 
 [project.scripts]
 portolan = "portolan:main"
@@ -36,7 +37,3 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "C4", "UP"]
-
-# [tool.uv.sources]
-# For local development with geoparquet-io:
-# geoparquet-io = { path = "../geoparquet-io" }

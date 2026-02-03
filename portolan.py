@@ -1,149 +1,461 @@
 #!/usr/bin/env python3
 """
-Portolan CLI - Manage datasets, users, and access for geospatial data infrastructure.
+Portolan CLI - Manage geospatial data infrastructure with cloud-native formats.
 
-This CLI manages:
-- Datasets: Add raquet/parquet files to the catalog
-- Users: Create MinIO users with scoped access
-- Policies: Grant/revoke access to datasets
+Local-first workflow:
+    portolan init [path]                    # Initialize a local catalog
+    portolan dataset add <file> [options]   # Add dataset to local catalog
+    portolan dataset list                   # List local datasets
+    portolan sync                           # Sync local catalog to remote storage
 
-Usage:
-    portolan init                           # Initialize MinIO connection
-    portolan dataset add <file> [options]   # Add a dataset
-    portolan dataset list                   # List datasets
-    portolan user add <name>                # Create a user
-    portolan user list                      # List users
-    portolan access grant <user> <dataset>  # Grant access
-    portolan access revoke <user> <dataset> # Revoke access
+Remote configuration:
+    portolan remote add <name> <url>        # Add a remote storage backend
+    portolan remote list                    # List configured remotes
+    portolan remote remove <name>           # Remove a remote
+
+Supported storage backends (via obstore):
+    - s3://bucket/path          (AWS S3)
+    - gs://bucket/path          (Google Cloud Storage)
+    - az://container/path       (Azure Blob Storage)
+    - file:///local/path        (Local filesystem)
+    - memory://                 (In-memory, for testing)
 """
 
 from __future__ import annotations
 
-import argparse
 import json
-import os
-import subprocess
+import shutil
 import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from dataclasses import dataclass, asdict
 from typing import Optional
 
-# Config file location
-CONFIG_DIR = Path.home() / ".portolan"
-CONFIG_FILE = CONFIG_DIR / "config.json"
+import click
+
+# ============== CONFIGURATION ==============
+
+DEFAULT_CATALOG_DIR = Path.cwd() / ".portolan"
+GLOBAL_CONFIG_DIR = Path.home() / ".portolan"
+GLOBAL_CONFIG_FILE = GLOBAL_CONFIG_DIR / "config.json"
 
 
 @dataclass
-class PortolanConfig:
-    """Portolan configuration."""
-    endpoint: str = "127.0.0.1:9000"
-    access_key: str = "minioadmin"
-    secret_key: str = "minioadmin123"
-    bucket: str = "warehouse"
-    use_ssl: bool = False
-    mc_alias: str = "portolan"
+class RemoteConfig:
+    """Configuration for a remote storage backend."""
+    name: str
+    url: str  # e.g., s3://bucket/path, gs://bucket/path, file:///path
+    options: dict = field(default_factory=dict)  # Backend-specific options (credentials, region, etc.)
+
+    def to_dict(self) -> dict:
+        return {"name": self.name, "url": self.url, "options": self.options}
 
     @classmethod
-    def load(cls) -> "PortolanConfig":
-        """Load config from file or return defaults."""
-        if CONFIG_FILE.exists():
-            with open(CONFIG_FILE) as f:
-                data = json.load(f)
-                return cls(**data)
-        return cls()
+    def from_dict(cls, data: dict) -> "RemoteConfig":
+        return cls(name=data["name"], url=data["url"], options=data.get("options", {}))
+
+
+@dataclass
+class CatalogConfig:
+    """Configuration for a Portolan catalog."""
+    path: Path
+    default_remote: Optional[str] = None
+    remotes: dict[str, RemoteConfig] = field(default_factory=dict)
+
+    @property
+    def config_file(self) -> Path:
+        return self.path / "config.json"
+
+    @property
+    def data_dir(self) -> Path:
+        return self.path / "data"
+
+    @property
+    def metadata_dir(self) -> Path:
+        return self.path / "v1"
 
     def save(self):
-        """Save config to file."""
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(CONFIG_FILE, "w") as f:
-            json.dump(asdict(self), f, indent=2)
-        print(f"Config saved to {CONFIG_FILE}")
+        """Save catalog configuration."""
+        self.path.mkdir(parents=True, exist_ok=True)
+        data = {
+            "default_remote": self.default_remote,
+            "remotes": {name: r.to_dict() for name, r in self.remotes.items()},
+        }
+        with open(self.config_file, "w") as f:
+            json.dump(data, f, indent=2)
+
+    @classmethod
+    def load(cls, path: Path) -> "CatalogConfig":
+        """Load catalog configuration from path."""
+        config_file = path / "config.json"
+        if config_file.exists():
+            with open(config_file) as f:
+                data = json.load(f)
+            remotes = {
+                name: RemoteConfig.from_dict(r)
+                for name, r in data.get("remotes", {}).items()
+            }
+            return cls(
+                path=path,
+                default_remote=data.get("default_remote"),
+                remotes=remotes,
+            )
+        return cls(path=path)
+
+    def add_remote(self, name: str, url: str, options: dict | None = None, set_default: bool = False):
+        """Add a remote storage backend."""
+        self.remotes[name] = RemoteConfig(name=name, url=url, options=options or {})
+        if set_default or not self.default_remote:
+            self.default_remote = name
+        self.save()
+
+    def remove_remote(self, name: str):
+        """Remove a remote storage backend."""
+        if name in self.remotes:
+            del self.remotes[name]
+            if self.default_remote == name:
+                self.default_remote = next(iter(self.remotes), None)
+            self.save()
 
 
-def run_mc(args: list[str], config: PortolanConfig, capture: bool = False) -> subprocess.CompletedProcess:
-    """Run mc (MinIO client) command."""
-    cmd = ["mc"] + args
-    if capture:
-        return subprocess.run(cmd, capture_output=True, text=True)
-    return subprocess.run(cmd)
+def find_catalog(start_path: Path | None = None) -> CatalogConfig | None:
+    """Find the nearest Portolan catalog by walking up the directory tree."""
+    if start_path is None:
+        start_path = Path.cwd()
+
+    current = start_path.resolve()
+    while current != current.parent:
+        catalog_dir = current / ".portolan"
+        if catalog_dir.is_dir() and (catalog_dir / "config.json").exists():
+            return CatalogConfig.load(catalog_dir)
+        current = current.parent
+
+    # Check if .portolan exists in cwd even without config
+    default_dir = start_path / ".portolan"
+    if default_dir.is_dir():
+        return CatalogConfig.load(default_dir)
+
+    return None
 
 
-def ensure_mc_alias(config: PortolanConfig):
-    """Ensure mc alias is configured."""
-    protocol = "https" if config.use_ssl else "http"
-    url = f"{protocol}://{config.endpoint}"
-    run_mc([
-        "alias", "set", config.mc_alias, url,
-        config.access_key, config.secret_key
-    ], config)
+def get_catalog(ctx: click.Context) -> CatalogConfig:
+    """Get the current catalog, raising an error if not found."""
+    catalog = find_catalog()
+    if catalog is None:
+        raise click.ClickException(
+            "No Portolan catalog found. Run 'portolan init' to create one."
+        )
+    return catalog
+
+
+# ============== STORAGE ABSTRACTION (obstore) ==============
+
+def get_store(url: str, options: dict | None = None):
+    """Get an obstore store for the given URL."""
+    import obstore
+    from obstore.store import S3Store, GCSStore, AzureStore, LocalStore, MemoryStore
+
+    options = options or {}
+
+    if url.startswith("s3://"):
+        # Parse s3://bucket/path
+        parts = url[5:].split("/", 1)
+        bucket = parts[0]
+        prefix = parts[1] if len(parts) > 1 else ""
+
+        store_options = {
+            "bucket": bucket,
+            "region": options.get("region", "us-east-1"),
+            "skip_signature": options.get("anonymous", False),
+        }
+
+        # Add credentials if provided
+        if "access_key_id" in options:
+            store_options["access_key_id"] = options["access_key_id"]
+        if "secret_access_key" in options:
+            store_options["secret_access_key"] = options["secret_access_key"]
+        if "endpoint" in options:
+            store_options["endpoint"] = options["endpoint"]
+
+        return S3Store(**store_options), prefix
+
+    elif url.startswith("gs://"):
+        parts = url[5:].split("/", 1)
+        bucket = parts[0]
+        prefix = parts[1] if len(parts) > 1 else ""
+        return GCSStore(bucket=bucket), prefix
+
+    elif url.startswith("az://"):
+        parts = url[5:].split("/", 1)
+        container = parts[0]
+        prefix = parts[1] if len(parts) > 1 else ""
+        account = options.get("account_name", "")
+        return AzureStore(container=container, account=account), prefix
+
+    elif url.startswith("file://"):
+        path = url[7:]
+        return LocalStore(prefix=path), ""
+
+    elif url.startswith("memory://"):
+        return MemoryStore(), ""
+
+    else:
+        raise ValueError(f"Unsupported storage URL: {url}")
+
+
+async def upload_directory(store, prefix: str, local_dir: Path, verbose: bool = False):
+    """Upload a local directory to remote storage."""
+    import obstore
+
+    for local_path in local_dir.rglob("*"):
+        if local_path.is_file():
+            relative = local_path.relative_to(local_dir)
+            remote_path = f"{prefix}/{relative}" if prefix else str(relative)
+
+            if verbose:
+                click.echo(f"  Uploading {relative}...")
+
+            with open(local_path, "rb") as f:
+                data = f.read()
+
+            await obstore.put_async(store, remote_path, data)
+
+
+async def list_remote_files(store, prefix: str, pattern: str = "") -> list[str]:
+    """List files in remote storage."""
+    import obstore
+
+    results = []
+    async for item in obstore.list(store, prefix=prefix):
+        path = item["path"]
+        if not pattern or pattern in path:
+            results.append(path)
+    return results
+
+
+# ============== CLI ==============
+
+@click.group()
+@click.version_option(version="0.2.0")
+@click.pass_context
+def cli(ctx):
+    """Portolan - Geospatial data infrastructure with cloud-native formats.
+
+    Local-first workflow: add datasets locally, then sync to remote storage.
+
+    \b
+    Quick start:
+        portolan init                    # Create a catalog
+        portolan dataset add data.parquet --public
+        portolan sync                    # Push to remote
+    """
+    ctx.ensure_object(dict)
 
 
 # ============== INIT ==============
 
-def cmd_init(args, config: PortolanConfig):
-    """Initialize Portolan configuration."""
-    print("Portolan Configuration")
-    print("=" * 40)
+@cli.command()
+@click.argument("path", type=click.Path(), default=".", required=False)
+@click.option("--remote", "-r", help="Remote storage URL (e.g., s3://bucket/path)")
+@click.option("--name", "-n", default="origin", help="Name for the remote (default: origin)")
+def init(path: str, remote: str | None, name: str):
+    """Initialize a new Portolan catalog.
 
-    # Prompt for values with defaults
-    config.endpoint = input(f"MinIO endpoint [{config.endpoint}]: ").strip() or config.endpoint
-    config.access_key = input(f"Access key [{config.access_key}]: ").strip() or config.access_key
-    config.secret_key = input(f"Secret key [{config.secret_key}]: ").strip() or config.secret_key
-    config.bucket = input(f"Bucket [{config.bucket}]: ").strip() or config.bucket
-    use_ssl_input = input(f"Use SSL? [{'y' if config.use_ssl else 'n'}]: ").strip().lower()
-    if use_ssl_input:
-        config.use_ssl = use_ssl_input in ('y', 'yes', 'true', '1')
+    Creates a .portolan directory in the specified PATH (default: current directory).
 
-    config.save()
+    \b
+    Examples:
+        portolan init                           # Initialize in current directory
+        portolan init ./my-catalog              # Initialize in specific directory
+        portolan init -r s3://my-bucket/data    # Initialize with S3 remote
+        portolan init -r gs://my-bucket         # Initialize with GCS remote
+    """
+    catalog_path = Path(path).resolve() / ".portolan"
 
-    # Configure mc alias
-    ensure_mc_alias(config)
+    if catalog_path.exists():
+        click.echo(f"Catalog already exists at {catalog_path}")
+        return
 
-    # Ensure bucket exists
-    result = run_mc(["ls", f"{config.mc_alias}/{config.bucket}"], config, capture=True)
-    if result.returncode != 0:
-        print(f"Creating bucket: {config.bucket}")
-        run_mc(["mb", f"{config.mc_alias}/{config.bucket}"], config)
+    # Create catalog structure
+    catalog = CatalogConfig(path=catalog_path)
+    catalog.path.mkdir(parents=True, exist_ok=True)
+    catalog.data_dir.mkdir(exist_ok=True)
+    catalog.metadata_dir.mkdir(exist_ok=True)
 
-    # Create public prefix with anonymous access
-    run_mc(["anonymous", "set", "download", f"{config.mc_alias}/{config.bucket}/public"], config)
+    # Add remote if provided
+    if remote:
+        catalog.add_remote(name, remote, set_default=True)
+        click.echo(f"Added remote '{name}': {remote}")
 
-    print("\nPortolan initialized successfully!")
-    print(f"  Endpoint: {config.endpoint}")
-    print(f"  Bucket: {config.bucket}")
-    print(f"  Public prefix: s3://{config.bucket}/public/")
-    print(f"  Private prefix: s3://{config.bucket}/private/")
+    catalog.save()
+
+    click.echo(f"Initialized Portolan catalog at {catalog_path}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo("  portolan dataset add <file.parquet> --public")
+    if not remote:
+        click.echo("  portolan remote add origin s3://your-bucket/path")
+    click.echo("  portolan sync")
+
+
+# ============== REMOTE ==============
+
+@cli.group()
+def remote():
+    """Manage remote storage backends."""
+    pass
+
+
+@remote.command("add")
+@click.argument("name")
+@click.argument("url")
+@click.option("--access-key", envvar="AWS_ACCESS_KEY_ID", help="Access key for S3-compatible storage")
+@click.option("--secret-key", envvar="AWS_SECRET_ACCESS_KEY", help="Secret key for S3-compatible storage")
+@click.option("--endpoint", help="Custom endpoint URL (for MinIO, etc.)")
+@click.option("--region", default="us-east-1", help="AWS region (default: us-east-1)")
+@click.option("--anonymous", is_flag=True, help="Use anonymous access (no credentials)")
+@click.option("--default", "set_default", is_flag=True, help="Set as default remote")
+@click.pass_context
+def remote_add(ctx, name: str, url: str, access_key: str | None, secret_key: str | None,
+               endpoint: str | None, region: str, anonymous: bool, set_default: bool):
+    """Add a remote storage backend.
+
+    \b
+    Supported URL formats:
+        s3://bucket/path          AWS S3 or S3-compatible (MinIO, etc.)
+        gs://bucket/path          Google Cloud Storage
+        az://container/path       Azure Blob Storage
+        file:///local/path        Local filesystem
+
+    \b
+    Examples:
+        portolan remote add origin s3://my-bucket/portolan
+        portolan remote add minio s3://warehouse --endpoint http://localhost:9000
+        portolan remote add gcs gs://my-bucket/data
+        portolan remote add local file:///var/data/portolan
+    """
+    catalog = get_catalog(ctx)
+
+    options = {"region": region}
+    if access_key:
+        options["access_key_id"] = access_key
+    if secret_key:
+        options["secret_access_key"] = secret_key
+    if endpoint:
+        options["endpoint"] = endpoint
+    if anonymous:
+        options["anonymous"] = True
+
+    catalog.add_remote(name, url, options, set_default=set_default)
+    click.echo(f"Added remote '{name}': {url}")
+
+    if set_default or catalog.default_remote == name:
+        click.echo(f"Set '{name}' as default remote")
+
+
+@remote.command("list")
+@click.pass_context
+def remote_list(ctx):
+    """List configured remote storage backends."""
+    catalog = get_catalog(ctx)
+
+    if not catalog.remotes:
+        click.echo("No remotes configured. Add one with:")
+        click.echo("  portolan remote add origin s3://your-bucket/path")
+        return
+
+    for name, remote in catalog.remotes.items():
+        default_marker = " (default)" if name == catalog.default_remote else ""
+        click.echo(f"  {name}: {remote.url}{default_marker}")
+
+
+@remote.command("remove")
+@click.argument("name")
+@click.pass_context
+def remote_remove(ctx, name: str):
+    """Remove a remote storage backend."""
+    catalog = get_catalog(ctx)
+
+    if name not in catalog.remotes:
+        raise click.ClickException(f"Remote '{name}' not found")
+
+    catalog.remove_remote(name)
+    click.echo(f"Removed remote '{name}'")
+
+
+@remote.command("set-default")
+@click.argument("name")
+@click.pass_context
+def remote_set_default(ctx, name: str):
+    """Set the default remote for sync operations."""
+    catalog = get_catalog(ctx)
+
+    if name not in catalog.remotes:
+        raise click.ClickException(f"Remote '{name}' not found")
+
+    catalog.default_remote = name
+    catalog.save()
+    click.echo(f"Set '{name}' as default remote")
 
 
 # ============== DATASET ==============
 
-def cmd_dataset_add(args, config: PortolanConfig):
-    """Add a dataset to the catalog."""
+@cli.group()
+def dataset():
+    """Manage datasets in the catalog."""
+    pass
+
+
+@dataset.command("add")
+@click.argument("file", type=click.Path(exists=True))
+@click.option("--id", "dataset_id", help="Dataset ID (default: filename)")
+@click.option("--title", help="Dataset title")
+@click.option("--description", help="Dataset description")
+@click.option("--collection", "-c", default="datasets", help="Collection name")
+@click.option("--public", "is_public", is_flag=True, help="Make dataset publicly accessible")
+@click.option("--tenant", "-t", default="default", help="Tenant (for private datasets)")
+@click.option("--topic", default="imageryBaseMapsEarthCover", help="ISO topic category")
+@click.option("--license", "license_", default="CC-BY-4.0", help="License")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def dataset_add(ctx, file: str, dataset_id: str | None, title: str | None,
+                description: str | None, collection: str, is_public: bool,
+                tenant: str, topic: str, license_: str, verbose: bool):
+    """Add a dataset to the local catalog.
+
+    Supports GeoParquet (vector) and Raquet (raster) files.
+    The dataset is added locally - use 'portolan sync' to push to remote.
+
+    \b
+    Examples:
+        portolan dataset add countries.parquet --public --title "World Countries"
+        portolan dataset add imagery.parquet -c imagery --tenant acme
+    """
     from iceberg_catalog import generate_sdi_catalog, extract_parquet_metadata
 
-    file_path = Path(args.file)
-    if not file_path.exists():
-        print(f"Error: File not found: {file_path}", file=sys.stderr)
-        return 1
+    catalog = get_catalog(ctx)
+    file_path = Path(file).resolve()
+
+    # Determine dataset ID
+    if dataset_id is None:
+        dataset_id = file_path.stem
+
+    # Sanitize dataset ID
+    dataset_id = dataset_id.lower().replace(" ", "_").replace("-", "_")
+    dataset_id = "".join(c for c in dataset_id if c.isalnum() or c == "_")
 
     # Determine visibility and path
-    visibility = "public" if args.public else "private"
-    tenant = args.tenant or "default"
-    collection = args.collection or "datasets"
-    dataset_id = args.id or file_path.stem
-
+    visibility = "public" if is_public else "private"
     if visibility == "public":
         base_path = f"public/{collection}"
     else:
         base_path = f"private/{tenant}/{collection}"
 
-    base_url = f"s3://{config.bucket}/{base_path}"
+    # For local catalog, use relative path
+    base_url = f"./{base_path}"
 
-    # Create local catalog
-    output_dir = Path(f"/tmp/portolan_upload_{dataset_id}")
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Extract metadata and generate catalog (auto-detects Raquet vs GeoParquet)
+    # Extract metadata (auto-detects Raquet vs GeoParquet)
+    click.echo(f"Analyzing {file_path.name}...")
     metadata = extract_parquet_metadata(str(file_path))
     file_type = metadata.get("type", "geoparquet")
     format_name = metadata.get("format_name", "Parquet")
@@ -159,521 +471,437 @@ def cmd_dataset_add(args, config: PortolanConfig):
 
     collections_config = [{
         "name": collection,
-        "title": args.title or f"{collection.title()} Collection",
+        "title": title or f"{collection.title()} Collection",
         "items": [{
             "id": dataset_id,
-            "title": args.title or f"{dataset_id}",
+            "title": title or dataset_id,
             "asset_path": str(file_path),
             "stac_info": stac_info,
             "iso_info": {
-                "abstract": args.description or f"Dataset: {dataset_id}",
-                "topic_category": args.topic or "imageryBaseMapsEarthCover",
+                "abstract": description or f"Dataset: {dataset_id}",
+                "topic_category": topic,
                 "format_name": format_name,
                 "spatial_representation": spatial_representation,
-                "license": args.license or "CC-BY-4.0",
+                "license": license_,
             },
             "raquet_info": raquet_info if file_type == "raquet" else {},
             "geoparquet_info": geoparquet_info if file_type == "geoparquet" else {},
         }]
     }]
 
+    # Generate catalog in the local .portolan directory
+    output_dir = catalog.path / base_path
+    output_dir.mkdir(parents=True, exist_ok=True)
+
     generate_sdi_catalog(
         collections=collections_config,
         output_dir=str(output_dir),
         data_base_url=base_url,
-        verbose=args.verbose,
+        verbose=verbose,
     )
 
-    # Upload to MinIO
-    ensure_mc_alias(config)
+    click.echo()
+    click.echo(click.style("Dataset added successfully!", fg="green"))
+    click.echo(f"  ID: {dataset_id}")
+    click.echo(f"  Type: {format_name}")
+    click.echo(f"  Visibility: {visibility}")
+    click.echo(f"  Location: {output_dir}")
 
-    print(f"\nUploading to {base_url}...")
-    run_mc([
-        "cp", "--recursive",
-        str(output_dir / "data") + "/",
-        f"{config.mc_alias}/{config.bucket}/{base_path}/data/"
-    ], config)
+    if not is_public:
+        click.echo(f"\n  Note: Private datasets require authentication to access.")
 
-    run_mc([
-        "cp", "--recursive",
-        str(output_dir / "v1") + "/",
-        f"{config.mc_alias}/{config.bucket}/{base_path}/v1/"
-    ], config)
-
-    # Cleanup
-    import shutil
-    shutil.rmtree(output_dir)
-
-    print(f"\nDataset added successfully!")
-    print(f"  ID: {dataset_id}")
-    print(f"  Type: {format_name}")
-    print(f"  Visibility: {visibility}")
-    print(f"  Items table: {base_url}/data/{collection}/items/metadata/v1.metadata.json")
-    print(f"  Data file: {base_url}/data/{collection}/{dataset_id}/{dataset_id}.parquet")
-
-    if visibility == "private":
-        print(f"\n  To grant access: portolan access grant <user> {tenant}/{collection}/{dataset_id}")
-
-    return 0
+    click.echo(f"\nRun 'portolan sync' to push to remote storage.")
 
 
-def cmd_dataset_list(args, config: PortolanConfig):
-    """List datasets in the catalog."""
-    ensure_mc_alias(config)
+@dataset.command("list")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed information")
+@click.pass_context
+def dataset_list(ctx, verbose: bool):
+    """List datasets in the local catalog."""
+    catalog = get_catalog(ctx)
 
-    print("Public datasets:")
-    print("-" * 40)
-    result = run_mc([
-        "ls", "--recursive", f"{config.mc_alias}/{config.bucket}/public/"
-    ], config, capture=True)
+    # Find all metadata files
+    found_any = False
 
-    # Parse and show only metadata.json files (indicate tables)
-    for line in result.stdout.splitlines():
-        if "v1.metadata.json" in line:
-            # Extract path
-            parts = line.split()
-            if len(parts) >= 5:
-                path = parts[-1]
-                # Extract collection/table from path
-                print(f"  {path}")
-
-    print("\nPrivate datasets:")
-    print("-" * 40)
-    result = run_mc([
-        "ls", "--recursive", f"{config.mc_alias}/{config.bucket}/private/"
-    ], config, capture=True)
-
-    for line in result.stdout.splitlines():
-        if "v1.metadata.json" in line:
-            parts = line.split()
-            if len(parts) >= 5:
-                path = parts[-1]
-                print(f"  {path}")
-
-    return 0
-
-
-# ============== USER ==============
-
-def cmd_user_add(args, config: PortolanConfig):
-    """Create a new user."""
-    ensure_mc_alias(config)
-
-    username = args.username
-    password = args.password
-
-    if not password:
-        import secrets
-        password = secrets.token_urlsafe(16)
-        print(f"Generated password: {password}")
-
-    # Create user
-    result = run_mc([
-        "admin", "user", "add", config.mc_alias, username, password
-    ], config)
-
-    if result.returncode == 0:
-        print(f"\nUser '{username}' created successfully!")
-        print(f"  Access key: {username}")
-        print(f"  Secret key: {password}")
-        print(f"\n  To grant access: portolan access grant {username} <tenant>/<collection>/<dataset>")
-
-    return result.returncode
-
-
-def cmd_user_list(args, config: PortolanConfig):
-    """List users."""
-    ensure_mc_alias(config)
-    run_mc(["admin", "user", "ls", config.mc_alias], config)
-    return 0
-
-
-def cmd_user_remove(args, config: PortolanConfig):
-    """Remove a user."""
-    ensure_mc_alias(config)
-    run_mc(["admin", "user", "rm", config.mc_alias, args.username], config)
-    return 0
-
-
-# ============== ACCESS ==============
-
-def cmd_access_grant(args, config: PortolanConfig):
-    """Grant user access to a dataset path."""
-    ensure_mc_alias(config)
-
-    username = args.username
-    path = args.path  # e.g., "carto/imagery/europe" or "tenant/collection/dataset"
-
-    # Create policy name from path
-    policy_name = f"access-{path.replace('/', '-')}"
-
-    # Create policy JSON
-    policy = {
-        "Version": "2012-10-17",
-        "Statement": [
-            {
-                "Effect": "Allow",
-                "Action": ["s3:GetObject"],
-                "Resource": [f"arn:aws:s3:::{config.bucket}/private/{path}/*"]
-            },
-            {
-                "Effect": "Allow",
-                "Action": ["s3:ListBucket"],
-                "Resource": [f"arn:aws:s3:::{config.bucket}"],
-                "Condition": {
-                    "StringLike": {"s3:prefix": [f"private/{path}/*"]}
-                }
-            }
-        ]
-    }
-
-    # Write policy to temp file
-    policy_file = Path(f"/tmp/portolan-policy-{policy_name}.json")
-    with open(policy_file, "w") as f:
-        json.dump(policy, f, indent=2)
-
-    # Create or update policy
-    run_mc(["admin", "policy", "create", config.mc_alias, policy_name, str(policy_file)], config)
-
-    # Attach policy to user
-    result = run_mc([
-        "admin", "policy", "attach", config.mc_alias, policy_name, "--user", username
-    ], config)
-
-    # Cleanup
-    policy_file.unlink()
-
-    if result.returncode == 0:
-        print(f"\nAccess granted!")
-        print(f"  User: {username}")
-        print(f"  Path: private/{path}/*")
-        print(f"  Policy: {policy_name}")
-
-    return result.returncode
-
-
-def cmd_access_revoke(args, config: PortolanConfig):
-    """Revoke user access to a dataset path."""
-    ensure_mc_alias(config)
-
-    path = args.path
-    policy_name = f"access-{path.replace('/', '-')}"
-
-    # Detach policy from user
-    result = run_mc([
-        "admin", "policy", "detach", config.mc_alias, policy_name, "--user", args.username
-    ], config)
-
-    if result.returncode == 0:
-        print(f"Access revoked: {args.username} -> {path}")
-
-    return result.returncode
-
-
-def cmd_access_list(args, config: PortolanConfig):
-    """List access policies."""
-    ensure_mc_alias(config)
-
-    if args.username:
-        # Show policies for specific user
-        run_mc(["admin", "user", "info", config.mc_alias, args.username], config)
-    else:
-        # List all policies
-        run_mc(["admin", "policy", "ls", config.mc_alias], config)
-
-    return 0
-
-
-# ============== MANIFEST ==============
-
-def cmd_manifest_update(args, config: PortolanConfig):
-    """Update the manifest.json file with all discovered catalogs."""
-    ensure_mc_alias(config)
-
-    from datetime import datetime
-
-    manifest = {
-        "version": "1.0",
-        "updated": datetime.utcnow().isoformat() + "Z",
-        "catalogs": {
-            "public": [],
-            "private": []
-        }
-    }
-
-    # Scan for items tables
-    result = run_mc([
-        "find", f"{config.mc_alias}/{config.bucket}",
-        "--name", "v1.metadata.json",
-        "--path", "*/items/metadata/*"
-    ], config, capture=True)
-
-    for line in result.stdout.strip().splitlines():
-        if not line:
+    for visibility in ["public", "private"]:
+        vis_dir = catalog.path / visibility
+        if not vis_dir.exists():
             continue
-        # Parse path: portolan/warehouse/public/imagery/data/imagery/items/metadata/v1.metadata.json
-        path = line.replace(f"{config.mc_alias}/{config.bucket}/", "")
 
-        if path.startswith("public/"):
-            # Extract collection from path
-            parts = path.split("/")
+        datasets = []
+        for metadata_file in vis_dir.rglob("v1.metadata.json"):
+            # Extract collection and dataset info from path
+            rel_path = metadata_file.relative_to(vis_dir)
+            parts = list(rel_path.parts)
+
+            # Try to find collection name
             if "data" in parts:
                 idx = parts.index("data")
                 collection = parts[idx + 1] if idx + 1 < len(parts) else "unknown"
+                dataset_name = parts[idx + 2] if idx + 2 < len(parts) else "unknown"
             else:
-                collection = parts[1] if len(parts) > 1 else "unknown"
+                collection = parts[0] if parts else "unknown"
+                dataset_name = parts[1] if len(parts) > 1 else "unknown"
 
-            manifest["catalogs"]["public"].append({
-                "path": path,
-                "collection": collection
+            datasets.append({
+                "collection": collection,
+                "name": dataset_name,
+                "path": str(rel_path),
             })
 
-        elif path.startswith("private/"):
-            parts = path.split("/")
-            tenant = parts[1] if len(parts) > 1 else "unknown"
-            if "data" in parts:
-                idx = parts.index("data")
-                collection = parts[idx + 1] if idx + 1 < len(parts) else "unknown"
-            else:
-                collection = parts[2] if len(parts) > 2 else "unknown"
+        if datasets:
+            found_any = True
+            click.echo(click.style(f"\n{visibility.title()} datasets:", bold=True))
+            click.echo("-" * 40)
 
-            manifest["catalogs"]["private"].append({
-                "path": path,
-                "tenant": tenant,
-                "collection": collection
-            })
+            for ds in datasets:
+                if verbose:
+                    click.echo(f"  {ds['collection']}/{ds['name']}")
+                    click.echo(f"    Path: {ds['path']}")
+                else:
+                    click.echo(f"  {ds['collection']}/{ds['name']}")
 
-    # Write manifest to temp file
-    manifest_file = Path("/tmp/portolan-manifest.json")
-    with open(manifest_file, "w") as f:
-        json.dump(manifest, f, indent=2)
-
-    # Upload to MinIO
-    run_mc([
-        "cp", str(manifest_file), f"{config.mc_alias}/{config.bucket}/manifest.json"
-    ], config)
-
-    # Make it public
-    run_mc([
-        "anonymous", "set", "download", f"{config.mc_alias}/{config.bucket}/manifest.json"
-    ], config)
-
-    manifest_file.unlink()
-
-    print(f"Manifest updated with {len(manifest['catalogs']['public'])} public and {len(manifest['catalogs']['private'])} private catalogs")
-    return 0
+    if not found_any:
+        click.echo("No datasets found. Add one with:")
+        click.echo("  portolan dataset add <file.parquet> --public")
 
 
-# ============== WEB ==============
+@dataset.command("remove")
+@click.argument("dataset_path")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def dataset_remove(ctx, dataset_path: str, force: bool):
+    """Remove a dataset from the local catalog.
 
-def get_web_dir() -> Path:
-    """Get the web directory path."""
-    # Check if we're in the project directory
-    web_dir = Path(__file__).parent / "web"
-    if web_dir.exists():
-        return web_dir
-    # Fallback to current directory
-    return Path.cwd() / "web"
+    DATASET_PATH should be in the format: visibility/collection/dataset
+    (e.g., public/datasets/countries or private/acme/imagery/satellite)
+    """
+    catalog = get_catalog(ctx)
+
+    # Parse the dataset path
+    parts = dataset_path.split("/")
+    if len(parts) < 3:
+        raise click.ClickException(
+            "Invalid path. Use format: visibility/collection/dataset\n"
+            "Example: public/datasets/countries"
+        )
+
+    target_dir = catalog.path / dataset_path
+
+    if not target_dir.exists():
+        raise click.ClickException(f"Dataset not found: {dataset_path}")
+
+    if not force:
+        click.confirm(f"Remove dataset '{dataset_path}'?", abort=True)
+
+    shutil.rmtree(target_dir)
+    click.echo(f"Removed dataset: {dataset_path}")
 
 
-def cmd_web_serve(args, config: PortolanConfig):
-    """Serve the web UI locally."""
-    import http.server
-    import socketserver
+# ============== SYNC ==============
 
-    web_dir = get_web_dir()
-    if not web_dir.exists():
-        print(f"Error: Web directory not found at {web_dir}", file=sys.stderr)
-        return 1
+@cli.command()
+@click.option("--remote", "-r", help="Remote name (default: uses default remote)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--dry-run", is_flag=True, help="Show what would be synced without uploading")
+@click.pass_context
+def sync(ctx, remote: str | None, verbose: bool, dry_run: bool):
+    """Sync local catalog to remote storage.
 
-    port = args.port
+    Uploads all local datasets to the configured remote storage backend.
 
-    class Handler(http.server.SimpleHTTPRequestHandler):
-        def __init__(self, *args, **kwargs):
-            super().__init__(*args, directory=str(web_dir), **kwargs)
+    \b
+    Examples:
+        portolan sync                    # Sync to default remote
+        portolan sync -r backup          # Sync to specific remote
+        portolan sync --dry-run          # Preview sync without uploading
+    """
+    import asyncio
 
-    print(f"Serving web UI at http://127.0.0.1:{port}")
-    print(f"MinIO endpoint: {config.endpoint}")
-    print(f"Bucket: {config.bucket}")
-    print(f"\nPress Ctrl+C to stop")
+    catalog = get_catalog(ctx)
 
-    with socketserver.TCPServer(("", port), Handler) as httpd:
+    # Get the remote configuration
+    remote_name = remote or catalog.default_remote
+    if not remote_name:
+        raise click.ClickException(
+            "No remote configured. Add one with:\n"
+            "  portolan remote add origin s3://your-bucket/path"
+        )
+
+    if remote_name not in catalog.remotes:
+        raise click.ClickException(f"Remote '{remote_name}' not found")
+
+    remote_config = catalog.remotes[remote_name]
+    click.echo(f"Syncing to {remote_config.url}...")
+
+    # Count files to sync
+    files_to_sync = []
+    for subdir in ["public", "private", "v1"]:
+        local_dir = catalog.path / subdir
+        if local_dir.exists():
+            for f in local_dir.rglob("*"):
+                if f.is_file():
+                    rel_path = f.relative_to(catalog.path)
+                    files_to_sync.append((f, str(rel_path)))
+
+    if not files_to_sync:
+        click.echo("Nothing to sync. Add datasets with:")
+        click.echo("  portolan dataset add <file.parquet> --public")
+        return
+
+    click.echo(f"Found {len(files_to_sync)} files to sync")
+
+    if dry_run:
+        click.echo("\nDry run - would sync:")
+        for local_path, rel_path in files_to_sync[:20]:
+            click.echo(f"  {rel_path}")
+        if len(files_to_sync) > 20:
+            click.echo(f"  ... and {len(files_to_sync) - 20} more")
+        return
+
+    # Perform the sync using obstore
+    async def do_sync():
         try:
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            print("\nStopped")
+            store, prefix = get_store(remote_config.url, remote_config.options)
+        except ImportError:
+            raise click.ClickException(
+                "obstore not installed. Install with:\n"
+                "  pip install obstore"
+            )
 
-    return 0
+        import obstore
 
+        uploaded = 0
+        errors = 0
 
-def cmd_web_deploy(args, config: PortolanConfig):
-    """Deploy web UI to storage."""
-    ensure_mc_alias(config)
+        with click.progressbar(files_to_sync, label="Uploading") as bar:
+            for local_path, rel_path in bar:
+                remote_path = f"{prefix}/{rel_path}" if prefix else rel_path
 
-    web_dir = get_web_dir()
-    if not web_dir.exists():
-        print(f"Error: Web directory not found at {web_dir}", file=sys.stderr)
-        return 1
+                try:
+                    with open(local_path, "rb") as f:
+                        data = f.read()
 
-    # Upload index.html
-    index_file = web_dir / "index.html"
-    if index_file.exists():
-        run_mc([
-            "cp", str(index_file), f"{config.mc_alias}/{config.bucket}/index.html"
-        ], config)
-        run_mc([
-            "anonymous", "set", "download", f"{config.mc_alias}/{config.bucket}/index.html"
-        ], config)
+                    await obstore.put_async(store, remote_path, data)
+                    uploaded += 1
 
-    # Update manifest
-    cmd_manifest_update(args, config)
+                    if verbose:
+                        click.echo(f"  {rel_path}")
 
-    protocol = "https" if config.use_ssl else "http"
-    print(f"\nWeb UI deployed!")
-    print(f"  URL: {protocol}://{config.endpoint}/{config.bucket}/index.html")
+                except Exception as e:
+                    errors += 1
+                    if verbose:
+                        click.echo(f"  Error uploading {rel_path}: {e}", err=True)
 
-    return 0
+        return uploaded, errors
+
+    uploaded, errors = asyncio.run(do_sync())
+
+    click.echo()
+    if errors:
+        click.echo(click.style(f"Synced {uploaded} files with {errors} errors", fg="yellow"))
+    else:
+        click.echo(click.style(f"Synced {uploaded} files successfully!", fg="green"))
+
+    # Show the remote URL
+    click.echo(f"\nRemote catalog: {remote_config.url}")
 
 
 # ============== STATUS ==============
 
-def cmd_status(args, config: PortolanConfig):
-    """Show Portolan status."""
-    print("Portolan Status")
-    print("=" * 40)
-    print(f"Config file: {CONFIG_FILE}")
-    print(f"Endpoint: {config.endpoint}")
-    print(f"Bucket: {config.bucket}")
-    print(f"SSL: {config.use_ssl}")
-    print()
+@cli.command()
+@click.pass_context
+def status(ctx):
+    """Show catalog status and configuration."""
+    catalog = find_catalog()
 
-    ensure_mc_alias(config)
+    if catalog is None:
+        click.echo("No Portolan catalog found in current directory.")
+        click.echo("Run 'portolan init' to create one.")
+        return
 
-    print("MinIO connection:")
-    result = run_mc(["admin", "info", config.mc_alias], config, capture=True)
-    if result.returncode == 0:
-        print("  Connected successfully")
-        # Show bucket info
-        run_mc(["ls", f"{config.mc_alias}/{config.bucket}"], config)
+    click.echo(click.style("Portolan Catalog Status", bold=True))
+    click.echo("=" * 40)
+    click.echo(f"Location: {catalog.path}")
+
+    # Count datasets
+    public_count = 0
+    private_count = 0
+
+    for metadata_file in (catalog.path / "public").rglob("v1.metadata.json"):
+        public_count += 1
+    for metadata_file in (catalog.path / "private").rglob("v1.metadata.json"):
+        private_count += 1
+
+    click.echo(f"\nDatasets:")
+    click.echo(f"  Public: {public_count}")
+    click.echo(f"  Private: {private_count}")
+
+    # Show remotes
+    click.echo(f"\nRemotes:")
+    if catalog.remotes:
+        for name, remote in catalog.remotes.items():
+            default = " (default)" if name == catalog.default_remote else ""
+            click.echo(f"  {name}: {remote.url}{default}")
     else:
-        print("  Connection failed")
-        print(result.stderr)
+        click.echo("  No remotes configured")
 
-    return 0
+    # Check sync status
+    if catalog.default_remote:
+        click.echo(f"\nSync: Use 'portolan sync' to push changes to remote")
+
+
+# ============== WEB ==============
+
+@cli.group()
+def web():
+    """Manage the web UI."""
+    pass
+
+
+@web.command("serve")
+@click.option("--port", "-p", type=int, default=8080, help="Port (default: 8080)")
+@click.option("--host", "-h", default="127.0.0.1", help="Host (default: 127.0.0.1)")
+@click.pass_context
+def web_serve(ctx, port: int, host: str):
+    """Serve the web UI locally for development.
+
+    This serves both the web UI and the local catalog data.
+    """
+    import http.server
+    import socketserver
+
+    catalog = find_catalog()
+
+    # Determine what to serve
+    if catalog:
+        serve_dir = catalog.path.parent  # Serve from the directory containing .portolan
+    else:
+        # Fallback to serving just the web UI
+        web_dir = Path(__file__).parent / "web"
+        if web_dir.exists():
+            serve_dir = web_dir
+        else:
+            serve_dir = Path.cwd() / "web"
+
+    if not serve_dir.exists():
+        raise click.ClickException(f"Directory not found: {serve_dir}")
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(serve_dir), **kwargs)
+
+        def end_headers(self):
+            # Add CORS headers for local development
+            self.send_header("Access-Control-Allow-Origin", "*")
+            super().end_headers()
+
+    click.echo(f"Serving at http://{host}:{port}")
+    click.echo(f"Directory: {serve_dir}")
+
+    if catalog:
+        click.echo(f"Catalog: {catalog.path}")
+
+    click.echo("\nPress Ctrl+C to stop")
+
+    with socketserver.TCPServer((host, port), Handler) as httpd:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            click.echo("\nStopped")
+
+
+@web.command("deploy")
+@click.option("--remote", "-r", help="Remote name (default: uses default remote)")
+@click.pass_context
+def web_deploy(ctx, remote: str | None):
+    """Deploy web UI to remote storage.
+
+    Uploads index.html and updates the manifest.
+    """
+    import asyncio
+
+    catalog = get_catalog(ctx)
+
+    # Get the remote configuration
+    remote_name = remote or catalog.default_remote
+    if not remote_name or remote_name not in catalog.remotes:
+        raise click.ClickException("No remote configured. Run 'portolan remote add' first.")
+
+    remote_config = catalog.remotes[remote_name]
+
+    # Find web UI
+    web_dir = Path(__file__).parent / "web"
+    if not web_dir.exists():
+        web_dir = Path.cwd() / "web"
+
+    index_file = web_dir / "index.html"
+    if not index_file.exists():
+        raise click.ClickException(f"Web UI not found at {web_dir}")
+
+    async def do_deploy():
+        store, prefix = get_store(remote_config.url, remote_config.options)
+        import obstore
+
+        # Upload index.html
+        click.echo("Uploading index.html...")
+        with open(index_file, "rb") as f:
+            data = f.read()
+        remote_path = f"{prefix}/index.html" if prefix else "index.html"
+        await obstore.put_async(store, remote_path, data)
+
+        # Generate and upload manifest
+        click.echo("Generating manifest...")
+        manifest = {
+            "version": "1.0",
+            "updated": datetime.now(timezone.utc).isoformat(),
+            "catalogs": {"public": [], "private": []},
+        }
+
+        # Scan for catalogs
+        for visibility in ["public", "private"]:
+            vis_dir = catalog.path / visibility
+            if vis_dir.exists():
+                for metadata_file in vis_dir.rglob("v1.metadata.json"):
+                    rel_path = str(metadata_file.relative_to(catalog.path))
+                    parts = rel_path.split("/")
+
+                    if visibility == "public":
+                        collection = parts[2] if len(parts) > 2 else "unknown"
+                        manifest["catalogs"]["public"].append({
+                            "path": rel_path,
+                            "collection": collection,
+                        })
+                    else:
+                        tenant = parts[1] if len(parts) > 1 else "unknown"
+                        collection = parts[3] if len(parts) > 3 else "unknown"
+                        manifest["catalogs"]["private"].append({
+                            "path": rel_path,
+                            "tenant": tenant,
+                            "collection": collection,
+                        })
+
+        manifest_data = json.dumps(manifest, indent=2).encode()
+        manifest_path = f"{prefix}/manifest.json" if prefix else "manifest.json"
+        await obstore.put_async(store, manifest_path, manifest_data)
+
+        return len(manifest["catalogs"]["public"]), len(manifest["catalogs"]["private"])
+
+    public_count, private_count = asyncio.run(do_deploy())
+
+    click.echo()
+    click.echo(click.style("Web UI deployed!", fg="green"))
+    click.echo(f"  URL: {remote_config.url}/index.html")
+    click.echo(f"  Public catalogs: {public_count}")
+    click.echo(f"  Private catalogs: {private_count}")
 
 
 # ============== MAIN ==============
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Portolan CLI - Manage geospatial data infrastructure",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-    )
-
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
-
-    # init
-    init_parser = subparsers.add_parser("init", help="Initialize Portolan configuration")
-    init_parser.set_defaults(func=cmd_init)
-
-    # status
-    status_parser = subparsers.add_parser("status", help="Show Portolan status")
-    status_parser.set_defaults(func=cmd_status)
-
-    # manifest
-    manifest_parser = subparsers.add_parser("manifest", help="Manage web manifest")
-    manifest_sub = manifest_parser.add_subparsers(dest="manifest_command")
-
-    manifest_update = manifest_sub.add_parser("update", help="Update manifest.json for web UI")
-    manifest_update.set_defaults(func=cmd_manifest_update)
-
-    # web
-    web_parser = subparsers.add_parser("web", help="Web UI management")
-    web_sub = web_parser.add_subparsers(dest="web_command")
-
-    web_serve = web_sub.add_parser("serve", help="Serve web UI locally")
-    web_serve.add_argument("--port", "-p", type=int, default=8080, help="Port (default: 8080)")
-    web_serve.set_defaults(func=cmd_web_serve)
-
-    web_deploy = web_sub.add_parser("deploy", help="Deploy web UI to storage")
-    web_deploy.set_defaults(func=cmd_web_deploy)
-
-    # dataset
-    dataset_parser = subparsers.add_parser("dataset", help="Manage datasets")
-    dataset_sub = dataset_parser.add_subparsers(dest="dataset_command")
-
-    # dataset add
-    dataset_add = dataset_sub.add_parser("add", help="Add a dataset")
-    dataset_add.add_argument("file", help="Path to raquet/parquet file")
-    dataset_add.add_argument("--id", help="Dataset ID (default: filename)")
-    dataset_add.add_argument("--title", help="Dataset title")
-    dataset_add.add_argument("--description", help="Dataset description")
-    dataset_add.add_argument("--collection", "-c", default="datasets", help="Collection name")
-    dataset_add.add_argument("--tenant", "-t", default="default", help="Tenant (for private datasets)")
-    dataset_add.add_argument("--public", action="store_true", help="Make dataset public")
-    dataset_add.add_argument("--topic", default="imageryBaseMapsEarthCover", help="ISO topic category")
-    dataset_add.add_argument("--license", default="CC-BY-4.0", help="License")
-    dataset_add.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    dataset_add.set_defaults(func=cmd_dataset_add)
-
-    # dataset list
-    dataset_list = dataset_sub.add_parser("list", help="List datasets")
-    dataset_list.set_defaults(func=cmd_dataset_list)
-
-    # user
-    user_parser = subparsers.add_parser("user", help="Manage users")
-    user_sub = user_parser.add_subparsers(dest="user_command")
-
-    # user add
-    user_add = user_sub.add_parser("add", help="Add a user")
-    user_add.add_argument("username", help="Username")
-    user_add.add_argument("--password", "-p", help="Password (auto-generated if not provided)")
-    user_add.set_defaults(func=cmd_user_add)
-
-    # user list
-    user_list = user_sub.add_parser("list", help="List users")
-    user_list.set_defaults(func=cmd_user_list)
-
-    # user remove
-    user_rm = user_sub.add_parser("remove", help="Remove a user")
-    user_rm.add_argument("username", help="Username")
-    user_rm.set_defaults(func=cmd_user_remove)
-
-    # access
-    access_parser = subparsers.add_parser("access", help="Manage access control")
-    access_sub = access_parser.add_subparsers(dest="access_command")
-
-    # access grant
-    access_grant = access_sub.add_parser("grant", help="Grant access to a dataset")
-    access_grant.add_argument("username", help="Username")
-    access_grant.add_argument("path", help="Dataset path (tenant/collection/dataset)")
-    access_grant.set_defaults(func=cmd_access_grant)
-
-    # access revoke
-    access_revoke = access_sub.add_parser("revoke", help="Revoke access")
-    access_revoke.add_argument("username", help="Username")
-    access_revoke.add_argument("path", help="Dataset path")
-    access_revoke.set_defaults(func=cmd_access_revoke)
-
-    # access list
-    access_list = access_sub.add_parser("list", help="List access policies")
-    access_list.add_argument("--user", "-u", dest="username", help="Show policies for user")
-    access_list.set_defaults(func=cmd_access_list)
-
-    args = parser.parse_args()
-
-    if not args.command:
-        parser.print_help()
-        return 1
-
-    config = PortolanConfig.load()
-
-    if hasattr(args, 'func'):
-        return args.func(args, config)
-    else:
-        parser.print_help()
-        return 1
+    """Entry point for the CLI."""
+    cli()
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

@@ -12,8 +12,6 @@ Portolan brings together a number of open source projects to make it easier to g
 
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
-- [MinIO Client (mc)](https://min.io/docs/minio/linux/reference/minio-mc.html) for storage operations
-- S3-compatible storage (MinIO, AWS S3, GCS, etc.)
 
 ### Installation
 
@@ -31,15 +29,17 @@ uv run portolan --help
 
 ### Quick Start
 
-1. **Initialize Portolan** with your storage configuration:
+Portolan uses a **local-first workflow**: work with data locally, then sync to remote storage.
+
+1. **Initialize a catalog** in your project directory:
 
 ```bash
 uv run portolan init
 ```
 
-This will prompt for your MinIO/S3 endpoint, credentials, and bucket name. Configuration is saved to `~/.portolan/config.json`.
+This creates a `.portolan` directory with your local catalog.
 
-2. **Add a dataset** to the catalog:
+2. **Add a dataset** to the local catalog:
 
 ```bash
 # Add a public dataset
@@ -49,7 +49,29 @@ uv run portolan dataset add mydata.parquet --public --title "My Dataset"
 uv run portolan dataset add mydata.parquet --tenant acme --collection imagery
 ```
 
-3. **Start the web UI** to browse datasets:
+3. **Configure a remote** storage backend (optional):
+
+```bash
+# AWS S3
+uv run portolan remote add origin s3://my-bucket/portolan
+
+# Google Cloud Storage
+uv run portolan remote add origin gs://my-bucket/portolan
+
+# MinIO or S3-compatible
+uv run portolan remote add origin s3://warehouse --endpoint http://localhost:9000
+
+# Local filesystem
+uv run portolan remote add origin file:///var/data/portolan
+```
+
+4. **Sync to remote** when ready:
+
+```bash
+uv run portolan sync
+```
+
+5. **Browse locally** with the web UI:
 
 ```bash
 uv run portolan web serve
@@ -58,12 +80,26 @@ uv run portolan web serve
 
 ## Architecture
 
-Portolan creates a **static Iceberg REST catalog** that can be hosted on any S3-compatible storage. This enables:
+Portolan creates a **static Iceberg REST catalog** that can be hosted on any cloud storage. This enables:
 
 - **Zero-server architecture**: No backend servers needed, just static files
+- **Local-first workflow**: Work locally, sync to remote when ready
+- **Pluggable storage**: AWS S3, Google Cloud Storage, Azure Blob, or local filesystem
 - **Standard formats**: Uses [GeoParquet](https://geoparquet.org/) for vectors and [Raquet](https://github.com/geoparquet/raquet) for rasters
 - **Iceberg metadata**: Full compatibility with Iceberg-aware tools like DuckDB, Spark, and Trino
 - **STAC + ISO 19115**: Metadata tables include both STAC and ISO 19115 fields for SDI compliance
+
+### Supported Storage Backends
+
+Portolan uses [obstore](https://github.com/developmentseed/obstore) for storage abstraction:
+
+| Backend | URL Format | Example |
+|---------|------------|---------|
+| AWS S3 | `s3://bucket/path` | `s3://my-data/portolan` |
+| Google Cloud | `gs://bucket/path` | `gs://my-bucket/portolan` |
+| Azure Blob | `az://container/path` | `az://mycontainer/portolan` |
+| Local filesystem | `file:///path` | `file:///var/data/portolan` |
+| S3-compatible | `s3://bucket` + `--endpoint` | MinIO, DigitalOcean Spaces, etc. |
 
 ### Storage Layout
 
@@ -94,6 +130,18 @@ bucket/
 
 ## CLI Reference
 
+### Initialize & Status
+
+```bash
+# Initialize a new catalog
+portolan init [path] [options]
+  --remote, -r   Remote storage URL (e.g., s3://bucket/path)
+  --name, -n     Name for the remote (default: origin)
+
+# Show catalog status
+portolan status
+```
+
 ### Dataset Management
 
 ```bash
@@ -109,57 +157,53 @@ portolan dataset add <file> [options]
   --license      License (default: CC-BY-4.0)
   --verbose      Show detailed output
 
-# List all datasets
-portolan dataset list
+# List datasets
+portolan dataset list [--verbose]
+
+# Remove a dataset
+portolan dataset remove <visibility/collection/dataset> [--force]
 ```
 
-### User Management
+### Remote Storage
 
 ```bash
-# Create a new user
-portolan user add <username> [--password <pass>]
+# Add a remote
+portolan remote add <name> <url> [options]
+  --access-key   AWS access key (or set AWS_ACCESS_KEY_ID)
+  --secret-key   AWS secret key (or set AWS_SECRET_ACCESS_KEY)
+  --endpoint     Custom endpoint URL (for MinIO, etc.)
+  --region       AWS region (default: us-east-1)
+  --anonymous    Use anonymous access
+  --default      Set as default remote
 
-# List users
-portolan user list
+# List remotes
+portolan remote list
 
-# Remove a user
-portolan user remove <username>
+# Remove a remote
+portolan remote remove <name>
+
+# Set default remote
+portolan remote set-default <name>
 ```
 
-### Access Control
+### Sync
 
 ```bash
-# Grant access to a dataset path
-portolan access grant <username> <tenant/collection/dataset>
-
-# Revoke access
-portolan access revoke <username> <path>
-
-# List policies
-portolan access list [--user <username>]
+# Sync to remote storage
+portolan sync [options]
+  --remote, -r   Remote name (default: uses default remote)
+  --verbose, -v  Show detailed output
+  --dry-run      Preview sync without uploading
 ```
 
 ### Web UI
 
 ```bash
 # Serve locally for development
-portolan web serve [--port 8080]
+portolan web serve [--port 8080] [--host 127.0.0.1]
 
-# Deploy to storage
-portolan web deploy
-```
-
-### Other Commands
-
-```bash
-# Initialize configuration
-portolan init
-
-# Show status
-portolan status
-
-# Update manifest for web UI
-portolan manifest update
+# Deploy web UI to remote storage
+portolan web deploy [--remote <name>]
 ```
 
 ## Web UI
