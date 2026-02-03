@@ -1,0 +1,30 @@
+{
+  "version": "1.0",
+  "updated": "2026-01-29T12:00:00Z",
+  "catalogs": {
+    "public": [
+      {
+        "path": "public/data/test/items/metadata/v1.metadata.json",
+        "collection": "test",
+        "description": "Test collection"
+      },
+      {
+        "path": "public/imagery/data/imagery/items/metadata/v1.metadata.json",
+        "collection": "imagery",
+        "description": "Satellite imagery"
+      }
+    ],
+    "private": [
+      {
+        "path": "private/carto/data/test/items/metadata/v1.metadata.json",
+        "tenant": "carto",
+        "collection": "test"
+      },
+      {
+        "path": "private/acme/elevation/data/elevation/items/metadata/v1.metadata.json",
+        "tenant": "acme",
+        "collection": "elevation"
+      }
+    ]
+  }
+}

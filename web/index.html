@@ -1,0 +1,1915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portolan</title>
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
+    <script src="https://unpkg.com/pako@2.1.0/dist/pako.min.js"></script>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-secondary: #161b22;
+            --border: #30363d;
+            --text: #c9d1d9;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --accent-hover: #79b8ff;
+            --success: #3fb950;
+            --warning: #d29922;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 0;
+            border-bottom: 1px solid var(--border);
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .auth-section {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .auth-status {
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .auth-status.public {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+        }
+
+        .auth-status.authenticated {
+            background: rgba(63, 185, 80, 0.15);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+
+        button {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        button:hover {
+            background: var(--border);
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #fff;
+        }
+
+        button.primary:hover {
+            background: var(--accent-hover);
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            width: 100%;
+            max-width: 450px;
+        }
+
+        .modal h2 {
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+
+        .form-group {
+            margin-bottom: 16px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 6px;
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 10px 12px;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: var(--text-muted);
+        }
+
+        .loading::after {
+            content: '';
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-left: 10px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .datasets-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+        }
+
+        .dataset-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .dataset-card:hover {
+            border-color: var(--accent);
+            transform: translateY(-2px);
+        }
+
+        .dataset-card h3 {
+            font-size: 16px;
+            margin-bottom: 8px;
+            color: var(--accent);
+        }
+
+        .dataset-card .description {
+            font-size: 14px;
+            color: var(--text-muted);
+            margin-bottom: 12px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .dataset-card .meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+
+        .tag {
+            padding: 4px 8px;
+            background: var(--bg);
+            border-radius: 4px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .tag.public {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--success);
+        }
+
+        .tag.private {
+            background: rgba(210, 153, 34, 0.15);
+            color: var(--warning);
+        }
+
+        /* Detail View */
+        .detail-view {
+            display: none;
+        }
+
+        .detail-view.active {
+            display: block;
+        }
+
+        .back-btn {
+            margin-bottom: 20px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            color: var(--text);
+            padding: 8px 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .back-btn:hover {
+            background: var(--border);
+        }
+
+        .detail-header {
+            margin-bottom: 30px;
+        }
+
+        .detail-header h2 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .detail-header .description {
+            color: var(--text-muted);
+            font-size: 16px;
+        }
+
+        .metadata-section {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+
+        .metadata-section h3 {
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+            margin-bottom: 16px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+
+        .metadata-item {
+            font-size: 14px;
+        }
+
+        .metadata-item .label {
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .metadata-item .value {
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .code-section {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .code-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 16px;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .code-header span {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        pre {
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 13px;
+            line-height: 1.6;
+        }
+
+        code {
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;
+        }
+
+        .copy-btn {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px;
+            color: var(--text-muted);
+        }
+
+        .error {
+            background: rgba(248, 81, 73, 0.15);
+            border: 1px solid #f85149;
+            color: #f85149;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+        }
+
+        .tab {
+            padding: 8px 16px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .tab:hover {
+            background: var(--bg-secondary);
+        }
+
+        .tab.active {
+            background: var(--bg-secondary);
+            color: var(--text);
+        }
+
+        /* Map container */
+        .map-container {
+            position: relative;
+            width: 100%;
+            height: 400px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+
+        .map-container canvas {
+            border-radius: 8px;
+        }
+
+        .map-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: var(--text-muted);
+            font-size: 14px;
+        }
+
+        .map-stats {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: #4ecca3;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            z-index: 10;
+        }
+
+        .map-error {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #f85149;
+            font-size: 14px;
+            text-align: center;
+            padding: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Portolan</h1>
+            <div class="auth-section">
+                <span id="authStatus" class="auth-status public">Public Access</span>
+                <button id="authBtn" onclick="showAuthModal()">Sign In</button>
+            </div>
+        </header>
+
+        <div id="error" class="error" style="display: none;"></div>
+
+        <!-- List View -->
+        <div id="listView">
+            <div id="loading" class="loading">Initializing DuckDB...</div>
+            <div id="datasetsGrid" class="datasets-grid" style="display: none;"></div>
+            <div id="emptyState" class="empty-state" style="display: none;">
+                No datasets found. Add datasets using the CLI:<br>
+                <code>portolan dataset add &lt;file&gt; --public</code>
+            </div>
+        </div>
+
+        <!-- Detail View -->
+        <div id="detailView" class="detail-view">
+            <a href="#/" class="back-btn" style="display: inline-block; text-decoration: none; color: inherit;">← Back to Catalog</a>
+            <div id="detailContent"></div>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div id="authModal" class="modal">
+        <div class="modal-content">
+            <h2>Sign In</h2>
+            <p style="color: var(--text-muted); margin-bottom: 20px; font-size: 14px;">
+                Enter your S3/MinIO credentials to access private datasets.
+            </p>
+            <div class="form-group">
+                <label>Endpoint</label>
+                <input type="text" id="endpoint" value="127.0.0.1:9000" placeholder="s3.amazonaws.com or minio.example.com">
+            </div>
+            <div class="form-group">
+                <label>Access Key</label>
+                <input type="text" id="accessKey" placeholder="Your access key">
+            </div>
+            <div class="form-group">
+                <label>Secret Key</label>
+                <input type="password" id="secretKey" placeholder="Your secret key">
+            </div>
+            <div class="form-group">
+                <label>Bucket</label>
+                <input type="text" id="bucket" value="warehouse" placeholder="warehouse">
+            </div>
+            <div class="modal-actions">
+                <button onclick="hideAuthModal()">Cancel</button>
+                <button class="primary" onclick="authenticate()">Sign In</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/+esm';
+
+        // Global state
+        let db = null;
+        let conn = null;
+        let config = {
+            endpoint: '127.0.0.1:9000',
+            bucket: 'warehouse',
+            accessKey: null,
+            secretKey: null,
+            useSSL: false
+        };
+        let datasets = [];
+        let isInitialized = false;
+
+        // Expose for debugging
+        window.portolan = { config, datasets: () => datasets };
+
+        // Router
+        function parseRoute() {
+            const hash = window.location.hash || '#/';
+            const parts = hash.slice(1).split('/').filter(Boolean);
+
+            if (parts.length === 0) {
+                return { view: 'list' };
+            }
+
+            if (parts[0] === 'dataset' && parts[1]) {
+                return { view: 'detail', datasetId: decodeURIComponent(parts[1]) };
+            }
+
+            return { view: 'list' };
+        }
+
+        function navigateTo(path, replace = false) {
+            if (replace) {
+                window.history.replaceState(null, '', path);
+            } else {
+                window.location.hash = path;
+            }
+        }
+
+        async function handleRoute() {
+            // Wait for initialization
+            if (!isInitialized) return;
+
+            const route = parseRoute();
+
+            if (route.view === 'detail' && route.datasetId) {
+                // Find dataset by ID
+                const index = datasets.findIndex(d => d.id === route.datasetId);
+                if (index !== -1) {
+                    showDetailView(index);
+                } else {
+                    // Dataset not found, redirect to list
+                    console.warn(`Dataset not found: ${route.datasetId}`);
+                    navigateTo('#/', true);
+                    showListView();
+                }
+            } else {
+                showListView();
+            }
+        }
+
+        // Listen for hash changes (back/forward navigation)
+        window.addEventListener('hashchange', handleRoute);
+
+        // Initialize DuckDB
+        async function initDuckDB() {
+            try {
+                // Use the EH bundle for better extension support
+                const DUCKDB_BUNDLES = {
+                    mvp: {
+                        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-mvp.wasm',
+                        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-browser-mvp.worker.js',
+                    },
+                    eh: {
+                        mainModule: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-eh.wasm',
+                        mainWorker: 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.32.0/dist/duckdb-browser-eh.worker.js',
+                    },
+                };
+
+                const bundle = await duckdb.selectBundle(DUCKDB_BUNDLES);
+
+                const worker_url = URL.createObjectURL(
+                    new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+                );
+
+                const worker = new Worker(worker_url);
+                const logger = new duckdb.ConsoleLogger();
+                db = new duckdb.AsyncDuckDB(logger, worker);
+
+                await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+                conn = await db.connect();
+
+                // Expose for debugging
+                window.portolan.db = db;
+                window.portolan.conn = conn;
+
+                // Try to load spatial extension (may not be available in WASM)
+                let spatialLoaded = false;
+                try {
+                    await conn.query("LOAD spatial;");
+                    spatialLoaded = true;
+                    console.log('Spatial extension loaded');
+                } catch (e) {
+                    console.log('Spatial extension not available in WASM, using bbox filtering');
+                }
+                window.portolan.spatialLoaded = spatialLoaded;
+
+                console.log('DuckDB initialized, loading datasets...');
+
+                // Load datasets
+                await loadDatasets();
+                console.log('Datasets loaded:', datasets.length);
+
+                // Mark as initialized and handle initial route
+                isInitialized = true;
+                handleRoute();
+
+            } catch (error) {
+                showError('Failed to initialize DuckDB: ' + error.message);
+                console.error(error);
+            }
+        }
+
+        function getHttpUrl(s3Path) {
+            // Convert s3://bucket/path to http://endpoint/bucket/path
+            const protocol = config.useSSL ? 'https' : 'http';
+            const path = s3Path.replace('s3://', '');
+            return `${protocol}://${config.endpoint}/${path}`;
+        }
+
+        async function loadDatasets() {
+            document.getElementById('loading').style.display = 'block';
+            document.getElementById('datasetsGrid').style.display = 'none';
+            document.getElementById('emptyState').style.display = 'none';
+            hideError();
+
+            datasets = [];
+
+            try {
+                // Find all items tables in public/
+                const publicPaths = await findItemsTables('public');
+                for (const path of publicPaths) {
+                    await loadItemsFromPath(path, 'public');
+                }
+
+                // If authenticated, also load private datasets
+                if (config.accessKey) {
+                    const privatePaths = await findItemsTables('private');
+                    for (const path of privatePaths) {
+                        await loadItemsFromPath(path, 'private');
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error loading datasets:', error);
+                // Don't show error for empty catalog
+            }
+
+            document.getElementById('loading').style.display = 'none';
+            renderDatasets();
+        }
+
+        async function loadManifest() {
+            // Try to load manifest from storage (with cache busting)
+            const protocol = config.useSSL ? 'https' : 'http';
+            const manifestUrl = `${protocol}://${config.endpoint}/${config.bucket}/manifest.json?t=${Date.now()}`;
+            console.log('Loading manifest from:', manifestUrl);
+
+            try {
+                const response = await fetch(manifestUrl, {cache: 'no-store'});
+                console.log('Manifest fetch response:', response.status, response.ok);
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Manifest data:', data);
+                    return data;
+                }
+            } catch (e) {
+                console.error('Could not load manifest:', e);
+            }
+
+            // Fallback to hardcoded discovery
+            console.log('Manifest failed, using fallback');
+            return null;
+        }
+
+        async function findItemsTables(prefix) {
+            const knownPaths = [];
+
+            // Try to use manifest first
+            const manifest = await loadManifest();
+            console.log('Manifest loaded:', manifest);
+            if (manifest && manifest.catalogs && manifest.catalogs[prefix]) {
+                console.log(`Found ${manifest.catalogs[prefix].length} catalogs for prefix ${prefix}`);
+                for (const catalog of manifest.catalogs[prefix]) {
+                    // Convert metadata path to parquet path and use HTTP URL
+                    const parquetPath = catalog.path.replace('/metadata/v1.metadata.json', '/items.parquet');
+                    const httpUrl = getHttpUrl(`s3://${config.bucket}/${parquetPath}`);
+                    console.log(`Trying to load: ${httpUrl}`);
+                    try {
+                        await conn.query(`SELECT 1 FROM read_parquet('${httpUrl}') LIMIT 0`);
+                        console.log(`Success: ${httpUrl}`);
+                        // Store original path for display, but we'll convert to HTTP when querying
+                        knownPaths.push(`s3://${config.bucket}/${catalog.path}`);
+                    } catch (e) {
+                        // No access or doesn't exist
+                        console.log(`No access to ${httpUrl}:`, e.message);
+                    }
+                }
+                console.log(`Found ${knownPaths.length} accessible paths`);
+                if (knownPaths.length > 0) {
+                    return knownPaths;
+                }
+            }
+
+            // Fallback: try common patterns (using parquet files directly)
+            const patterns = [
+                `${prefix}/data/test/items/items.parquet`,
+                `${prefix}/imagery/data/imagery/items/items.parquet`,
+                `${prefix}/climate/data/climate/items/items.parquet`,
+                `${prefix}/elevation/data/elevation/items/items.parquet`,
+                `${prefix}/datasets/data/datasets/items/items.parquet`,
+            ];
+
+            // For private, add tenant patterns
+            if (prefix === 'private') {
+                const tenants = ['carto', 'acme', 'default'];
+                const collections = ['test', 'imagery', 'elevation', 'datasets', 'analytics'];
+                for (const tenant of tenants) {
+                    for (const col of collections) {
+                        patterns.push(`${prefix}/${tenant}/data/${col}/items/items.parquet`);
+                        patterns.push(`${prefix}/${tenant}/${col}/data/${col}/items/items.parquet`);
+                    }
+                }
+            }
+
+            for (const pattern of patterns) {
+                const s3Url = `s3://${config.bucket}/${pattern}`;
+                const httpUrl = getHttpUrl(s3Url);
+                try {
+                    await conn.query(`SELECT 1 FROM read_parquet('${httpUrl}') LIMIT 0`);
+                    // Convert back to metadata path format for consistency
+                    const metadataPath = s3Url.replace('/items.parquet', '/metadata/v1.metadata.json');
+                    knownPaths.push(metadataPath);
+                } catch (e) {
+                    // Table doesn't exist or no access, skip
+                }
+            }
+
+            return knownPaths;
+        }
+
+        async function loadItemsFromPath(path, visibility) {
+            try {
+                // Convert S3 path to HTTP URL and read parquet directly
+                const parquetPath = path.replace('/metadata/v1.metadata.json', '/items.parquet');
+                const httpUrl = getHttpUrl(parquetPath);
+                console.log('Loading from:', httpUrl);
+
+                const result = await conn.query(`
+                    SELECT
+                        id,
+                        title,
+                        abstract,
+                        topic_category,
+                        bbox_west,
+                        bbox_south,
+                        bbox_east,
+                        bbox_north,
+                        format_name,
+                        license,
+                        reference_system,
+                        spatial_representation,
+                        contact_organization,
+                        keywords,
+                        assets,
+                        raquet_num_bands,
+                        raquet_compression,
+                        raquet_block_size
+                    FROM read_parquet('${httpUrl}')
+                `);
+
+                const rows = result.toArray();
+                for (const row of rows) {
+                    datasets.push({
+                        ...rowToObject(row),
+                        _visibility: visibility,
+                        _metadataPath: path
+                    });
+                }
+            } catch (error) {
+                console.warn(`Could not load from ${path}:`, error.message);
+            }
+        }
+
+        function rowToObject(row) {
+            const obj = {};
+            for (const key of Object.keys(row)) {
+                let value = row[key];
+                // Handle BigInt
+                if (typeof value === 'bigint') {
+                    value = Number(value);
+                }
+                obj[key] = value;
+            }
+            return obj;
+        }
+
+        function renderDatasets() {
+            const grid = document.getElementById('datasetsGrid');
+            const empty = document.getElementById('emptyState');
+
+            if (datasets.length === 0) {
+                grid.style.display = 'none';
+                empty.style.display = 'block';
+                return;
+            }
+
+            grid.style.display = 'grid';
+            empty.style.display = 'none';
+
+            grid.innerHTML = datasets.map((d, i) => `
+                <a class="dataset-card" href="#/dataset/${encodeURIComponent(d.id)}" style="text-decoration: none; color: inherit;">
+                    <h3>${escapeHtml(d.title || d.id)}</h3>
+                    <p class="description">${escapeHtml(d.abstract || 'No description')}</p>
+                    <div class="meta">
+                        <span class="tag ${d._visibility}">${d._visibility}</span>
+                        ${d.format_name ? `<span class="tag">${escapeHtml(d.format_name)}</span>` : ''}
+                        ${d.topic_category ? `<span class="tag">${escapeHtml(d.topic_category)}</span>` : ''}
+                        ${d.raquet_num_bands ? `<span class="tag">${d.raquet_num_bands} bands</span>` : ''}
+                    </div>
+                </a>
+            `).join('');
+        }
+
+        // Internal view functions (don't update hash)
+        function showDetailView(index) {
+            const d = datasets[index];
+            document.getElementById('listView').style.display = 'none';
+            document.getElementById('detailView').classList.add('active');
+
+            // Parse assets to get data URL
+            let dataUrl = '';
+            try {
+                const assets = JSON.parse(d.assets || '{}');
+                dataUrl = assets.data?.href || '';
+            } catch (e) {}
+
+            // Generate example queries
+            const metadataQuery = `-- Query dataset metadata
+SELECT id, title, abstract, bbox_west, bbox_south, bbox_east, bbox_north
+FROM iceberg_scan('${d._metadataPath}')
+WHERE id = '${d.id}';`;
+
+            const raquetQuery = dataUrl ? `-- Query raster data (requires raquet extension)
+LOAD raquet;
+
+-- Get block structure
+SELECT
+    quadbin_to_tile(block) as tile,
+    octet_length(band_1) as band_1_bytes
+FROM read_raquet('${dataUrl}')
+WHERE block > 0
+LIMIT 10;
+
+-- Extract pixel value at a point
+WITH point AS (
+    SELECT ST_Point(2.35, 48.86) AS geom  -- Paris
+)
+SELECT
+    ST_RasterValue(block, band_1, geom, metadata) as value
+FROM read_raquet('${dataUrl}'), point
+WHERE ST_RasterIntersects(block, geom);` : '';
+
+            const geoparquetQuery = dataUrl && d.format_name === 'GeoParquet' ? `-- Query vector data
+SELECT *
+FROM read_parquet('${dataUrl}')
+LIMIT 100;` : '';
+
+            document.getElementById('detailContent').innerHTML = `
+                <div class="detail-header">
+                    <h2>${escapeHtml(d.title || d.id)}</h2>
+                    <p class="description">${escapeHtml(d.abstract || 'No description available')}</p>
+                    <div class="meta" style="margin-top: 12px;">
+                        <span class="tag ${d._visibility}">${d._visibility}</span>
+                        ${d.format_name ? `<span class="tag">${escapeHtml(d.format_name)}</span>` : ''}
+                        ${d.license ? `<span class="tag">${escapeHtml(d.license)}</span>` : ''}
+                    </div>
+                </div>
+
+                <div class="metadata-section">
+                    <h3>Spatial Information</h3>
+                    <div class="metadata-grid">
+                        <div class="metadata-item">
+                            <div class="label">Bounding Box</div>
+                            <div class="value">[${d.bbox_west?.toFixed(2) || '?'}, ${d.bbox_south?.toFixed(2) || '?'}, ${d.bbox_east?.toFixed(2) || '?'}, ${d.bbox_north?.toFixed(2) || '?'}]</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Reference System</div>
+                            <div class="value">${escapeHtml(d.reference_system || 'Not specified')}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Representation</div>
+                            <div class="value">${escapeHtml(d.spatial_representation || 'Not specified')}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Topic Category</div>
+                            <div class="value">${escapeHtml(d.topic_category || 'Not specified')}</div>
+                        </div>
+                    </div>
+                </div>
+
+                ${d.raquet_num_bands ? `
+                <div class="metadata-section">
+                    <h3>Raster Information</h3>
+                    <div class="metadata-grid">
+                        <div class="metadata-item">
+                            <div class="label">Number of Bands</div>
+                            <div class="value">${d.raquet_num_bands}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Compression</div>
+                            <div class="value">${escapeHtml(d.raquet_compression || 'None')}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Block Size</div>
+                            <div class="value">${d.raquet_block_size || 'Not specified'}</div>
+                        </div>
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="metadata-section">
+                    <h3>Access Information</h3>
+                    <div class="metadata-grid">
+                        <div class="metadata-item">
+                            <div class="label">Format</div>
+                            <div class="value">${escapeHtml(d.format_name || 'Unknown')}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">Organization</div>
+                            <div class="value">${escapeHtml(d.contact_organization || 'Not specified')}</div>
+                        </div>
+                        <div class="metadata-item">
+                            <div class="label">License</div>
+                            <div class="value">${escapeHtml(d.license || 'Not specified')}</div>
+                        </div>
+                    </div>
+                    ${dataUrl ? `
+                    <div style="margin-top: 16px;">
+                        <div class="metadata-item">
+                            <div class="label">Data URL</div>
+                            <div class="value" style="font-size: 12px;">${escapeHtml(dataUrl)}</div>
+                        </div>
+                    </div>
+                    ` : ''}
+                </div>
+
+                ${dataUrl ? `
+                <div class="metadata-section">
+                    <h3>Data Preview</h3>
+                    <div id="mapContainer" class="map-container">
+                        <div class="map-loading">Loading map...</div>
+                    </div>
+                </div>
+                ` : ''}
+
+                <div class="metadata-section">
+                    <h3>Example DuckDB Queries</h3>
+
+                    <div class="tabs">
+                        <button class="tab active" onclick="showTab(this, 'metadata-query')">Metadata</button>
+                        ${raquetQuery ? `<button class="tab" onclick="showTab(this, 'raquet-query')">Raster Data</button>` : ''}
+                        ${geoparquetQuery ? `<button class="tab" onclick="showTab(this, 'vector-query')">Vector Data</button>` : ''}
+                    </div>
+
+                    <div id="metadata-query" class="code-section">
+                        <div class="code-header">
+                            <span>SQL</span>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                        <pre><code>${escapeHtml(metadataQuery)}</code></pre>
+                    </div>
+
+                    ${raquetQuery ? `
+                    <div id="raquet-query" class="code-section" style="display: none;">
+                        <div class="code-header">
+                            <span>SQL (requires raquet extension)</span>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                        <pre><code>${escapeHtml(raquetQuery)}</code></pre>
+                    </div>
+                    ` : ''}
+
+                    ${geoparquetQuery ? `
+                    <div id="vector-query" class="code-section" style="display: none;">
+                        <div class="code-header">
+                            <span>SQL</span>
+                            <button class="copy-btn" onclick="copyCode(this)">Copy</button>
+                        </div>
+                        <pre><code>${escapeHtml(geoparquetQuery)}</code></pre>
+                    </div>
+                    ` : ''}
+
+                    <p style="margin-top: 16px; font-size: 13px; color: var(--text-muted);">
+                        ${config.accessKey ?
+                            'You are authenticated. Set S3 credentials in DuckDB to query private data.' :
+                            'Sign in to access private datasets and see their query examples.'}
+                    </p>
+                </div>
+            `;
+
+            // Render map preview if data URL is available
+            if (dataUrl) {
+                renderMapPreview(d, dataUrl);
+            }
+        }
+
+        function showListView() {
+            document.getElementById('detailView').classList.remove('active');
+            document.getElementById('listView').style.display = 'block';
+        }
+
+        // Public navigation functions (update hash)
+        window.showDetail = function(index) {
+            const d = datasets[index];
+            if (d) {
+                navigateTo(`#/dataset/${encodeURIComponent(d.id)}`);
+            }
+        };
+
+        window.showList = function() {
+            navigateTo('#/');
+        };
+
+        window.showTab = function(btn, tabId) {
+            // Update tab buttons
+            btn.parentElement.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            btn.classList.add('active');
+
+            // Show selected tab content
+            btn.parentElement.parentElement.querySelectorAll('.code-section').forEach(c => c.style.display = 'none');
+            document.getElementById(tabId).style.display = 'block';
+        };
+
+        window.copyCode = function(btn) {
+            const code = btn.parentElement.parentElement.querySelector('code').textContent;
+            navigator.clipboard.writeText(code);
+            btn.textContent = 'Copied!';
+            setTimeout(() => btn.textContent = 'Copy', 2000);
+        };
+
+        window.showAuthModal = function() {
+            document.getElementById('authModal').classList.add('active');
+        };
+
+        window.hideAuthModal = function() {
+            document.getElementById('authModal').classList.remove('active');
+        };
+
+        window.authenticate = async function() {
+            config.endpoint = document.getElementById('endpoint').value;
+            config.accessKey = document.getElementById('accessKey').value;
+            config.secretKey = document.getElementById('secretKey').value;
+            config.bucket = document.getElementById('bucket').value;
+
+            hideAuthModal();
+
+            // Update UI
+            document.getElementById('authStatus').textContent = `Signed in as ${config.accessKey}`;
+            document.getElementById('authStatus').className = 'auth-status authenticated';
+            document.getElementById('authBtn').textContent = 'Sign Out';
+            document.getElementById('authBtn').onclick = signOut;
+
+            // Reconfigure and reload
+            await configureS3();
+            await loadDatasets();
+        };
+
+        window.signOut = async function() {
+            config.accessKey = null;
+            config.secretKey = null;
+
+            // Update UI
+            document.getElementById('authStatus').textContent = 'Public Access';
+            document.getElementById('authStatus').className = 'auth-status public';
+            document.getElementById('authBtn').textContent = 'Sign In';
+            document.getElementById('authBtn').onclick = showAuthModal;
+
+            // Reconfigure and reload
+            await configureS3();
+            await loadDatasets();
+        };
+
+        async function configureS3() {
+            // S3 configuration is handled via HTTP URLs, no special setup needed
+            console.log('S3 config updated:', { endpoint: config.endpoint, bucket: config.bucket });
+        }
+
+        function showError(message) {
+            const el = document.getElementById('error');
+            el.textContent = message;
+            el.style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('error').style.display = 'none';
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ============================================
+        // Map Preview Functions
+        // ============================================
+
+        let currentDeckInstance = null;
+        let hyparquet = null;
+        let compressors = {};
+
+        // Load hyparquet for Raquet files
+        async function loadHyparquet() {
+            if (!hyparquet) {
+                hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet/+esm');
+                try {
+                    const comp = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors/+esm');
+                    compressors = {
+                        SNAPPY: comp.decompressSnappy,
+                        GZIP: comp.decompressGzip || comp.gunzip,
+                        ZSTD: comp.decompressZstd
+                    };
+                } catch (e) {
+                    console.warn('Could not load compressors:', e.message);
+                }
+            }
+            return hyparquet;
+        }
+
+        // Render map preview based on format
+        async function renderMapPreview(dataset, dataUrl) {
+            const container = document.getElementById('mapContainer');
+            if (!container) return;
+
+            // Clean up previous instance
+            if (currentDeckInstance) {
+                currentDeckInstance.finalize();
+                currentDeckInstance = null;
+            }
+
+            const format = dataset.format_name || 'Unknown';
+
+            try {
+                if (format === 'Raquet') {
+                    await renderRaquetMap(dataset, dataUrl, container);
+                } else if (format === 'GeoParquet') {
+                    await renderGeoParquetMap(dataset, dataUrl, container);
+                } else {
+                    container.innerHTML = '<div class="map-error">Unknown format: ' + escapeHtml(format) + '</div>';
+                }
+            } catch (error) {
+                console.error('Map render error:', error);
+                container.innerHTML = '<div class="map-error">Error loading map: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+
+        // MVT decoder (using @loaders.gl/mvt)
+        let mvtLoader = null;
+        async function loadMvtDecoder() {
+            if (!mvtLoader) {
+                const loaders = await import('https://cdn.jsdelivr.net/npm/@loaders.gl/mvt@4.2.0/+esm');
+                mvtLoader = loaders.MVTLoader;
+            }
+            return mvtLoader;
+        }
+
+        // Render GeoParquet using DuckDB WASM + ST_AsMVT (vector tiles on-the-fly)
+        async function renderGeoParquetMap(dataset, dataUrl, container) {
+            container.innerHTML = '<div class="map-loading">Initializing vector tile renderer...</div>';
+
+            try {
+                const httpUrl = getHttpUrl(dataUrl);
+
+                // Check if spatial extension is loaded and ST_AsMVT is available
+                let hasMvtSupport = false;
+                let hasGeoJsonSupport = false;
+
+                try {
+                    // Test if ST_AsMVT is available
+                    await conn.query("SELECT ST_AsMVT(NULL) WHERE false");
+                    hasMvtSupport = true;
+                    hasGeoJsonSupport = true;
+                    console.log('ST_AsMVT available');
+                } catch (e) {
+                    console.log('ST_AsMVT not available:', e.message);
+                    // Try ST_AsGeoJSON as fallback
+                    try {
+                        await conn.query(`SELECT ST_AsGeoJSON(ST_Point(0, 0))`);
+                        hasGeoJsonSupport = true;
+                        console.log('ST_AsGeoJSON available');
+                    } catch (e2) {
+                        console.log('ST_AsGeoJSON not available:', e2.message);
+                    }
+                }
+
+                // Calculate bounds for initial view
+                const bbox = [dataset.bbox_west, dataset.bbox_south, dataset.bbox_east, dataset.bbox_north];
+                const centerLon = (bbox[0] + bbox[2]) / 2;
+                const centerLat = (bbox[1] + bbox[3]) / 2;
+
+                // Estimate zoom based on bbox size
+                const lonSpan = bbox[2] - bbox[0];
+                const latSpan = bbox[3] - bbox[1];
+                const maxSpan = Math.max(lonSpan, latSpan);
+                let initialZoom = 10;
+                if (maxSpan > 100) initialZoom = 2;
+                else if (maxSpan > 50) initialZoom = 3;
+                else if (maxSpan > 20) initialZoom = 4;
+                else if (maxSpan > 10) initialZoom = 5;
+                else if (maxSpan > 5) initialZoom = 6;
+                else if (maxSpan > 2) initialZoom = 7;
+                else if (maxSpan > 1) initialZoom = 8;
+                else if (maxSpan > 0.5) initialZoom = 9;
+
+                // Stats tracking
+                let tilesLoaded = 0;
+                let statsDiv = null;
+
+                // Clear container
+                container.innerHTML = '';
+
+                if (hasMvtSupport) {
+                    // Use ST_AsMVT for efficient vector tile rendering
+                    const MVTLoader = await loadMvtDecoder();
+                    const { parse } = await import('https://cdn.jsdelivr.net/npm/@loaders.gl/core@4.2.0/+esm');
+
+                    // Tile cache
+                    const tileCache = new Map();
+
+                    // Function to generate MVT for a tile
+                    async function getTileData({ index }) {
+                        const { x, y, z } = index;
+                        const cacheKey = `${z}/${x}/${y}`;
+
+                        if (tileCache.has(cacheKey)) {
+                            return tileCache.get(cacheKey);
+                        }
+
+                        try {
+                            // Generate MVT using DuckDB's ST_AsMVT
+                            // ST_TileEnvelope returns bbox in Web Mercator (EPSG:3857)
+                            const result = await conn.query(`
+                                WITH tile_envelope AS (
+                                    SELECT ST_TileEnvelope(${z}, ${x}, ${y}) as envelope
+                                ),
+                                tile_data AS (
+                                    SELECT {
+                                        'geometry': ST_AsMVTGeom(
+                                            geometry,
+                                            (SELECT envelope FROM tile_envelope),
+                                            4096, 256, true
+                                        )
+                                    } AS feature
+                                    FROM read_parquet('${httpUrl}')
+                                    WHERE geometry IS NOT NULL
+                                    AND ST_Intersects(
+                                        ST_Transform(geometry, 'EPSG:4326', 'EPSG:3857', true),
+                                        (SELECT envelope FROM tile_envelope)
+                                    )
+                                )
+                                SELECT ST_AsMVT(feature, 'layer', 4096, 'geometry') AS mvt
+                                FROM tile_data
+                                WHERE feature.geometry IS NOT NULL
+                            `);
+
+                            const rows = result.toArray();
+                            if (rows.length === 0 || !rows[0].mvt) {
+                                tileCache.set(cacheKey, null);
+                                return null;
+                            }
+
+                            // Parse MVT binary to GeoJSON features
+                            const mvtBuffer = rows[0].mvt;
+                            const features = await parse(mvtBuffer, MVTLoader, {
+                                mvt: { coordinates: 'wgs84', tileIndex: { x, y, z } }
+                            });
+
+                            tilesLoaded++;
+                            if (statsDiv) statsDiv.textContent = `${tilesLoaded} tiles loaded (MVT)`;
+
+                            tileCache.set(cacheKey, features);
+                            return features;
+                        } catch (e) {
+                            console.warn(`Tile ${z}/${x}/${y} error:`, e.message);
+                            tileCache.set(cacheKey, null);
+                            return null;
+                        }
+                    }
+
+                    currentDeckInstance = new globalThis.deck.DeckGL({
+                        container: container,
+                        initialViewState: {
+                            longitude: centerLon,
+                            latitude: centerLat,
+                            zoom: initialZoom,
+                            pitch: 0,
+                            bearing: 0
+                        },
+                        controller: true,
+                        layers: [
+                            new globalThis.deck.TileLayer({
+                                id: 'basemap',
+                                data: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                                minZoom: 0,
+                                maxZoom: 19,
+                                tileSize: 256,
+                                renderSubLayers: props => {
+                                    const {tile, data} = props;
+                                    const {west, south, east, north} = tile.bbox;
+                                    return new globalThis.deck.BitmapLayer({
+                                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                        image: data,
+                                        bounds: [west, south, east, north]
+                                    });
+                                }
+                            }),
+                            new globalThis.deck.TileLayer({
+                                id: 'mvt-layer',
+                                getTileData,
+                                minZoom: 0,
+                                maxZoom: 16,
+                                tileSize: 512,
+                                renderSubLayers: props => {
+                                    const {tile, data} = props;
+                                    if (!data || data.length === 0) return null;
+
+                                    return new globalThis.deck.GeoJsonLayer({
+                                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                        data: data,
+                                        pickable: true,
+                                        stroked: true,
+                                        filled: true,
+                                        pointType: 'circle',
+                                        lineWidthMinPixels: 1,
+                                        getFillColor: [88, 166, 255, 120],
+                                        getLineColor: [88, 166, 255, 255],
+                                        getPointRadius: 50,
+                                        pointRadiusMinPixels: 2,
+                                        pointRadiusMaxPixels: 8
+                                    });
+                                }
+                            })
+                        ]
+                    });
+
+                    statsDiv = document.createElement('div');
+                    statsDiv.className = 'map-stats';
+                    statsDiv.textContent = '0 tiles loaded (MVT)';
+                    container.appendChild(statsDiv);
+
+                } else if (hasGeoJsonSupport) {
+                    // Fallback: Load limited GeoJSON using DuckDB ST_AsGeoJSON
+                    container.innerHTML = '<div class="map-loading">Loading features (DuckDB)...</div>';
+
+                    const result = await conn.query(`
+                        SELECT ST_AsGeoJSON(geometry) as geojson
+                        FROM read_parquet('${httpUrl}')
+                        WHERE geometry IS NOT NULL
+                        LIMIT 5000
+                    `);
+
+                    const rows = result.toArray();
+                    if (rows.length === 0) {
+                        container.innerHTML = '<div class="map-error">No geometry data found</div>';
+                        return;
+                    }
+
+                    const features = rows.map((row, i) => {
+                        try {
+                            return {
+                                type: 'Feature',
+                                id: i,
+                                geometry: JSON.parse(row.geojson),
+                                properties: {}
+                            };
+                        } catch (e) {
+                            return null;
+                        }
+                    }).filter(f => f !== null);
+
+                    container.innerHTML = '';
+
+                    currentDeckInstance = new globalThis.deck.DeckGL({
+                        container: container,
+                        initialViewState: {
+                            longitude: centerLon,
+                            latitude: centerLat,
+                            zoom: initialZoom,
+                            pitch: 0,
+                            bearing: 0
+                        },
+                        controller: true,
+                        layers: [
+                            new globalThis.deck.TileLayer({
+                                id: 'basemap',
+                                data: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                                minZoom: 0,
+                                maxZoom: 19,
+                                tileSize: 256,
+                                renderSubLayers: props => {
+                                    const {tile, data} = props;
+                                    const {west, south, east, north} = tile.bbox;
+                                    return new globalThis.deck.BitmapLayer({
+                                        id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                        image: data,
+                                        bounds: [west, south, east, north]
+                                    });
+                                }
+                            }),
+                            new globalThis.deck.GeoJsonLayer({
+                                id: 'geojson',
+                                data: { type: 'FeatureCollection', features },
+                                pickable: true,
+                                stroked: true,
+                                filled: true,
+                                pointType: 'circle',
+                                lineWidthMinPixels: 1,
+                                getFillColor: [88, 166, 255, 150],
+                                getLineColor: [88, 166, 255, 255],
+                                getPointRadius: 100,
+                                pointRadiusMinPixels: 3,
+                                pointRadiusMaxPixels: 10
+                            })
+                        ]
+                    });
+
+                    statsDiv = document.createElement('div');
+                    statsDiv.className = 'map-stats';
+                    statsDiv.textContent = `${features.length.toLocaleString()} features (DuckDB)`;
+                    container.appendChild(statsDiv);
+
+                } else {
+                    // Ultimate fallback: Use loaders.gl GeoParquetLoader
+                    container.innerHTML = '<div class="map-loading">Loading GeoParquet directly...</div>';
+
+                    try {
+                        const { GeoParquetLoader } = await import('https://cdn.jsdelivr.net/npm/@loaders.gl/parquet@4.2.0/+esm');
+                        const { load } = await import('https://cdn.jsdelivr.net/npm/@loaders.gl/core@4.2.0/+esm');
+
+                        // Load the GeoParquet file
+                        const geojson = await load(httpUrl, GeoParquetLoader, {
+                            parquet: { limit: 5000 }
+                        });
+
+                        container.innerHTML = '';
+
+                        const featureCount = geojson.features?.length || 0;
+
+                        currentDeckInstance = new globalThis.deck.DeckGL({
+                            container: container,
+                            initialViewState: {
+                                longitude: centerLon,
+                                latitude: centerLat,
+                                zoom: initialZoom,
+                                pitch: 0,
+                                bearing: 0
+                            },
+                            controller: true,
+                            layers: [
+                                new globalThis.deck.TileLayer({
+                                    id: 'basemap',
+                                    data: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                                    minZoom: 0,
+                                    maxZoom: 19,
+                                    tileSize: 256,
+                                    renderSubLayers: props => {
+                                        const {tile, data} = props;
+                                        const {west, south, east, north} = tile.bbox;
+                                        return new globalThis.deck.BitmapLayer({
+                                            id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                            image: data,
+                                            bounds: [west, south, east, north]
+                                        });
+                                    }
+                                }),
+                                new globalThis.deck.GeoJsonLayer({
+                                    id: 'geojson',
+                                    data: geojson,
+                                    pickable: true,
+                                    stroked: true,
+                                    filled: true,
+                                    pointType: 'circle',
+                                    lineWidthMinPixels: 1,
+                                    getFillColor: [88, 166, 255, 150],
+                                    getLineColor: [88, 166, 255, 255],
+                                    getPointRadius: 100,
+                                    pointRadiusMinPixels: 3,
+                                    pointRadiusMaxPixels: 10
+                                })
+                            ]
+                        });
+
+                        statsDiv = document.createElement('div');
+                        statsDiv.className = 'map-stats';
+                        statsDiv.textContent = `${featureCount.toLocaleString()} features (loaders.gl)`;
+                        container.appendChild(statsDiv);
+
+                    } catch (loaderError) {
+                        console.error('GeoParquetLoader failed:', loaderError);
+                        container.innerHTML = '<div class="map-error">Cannot visualize: spatial functions not available</div>';
+                    }
+                }
+
+            } catch (error) {
+                console.error('GeoParquet map error:', error);
+                container.innerHTML = '<div class="map-error">Error: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+
+        // Render Raquet using hyparquet + TileLayer
+        async function renderRaquetMap(dataset, dataUrl, container) {
+            container.innerHTML = '<div class="map-loading">Loading Raquet metadata...</div>';
+
+            try {
+                const { parquetMetadataAsync, parquetRead, asyncBufferFromUrl } = await loadHyparquet();
+
+                const httpUrl = getHttpUrl(dataUrl);
+                const parquetFile = await asyncBufferFromUrl({ url: httpUrl });
+                const metadata = await parquetMetadataAsync(parquetFile);
+
+                // Build row group index
+                const rowGroupIndex = buildRowGroupIndex(metadata);
+
+                // Parse Raquet metadata
+                let raquetMeta = null;
+                try {
+                    const numRows = Number(metadata.num_rows);
+                    let lastRow = null;
+                    await parquetRead({
+                        file: parquetFile,
+                        rowStart: numRows - 1,
+                        rowEnd: numRows,
+                        columns: ['metadata'],
+                        compressors,
+                        onComplete: (data) => { lastRow = data; }
+                    });
+
+                    let metaStr = null;
+                    if (Array.isArray(lastRow) && lastRow[0]) {
+                        const metaValue = lastRow[0][0];
+                        if (metaValue) {
+                            const decoder = new TextDecoder();
+                            metaStr = typeof metaValue === 'string' ? metaValue : decoder.decode(new Uint8Array(metaValue));
+                        }
+                    } else if (lastRow?.metadata && lastRow.metadata[0]) {
+                        const decoder = new TextDecoder();
+                        const metaBytes = lastRow.metadata[0];
+                        metaStr = typeof metaBytes === 'string' ? metaBytes : decoder.decode(new Uint8Array(metaBytes));
+                    }
+
+                    if (metaStr) {
+                        raquetMeta = JSON.parse(metaStr);
+                    }
+                } catch (e) {
+                    console.warn('Could not read Raquet metadata:', e);
+                }
+
+                const bandNames = raquetMeta?.bands?.map(b => b.name) || ['band_1', 'band_2', 'band_3'];
+                const bandType = raquetMeta?.bands?.[0]?.type || 'uint8';
+                const blockWidth = raquetMeta?.block_width || 256;
+                const blockHeight = raquetMeta?.block_height || 256;
+                const minZoom = raquetMeta?.minresolution || 0;
+                const maxZoom = raquetMeta?.maxresolution || 20;
+                const dataBounds = raquetMeta?.bounds || [dataset.bbox_west, dataset.bbox_south, dataset.bbox_east, dataset.bbox_north];
+
+                // Tile cache for this instance
+                const tileCache = new Map();
+                const pendingRequests = new Map();
+                let batchTimeout = null;
+                let tilesLoaded = 0;
+                let statsDiv = null;
+
+                // QUADBIN conversion functions
+                function tileToQuadbin(x, y, z) {
+                    const mode = 9n << 59n;
+                    const resolution = BigInt(z) << 52n;
+                    let index = 0n;
+                    for (let i = 0; i < z; i++) {
+                        index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
+                        index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
+                    }
+                    const shift = 52 - 2 * z;
+                    if (shift > 0) {
+                        index = index << BigInt(shift);
+                        index |= (1n << BigInt(shift)) - 1n;
+                    }
+                    return mode | resolution | index;
+                }
+
+                function decodeInt64(bytes) {
+                    if (!bytes || bytes.length < 8) return null;
+                    const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
+                    const low = view.getUint32(0, true);
+                    const high = view.getInt32(4, true);
+                    return BigInt(low) + (BigInt(high) << 32n);
+                }
+
+                function findRowGroupsForBlock(blockId) {
+                    const blockBigInt = BigInt(blockId);
+                    return rowGroupIndex.filter(rg => {
+                        if (rg.minBlock === null) return true;
+                        return blockBigInt >= rg.minBlock && blockBigInt <= rg.maxBlock;
+                    });
+                }
+
+                function decodeTile(bandData, width, height, type) {
+                    if (!bandData) return null;
+                    let bytes;
+                    if (bandData instanceof Uint8Array) bytes = bandData;
+                    else if (bandData instanceof ArrayBuffer) bytes = new Uint8Array(bandData);
+                    else if (ArrayBuffer.isView(bandData)) bytes = new Uint8Array(bandData.buffer, bandData.byteOffset, bandData.byteLength);
+                    else if (Array.isArray(bandData)) bytes = new Uint8Array(bandData);
+                    else return null;
+
+                    let data;
+                    try { data = pako.inflate(bytes); } catch (e) { data = bytes; }
+
+                    if (type === 'uint16') {
+                        const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+                        const pixels = new Uint16Array(width * height);
+                        for (let i = 0; i < width * height; i++) {
+                            pixels[i] = view.getUint16(i * 2, true);
+                        }
+                        return pixels;
+                    }
+                    return data;
+                }
+
+                function createImage(bands, width, height) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    const imageData = ctx.createImageData(width, height);
+
+                    // Find min/max across bands
+                    const allValues = [];
+                    for (const band of bands) {
+                        if (!band) continue;
+                        const step = Math.max(1, Math.floor(band.length / 10000));
+                        for (let i = 0; i < band.length; i += step) allValues.push(band[i]);
+                    }
+                    allValues.sort((a, b) => a - b);
+                    const p2 = allValues[Math.floor(allValues.length * 0.02)] || 0;
+                    const p98 = allValues[Math.floor(allValues.length * 0.98)] || 255;
+                    const range = (p98 - p2) || 1;
+
+                    const r = bands[0], g = bands[1], b = bands[2];
+                    for (let i = 0; i < width * height; i++) {
+                        imageData.data[i * 4] = r ? Math.min(255, Math.max(0, Math.round((r[i] - p2) / range * 255))) : 0;
+                        imageData.data[i * 4 + 1] = g ? Math.min(255, Math.max(0, Math.round((g[i] - p2) / range * 255))) : 0;
+                        imageData.data[i * 4 + 2] = b ? Math.min(255, Math.max(0, Math.round((b[i] - p2) / range * 255))) : 0;
+                        imageData.data[i * 4 + 3] = 255;
+                    }
+                    ctx.putImageData(imageData, 0, 0);
+                    return canvas;
+                }
+
+                async function fetchTilesBatch(blockIds) {
+                    const results = new Map();
+                    const rowGroupRequests = new Map();
+
+                    for (const blockId of blockIds) {
+                        const matchingRGs = findRowGroupsForBlock(blockId);
+                        for (const rg of matchingRGs) {
+                            if (!rowGroupRequests.has(rg.rowGroupId)) {
+                                rowGroupRequests.set(rg.rowGroupId, { rg, blockIds: new Set() });
+                            }
+                            rowGroupRequests.get(rg.rowGroupId).blockIds.add(blockId.toString());
+                        }
+                    }
+
+                    const columnsToRead = ['block', ...bandNames.slice(0, 3)];
+
+                    for (const [rgId, { rg, blockIds: rgBlockIds }] of rowGroupRequests) {
+                        try {
+                            let rowGroupData = null;
+                            await parquetRead({
+                                file: parquetFile,
+                                rowStart: rg.rowStart,
+                                rowEnd: rg.rowEnd,
+                                columns: columnsToRead,
+                                compressors,
+                                utf8: false,
+                                onComplete: (result) => { rowGroupData = result; }
+                            });
+
+                            if (!rowGroupData) continue;
+
+                            const numRows = Array.isArray(rowGroupData) ? rowGroupData.length : (rowGroupData.block?.length || 0);
+
+                            for (let i = 0; i < numRows; i++) {
+                                let blockId, bandData;
+                                if (Array.isArray(rowGroupData)) {
+                                    blockId = rowGroupData[i][0]?.toString();
+                                    bandData = rowGroupData[i].slice(1);
+                                } else {
+                                    blockId = rowGroupData.block?.[i]?.toString();
+                                    bandData = bandNames.slice(0, 3).map(name => rowGroupData[name]?.[i]);
+                                }
+
+                                if (!rgBlockIds.has(blockId)) continue;
+
+                                const bands = [];
+                                for (let j = 0; j < bandData.length; j++) {
+                                    if (bandData[j]) {
+                                        const decoded = decodeTile(bandData[j], blockWidth, blockHeight, bandType);
+                                        bands.push(decoded);
+                                    }
+                                }
+                                if (bands.length > 0) results.set(blockId, { bands });
+                            }
+                        } catch (e) {
+                            console.error(`Error reading row group ${rgId}:`, e);
+                        }
+                    }
+                    return results;
+                }
+
+                async function executeBatch() {
+                    if (pendingRequests.size === 0) return;
+
+                    const requests = new Map(pendingRequests);
+                    pendingRequests.clear();
+
+                    const blockIds = [];
+                    for (const [key, req] of requests) {
+                        const [z, x, y] = key.split('/').map(Number);
+                        req.blockId = tileToQuadbin(x, y, z);
+                        blockIds.push(req.blockId);
+                    }
+
+                    try {
+                        const results = await fetchTilesBatch(blockIds);
+
+                        for (const [cacheKey, req] of requests) {
+                            const result = results.get(req.blockId.toString());
+                            if (!result) {
+                                tileCache.set(cacheKey, null);
+                                req.resolve(null);
+                                continue;
+                            }
+
+                            const image = createImage(result.bands, blockWidth, blockHeight);
+                            tileCache.set(cacheKey, image);
+                            tilesLoaded++;
+                            if (statsDiv) statsDiv.textContent = `${tilesLoaded} tiles loaded`;
+                            req.resolve(image);
+                        }
+                    } catch (e) {
+                        console.error('Batch fetch error:', e);
+                        for (const req of requests.values()) req.resolve(null);
+                    }
+                }
+
+                function getTileData({ index }) {
+                    const { x, y, z } = index;
+                    if (z < minZoom || z > maxZoom) return null;
+
+                    const cacheKey = `${z}/${x}/${y}`;
+                    if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
+
+                    return new Promise((resolve) => {
+                        pendingRequests.set(cacheKey, { resolve });
+                        if (batchTimeout) clearTimeout(batchTimeout);
+                        batchTimeout = setTimeout(executeBatch, 50);
+                    });
+                }
+
+                // Calculate initial view
+                const centerLon = (dataBounds[0] + dataBounds[2]) / 2;
+                const centerLat = (dataBounds[1] + dataBounds[3]) / 2;
+                const initialZoom = Math.min(minZoom + 2, maxZoom);
+
+                // Clear container and create map
+                container.innerHTML = '';
+
+                currentDeckInstance = new globalThis.deck.DeckGL({
+                    container: container,
+                    initialViewState: {
+                        longitude: centerLon,
+                        latitude: centerLat,
+                        zoom: initialZoom,
+                        pitch: 0,
+                        bearing: 0
+                    },
+                    controller: true,
+                    layers: [
+                        new globalThis.deck.TileLayer({
+                            id: 'basemap',
+                            data: 'https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png',
+                            minZoom: 0,
+                            maxZoom: 19,
+                            tileSize: 256,
+                            renderSubLayers: props => {
+                                const {tile, data} = props;
+                                const {west, south, east, north} = tile.bbox;
+                                return new globalThis.deck.BitmapLayer({
+                                    id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                    image: data,
+                                    bounds: [west, south, east, north]
+                                });
+                            }
+                        }),
+                        new globalThis.deck.TileLayer({
+                            id: 'raquet',
+                            getTileData,
+                            minZoom,
+                            maxZoom,
+                            tileSize: blockWidth,
+                            extent: dataBounds,
+                            refinementStrategy: 'no-overlap',
+                            maxRequests: 6,
+                            renderSubLayers: props => {
+                                const {tile, data} = props;
+                                if (!data) return null;
+                                const {west, south, east, north} = tile.bbox;
+                                return new globalThis.deck.BitmapLayer({
+                                    id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                    image: data,
+                                    bounds: [west, south, east, north]
+                                });
+                            }
+                        })
+                    ]
+                });
+
+                // Add stats
+                statsDiv = document.createElement('div');
+                statsDiv.className = 'map-stats';
+                statsDiv.textContent = `Zoom: ${minZoom}-${maxZoom} | ${Number(metadata.num_rows).toLocaleString()} tiles`;
+                container.appendChild(statsDiv);
+
+            } catch (error) {
+                console.error('Raquet map error:', error);
+                container.innerHTML = '<div class="map-error">Error: ' + escapeHtml(error.message) + '</div>';
+            }
+        }
+
+        // Build row group index from parquet metadata
+        function buildRowGroupIndex(metadata) {
+            const index = [];
+            let rowStart = 0;
+
+            for (let i = 0; i < metadata.row_groups.length; i++) {
+                const rg = metadata.row_groups[i];
+                const numRows = Number(rg.num_rows);
+                const rowEnd = rowStart + numRows;
+
+                const blockCol = rg.columns.find(c =>
+                    c.meta_data?.path_in_schema?.includes('block') ||
+                    c.meta_data?.path_in_schema?.[0] === 'block'
+                );
+
+                let minBlock = null, maxBlock = null;
+                if (blockCol?.meta_data?.statistics) {
+                    const stats = blockCol.meta_data.statistics;
+                    const decodeInt64 = (bytes) => {
+                        if (!bytes || bytes.length < 8) return null;
+                        const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
+                        const low = view.getUint32(0, true);
+                        const high = view.getInt32(4, true);
+                        return BigInt(low) + (BigInt(high) << 32n);
+                    };
+                    if (stats.min_value instanceof Uint8Array) {
+                        minBlock = decodeInt64(stats.min_value);
+                        maxBlock = decodeInt64(stats.max_value);
+                    } else if (typeof stats.min_value === 'bigint') {
+                        minBlock = stats.min_value;
+                        maxBlock = stats.max_value;
+                    } else if (stats.min_value != null) {
+                        minBlock = BigInt(stats.min_value);
+                        maxBlock = BigInt(stats.max_value);
+                    }
+                }
+
+                index.push({ rowGroupId: i, minBlock, maxBlock, rowStart, rowEnd, numRows });
+                rowStart = rowEnd;
+            }
+
+            return index;
+        }
+
+        // Start
+        initDuckDB();
+    </script>
+</body>
+</html>

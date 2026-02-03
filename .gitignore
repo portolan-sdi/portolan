@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+.venv/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# DuckDB / DuckLake files
+*.duckdb
+*.duckdb.wal
+*.ducklake
+*.ducklake.wal
+
+# Local storage / test data
+minio-data/
+minio/
+test_output/
+test_raquet_catalog/
+sdi_test_catalog/
+minio_catalog/
+minio_catalog_private/
+
+# KSA data (private - do not commit)
+ksa_geoparquet/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+nohup.out
