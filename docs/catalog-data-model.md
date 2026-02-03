@@ -581,6 +581,248 @@ portolan import arcgis https://portal.example.com/arcgis
 portolan import ckan https://data.gov
 ```
 
+## Compatibility Layers
+
+Portolan can generate multiple catalog formats for interoperability with existing SDI infrastructure.
+
+### Supported Standards
+
+| Standard | Type | Format | Use Case |
+|----------|------|--------|----------|
+| **Iceberg REST** | API | REST/JSON | Core catalog, query engines (DuckDB, Snowflake, etc.) |
+| **OGC API - Records** | API | REST/JSON | Modern SDI catalog API |
+| **STAC** | API/Static | REST/JSON | Cloud-native geospatial community |
+| **OGC CSW** | API | XML/SOAP | Legacy SDI systems, INSPIRE, GeoNetwork |
+| **ISO 19139** | Encoding | XML | Metadata exchange format (returned by CSW) |
+| **GeoDCAT-AP** | Encoding | RDF/JSON-LD | EU open data portals, data.europa.eu |
+
+### Generated Endpoints
+
+When services are enabled, Portolan generates static files (or lightweight proxies) for each:
+
+```
+warehouse/
+├── v1/                    # Iceberg REST catalog (always)
+├── stac/                  # STAC catalog
+│   ├── catalog.json
+│   └── collections/
+│       └── {collection}/
+│           ├── collection.json
+│           └── items/
+├── ogc/
+│   ├── records/           # OGC API - Records
+│   │   └── collections/
+│   │       └── {collection}/
+│   │           └── items/
+│   └── csw/               # CSW GetCapabilities, GetRecords responses
+│       ├── capabilities.xml
+│       └── records/
+└── dcat/                  # GeoDCAT-AP
+    └── catalog.ttl        # RDF/Turtle or JSON-LD
+```
+
+### Service Selection
+
+Services are configured in `portolan.yaml` and checked by the CLI when adding or updating entries.
+
+## Configuration
+
+Portolan uses a `portolan.yaml` file for local configuration. The cloud storage catalog is always the source of truth.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Cloud Storage (Source of Truth)          │
+│  s3://my-bucket/catalog/                                    │
+│  ├── v1/                    # Iceberg REST catalog          │
+│  ├── stac/                  # STAC catalog (if enabled)     │
+│  ├── ogc/                   # OGC endpoints (if enabled)    │
+│  └── data/                  # Parquet files, COGs, etc.     │
+└─────────────────────────────────────────────────────────────┘
+                              ▲
+                              │ read/write
+                              │
+┌─────────────────────────────────────────────────────────────┐
+│                         CLI                                 │
+│  portolan dataset add, portolan resource add, etc.          │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              │ uses
+                              ▼
+┌─────────────────────────────┬───────────────────────────────┐
+│      portolan.yaml          │        .portolan/             │
+│   (connection + defaults)   │   (temp working directory)    │
+│   - version controlled      │   - intermediate files        │
+│   - user-edited             │   - cleaned up after upload   │
+└─────────────────────────────┴───────────────────────────────┘
+```
+
+### Workflow
+
+```bash
+# Create a NEW catalog on cloud storage
+portolan init s3://my-bucket/catalog --name "My SDI"
+# → Creates Iceberg catalog directly on cloud storage
+# → Saves connection info in local portolan.yaml
+
+# OR connect to an EXISTING catalog
+portolan connect s3://some-bucket/existing-catalog
+# → Validates it's a valid Portolan/Iceberg catalog
+# → Saves connection info in local portolan.yaml
+
+# Add a dataset (operates on remote)
+portolan dataset add boundaries.parquet --title "Boundaries"
+# → Generates metadata in .portolan/ (temp)
+# → Uploads parquet + metadata to cloud storage
+# → Cleans up .portolan/
+
+# Read-only access to public catalogs
+portolan connect https://public-catalog.example.com --readonly
+portolan dataset list
+```
+
+### Configuration Schema
+
+```yaml
+# portolan.yaml
+
+# Remote catalog connection (source of truth)
+remote:
+  url: "s3://my-bucket/catalog"
+  region: "eu-west-1"
+  # Credentials via environment variables
+  access_key: "${AWS_ACCESS_KEY_ID}"
+  secret_key: "${AWS_SECRET_ACCESS_KEY}"
+  # Or use a profile
+  # profile: "my-aws-profile"
+
+# Catalog metadata (stored on remote, cached locally)
+catalog:
+  name: "My Organization SDI"
+  description: "Spatial Data Infrastructure for My Organization"
+
+# Enabled compatibility services
+# These are stored on the remote catalog and regenerated on changes
+services:
+  # Core Iceberg REST (always enabled)
+  iceberg_rest:
+    enabled: true
+    prefix: "warehouse"
+
+  # STAC catalog
+  stac:
+    enabled: true
+    version: "1.0.0"
+
+  # OGC API - Records
+  ogc_api_records:
+    enabled: true
+    version: "1.0"
+
+  # Legacy CSW (opt-in for INSPIRE/government)
+  csw:
+    enabled: false
+    version: "3.0.0"
+    profile: "iso19139"  # or "iso19139-2", "gmd"
+
+  # GeoDCAT-AP for EU data portals
+  geodcat:
+    enabled: false
+    profile: "geodcat-ap-2.0"
+    format: "jsonld"  # or "turtle", "rdfxml"
+
+# Default metadata (applied to new entries if not specified via CLI)
+defaults:
+  contact:
+    organization: "My Organization"
+    email: "data@example.org"
+    role: "publisher"
+
+  license: "CC-BY-4.0"
+  license_url: "https://creativecommons.org/licenses/by/4.0/"
+  access_constraints: "unrestricted"
+
+  crs: "EPSG:4326"
+  metadata_language: "en"
+```
+
+### CLI Behavior
+
+When you run catalog operations, the CLI:
+1. Reads `portolan.yaml` for connection info and defaults
+2. Connects to the remote catalog (source of truth)
+3. Generates any needed files in `.portolan/` (temp)
+4. Uploads changes to the remote
+5. Cleans up temp files
+
+```bash
+# Initialize a new catalog on cloud storage
+portolan init s3://my-bucket/catalog \
+  --name "My SDI" \
+  --enable stac \
+  --enable ogc-api-records
+# → Creates catalog structure on S3
+# → Saves connection to portolan.yaml
+
+# Connect to existing catalog
+portolan connect s3://other-bucket/catalog
+# → Validates catalog exists
+# → Updates portolan.yaml with new connection
+
+# Add a dataset - CLI checks services config to know what to update
+portolan dataset add boundaries.parquet --title "Admin Boundaries"
+# → Reads remote catalog state
+# → Generates metadata in .portolan/ (temp)
+# → Uploads to remote:
+#   - Iceberg catalog (always)
+#   - STAC item (if enabled)
+#   - OGC Records entry (if enabled)
+#   - CSW record (if enabled)
+
+# Enable/disable services (updates remote catalog config)
+portolan config set services.csw.enabled true
+portolan config set services.geodcat.enabled true
+# → Regenerates affected compatibility layers on remote
+
+# View current config
+portolan config show
+
+# Set defaults (local only, for convenience)
+portolan config set defaults.contact.organization "New Org Name"
+portolan config set defaults.license "CC0-1.0"
+```
+
+### Configuration Precedence
+
+1. **CLI flags** (highest) - `--license MIT` overrides everything
+2. **Config defaults** - from `portolan.yaml`
+3. **Built-in defaults** (lowest) - sensible fallbacks
+
+### Minimal Config
+
+For simple use cases, only the remote URL is required:
+
+```yaml
+# Minimal portolan.yaml (created by `portolan init` or `portolan connect`)
+remote:
+  url: "s3://my-bucket/catalog"
+```
+
+All services default to disabled except Iceberg REST, and metadata defaults must be provided per-entry via CLI flags.
+
+### Environment Variables
+
+Sensitive values can use environment variable references:
+
+```yaml
+remotes:
+  origin:
+    url: "s3://my-bucket/portolan"
+    access_key: "${AWS_ACCESS_KEY_ID}"
+    secret_key: "${AWS_SECRET_ACCESS_KEY}"
+```
+
 ## Future Considerations
 
 - **Views**: Virtual tables defined by SQL queries over other tables
@@ -588,3 +830,5 @@ portolan import ckan https://data.gov
 - **Versioning**: Track changes to resources over time
 - **Federation**: Reference tables/resources from other Portolan catalogs
 - **Validation**: Schema validation for metadata completeness (bronze/silver/gold tiers)
+- **Harvesting**: Scheduled sync from external catalogs (STAC, CSW, CKAN)
+- **Webhooks**: Notify external systems when catalog changes
