@@ -1023,6 +1023,120 @@ def stac_item_to_resource(item: dict, item_url: str) -> dict:
     }
 
 
+@cli.command("build")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def build(ctx, verbose: bool):
+    """Build queryable Parquet catalog from resources.
+
+    Generates a Parquet file containing all resource metadata,
+    enabling SQL queries via DuckDB or other engines.
+
+    \b
+    Example:
+        portolan build
+        duckdb -c "SELECT name, format, title FROM '.portolan/catalog.parquet'"
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    catalog = get_catalog(ctx)
+    resources_dir = catalog.path / "resources"
+
+    if not resources_dir.exists():
+        click.echo("No resources found. Import some first with:")
+        click.echo("  portolan import stac <url>")
+        return
+
+    # Collect all resources
+    resources = []
+    for namespace_dir in resources_dir.iterdir():
+        if not namespace_dir.is_dir():
+            continue
+
+        namespace = namespace_dir.name
+
+        for resource_file in namespace_dir.glob("*.json"):
+            if resource_file.name.startswith("_"):
+                continue
+
+            try:
+                with open(resource_file) as f:
+                    resource = json.load(f)
+                resource["namespace"] = namespace
+                resources.append(resource)
+
+                if verbose:
+                    click.echo(f"  {namespace}/{resource.get('name', 'unknown')}")
+            except Exception as e:
+                if verbose:
+                    click.echo(f"  Error reading {resource_file}: {e}", err=True)
+
+    if not resources:
+        click.echo("No resources found.")
+        return
+
+    click.echo(f"Found {len(resources)} resources")
+
+    # Flatten resources to tabular format
+    rows = []
+    for r in resources:
+        spatial = r.get("spatial_extent", {}) or {}
+        temporal = r.get("temporal_extent", {}) or {}
+
+        row = {
+            "namespace": r.get("namespace", ""),
+            "name": r.get("name", ""),
+            "type": r.get("type", "external"),
+            "format": r.get("format", "unknown"),
+            "origin": r.get("origin", ""),
+            "title": r.get("title", ""),
+            "abstract": r.get("abstract", ""),
+            "bbox_west": spatial.get("west"),
+            "bbox_south": spatial.get("south"),
+            "bbox_east": spatial.get("east"),
+            "bbox_north": spatial.get("north"),
+            "crs": r.get("crs", ""),
+            "temporal_start": temporal.get("start", ""),
+            "temporal_end": temporal.get("end", ""),
+            "stac_collection": r.get("stac_collection", ""),
+            "stac_item_url": r.get("stac_item_url", ""),
+            "created_at": r.get("created_at", ""),
+            "updated_at": r.get("updated_at", ""),
+            # Store complex fields as JSON strings
+            "assets": json.dumps(r.get("assets", {})),
+            "properties": json.dumps(r.get("properties", {})),
+        }
+        rows.append(row)
+
+    # Create PyArrow table
+    table = pa.Table.from_pylist(rows)
+
+    # Write to Parquet
+    output_path = catalog.path / "catalog.parquet"
+    pq.write_table(table, output_path)
+
+    click.echo()
+    click.echo(click.style(f"Built catalog: {output_path}", fg="green"))
+    click.echo(f"  Resources: {len(resources)}")
+
+    # Show format breakdown
+    format_counts = {}
+    for r in resources:
+        fmt = r.get("format", "unknown")
+        format_counts[fmt] = format_counts.get(fmt, 0) + 1
+
+    click.echo(f"\nFormats:")
+    for fmt, count in sorted(format_counts.items()):
+        click.echo(f"  {fmt}: {count}")
+
+    click.echo(f"\nQuery with DuckDB:")
+    click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{output_path}'\"")
+    click.echo(f"\nOr in Python:")
+    click.echo(f"  import duckdb")
+    click.echo(f"  duckdb.sql(\"SELECT * FROM '{output_path}' WHERE format = 'cog'\")")
+
+
 @import_cmd.command("stac")
 @click.argument("url")
 @click.option("--namespace", "-n", default="stac", help="Namespace for imported items")
