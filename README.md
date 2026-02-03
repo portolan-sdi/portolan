@@ -1,10 +1,19 @@
 # Portolan
 
-The goal of Portolan is to enable organizations to easily share open data in an low-cost, accessible, soveriegn, reliable and user-friendly manner. We are focused on enabling governments, but any organization that wants to share data with the world (or even internally) will benefit from the tools and standards Portolan provides. The effort is run as a collaborative open source project - not controlled by any organization and with open decision-making from the start.
+**Portolan** is an open, cloud-agnostic framework for building modern spatial data infrastructures. It enables governments and organizations to transform, publish, govern, and observe geospatial data using open standards such as GeoParquet, Raquet, and Apache Iceberg. Portolan provides the tooling, catalogs, and control plane required to share spatial data across clouds—including sovereign environments—while maintaining full visibility, governance, and interoperability.
 
-The core of Portolan is the [cloud native geospatial](https://cloudnativegeo.org) formats, can be hosted on any cloud (or any server that supports range requests). The formats scale incredibly well, and are cheaper than almost any option, as the only costs are for storage and 'egress'. A small government with mostly vector data will pay just a few dollars a month, and even a full set of imagery and point clouds will likely be less than $50 a month. Organizations like [Source Cooperative](https://source.coop) currently provide free hosting for open data, and Portolan runs easily on those.
+## Why Portolan?
 
-Portolan brings together a number of open source projects to make it easier to get data into those formats, and to make the data that is in those formats more friendly and accessible to all. A Portolan node is a set of open geospatial data that as interactive as any geospatial 'portal', but is faster, more reliable, more scalable and much cheaper to run. Our goal is to enable thousands of Portolan nodes, and make geospatial information truly accessible. Leveraging standard, accessible formats also enables AI to much more easily take advantage of the information, so Portolan nodes become part of the broader data infrastructure with ease.
+| Benefit | How |
+|---------|-----|
+| **Scalable** | Built on cloud object storage that scales to petabytes |
+| **Open** | 100% open source using open formats (GeoParquet, Raquet, Iceberg) |
+| **AI-Ready** | Rich semantics via STAC + ISO 19115 metadata make data discoverable by humans and machines |
+| **Cheap** | Only pay for storage and egress—no servers to run, a few dollars/month for most catalogs |
+| **Sovereign** | Host anywhere (any cloud, on-prem, air-gapped), use any query engine you choose |
+| **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Spark, Trino, and other non-GIS tools just work |
+
+Portolan is a collaborative open source project—not controlled by any organization and with open decision-making from the start. Organizations like [Source Cooperative](https://source.coop) provide free hosting for open data, and Portolan runs seamlessly on those.
 
 ## Getting Started
 
