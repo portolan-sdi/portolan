@@ -16,16 +16,262 @@ Both tables and resources can be:
 - **External**: Data hosted elsewhere, referenced by URL
 - **External + Cached**: External data with a local copy for SLA
 
+## Value Proposition: SQL-Queryable Federated Discovery
+
+A Portolan catalog provides value even with **zero data tables** - just by aggregating metadata from external sources (STAC, ArcGIS, CKAN).
+
+### The Problem with Traditional SDI
+
+| Traditional SDI | Pain Point |
+|-----------------|------------|
+| STAC API | Must learn STAC query syntax |
+| CSW | Must learn XML filter syntax |
+| ArcGIS Portal | Must learn ArcGIS REST API |
+| Multiple catalogs | Different API per catalog |
+| Limited query power | Can't do complex joins/aggregations |
+| Hard for AI/LLMs | Each API has different semantics |
+
+### Portolan Solution
+
+Portolan stores all metadata in an **Iceberg table** that any SQL engine can query:
+
+```sql
+-- Find imagery datasets in Spain from 2024
+-- Works with DuckDB, Snowflake, BigQuery, Databricks, etc.
+SELECT
+  name,
+  title,
+  format,
+  origin,
+  contact.organization
+FROM catalog.metadata.items
+WHERE topic_category = 'imageryBaseMapsEarthCover'
+  AND spatial_extent.west > -10
+  AND spatial_extent.east < 5
+  AND temporal_extent.start >= '2024-01-01'
+ORDER BY created_at DESC;
+```
+
+### Federated Catalog Aggregation
+
+Import from multiple sources, query with one interface:
+
+```
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│   STAC Catalog  │     │  ArcGIS Portal  │     │      CKAN       │
+│ (earth-search)  │     │  (data.gov.xx)  │     │  (open data)    │
+└────────┬────────┘     └────────┬────────┘     └────────┬────────┘
+         │                       │                       │
+         │       portolan import stac/arcgis/ckan        │
+         └───────────────────────┼───────────────────────┘
+                                 ▼
+              ┌─────────────────────────────────┐
+              │       Portolan Catalog          │
+              │   (Iceberg metadata tables)     │
+              │                                 │
+              │  ┌─────────────────────────┐    │
+              │  │ items (metadata table)  │    │
+              │  │ - ISO 19115 fields      │    │
+              │  │ - STAC fields           │    │
+              │  │ - OSI semantic hints    │    │
+              │  └─────────────────────────┘    │
+              └───────────────┬─────────────────┘
+                              │
+      ┌───────────────────────┼───────────────────────┐
+      ▼                       ▼                       ▼
+┌───────────┐          ┌───────────┐          ┌───────────┐
+│    SQL    │          │   STAC    │          │  OGC CSW  │
+│  (query)  │          │   API     │          │   API     │
+└───────────┘          └───────────┘          └───────────┘
+```
+
+The actual data stays external - Portolan only aggregates and indexes **metadata**.
+
+## Open Semantic Interchange (OSI)
+
+[Open Semantic Interchange](https://opensemanticinterchange.org/) provides machine-readable semantic descriptions that help AI/LLMs understand how to query data.
+
+### OSI at Two Levels
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                  Catalog-Level OSI                          │
+│  "This catalog has an 'items' table with these columns..."  │
+│  "Use spatial_extent.west/east/south/north for bbox..."     │
+│  "topic_category uses ISO 19115 codes..."                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ AI reads, generates SQL
+┌─────────────────────────────────────────────────────────────┐
+│  SELECT * FROM items WHERE topic_category = 'elevation'     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ Results include dataset OSI
+┌─────────────────────────────────────────────────────────────┐
+│                  Dataset-Level OSI                          │
+│  "This elevation dataset has columns: x, y, elevation_m..." │
+│  "elevation_m is meters above sea level (EPSG:5773)..."     │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼ AI reads, generates SQL for data
+┌─────────────────────────────────────────────────────────────┐
+│  SELECT AVG(elevation_m) FROM elevation_data                │
+│  WHERE ST_Within(geometry, ST_MakeEnvelope(...))            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Catalog-Level OSI Schema
+
+The catalog includes an OSI description of its own structure:
+
+```yaml
+# Stored at: catalog/osi/catalog.osi.yaml
+osi_version: "1.0"
+name: "Portolan Catalog"
+description: "Federated spatial data catalog with ISO 19115 + STAC metadata"
+
+tables:
+  items:
+    description: "Metadata for all tables and resources in the catalog"
+    columns:
+      name:
+        type: string
+        description: "Unique identifier for the entry"
+      title:
+        type: string
+        description: "Human-readable title"
+      type:
+        type: string
+        enum: [table, resource]
+        description: "Whether this is a queryable table or external resource"
+      format:
+        type: string
+        description: "Data format (parquet, cog, pmtiles, zarr, etc.)"
+      spatial_extent:
+        type: object
+        description: "Geographic bounding box"
+        properties:
+          west: { type: number, description: "Western longitude (-180 to 180)" }
+          east: { type: number, description: "Eastern longitude (-180 to 180)" }
+          south: { type: number, description: "Southern latitude (-90 to 90)" }
+          north: { type: number, description: "Northern latitude (-90 to 90)" }
+      topic_category:
+        type: string
+        description: "ISO 19115 topic category"
+        enum: [farming, biota, boundaries, climatologyMeteorologyAtmosphere, ...]
+      origin:
+        type: string
+        description: "URL to external data (for external tables/resources)"
+
+example_queries:
+  - description: "Find all imagery datasets"
+    sql: "SELECT * FROM items WHERE topic_category = 'imageryBaseMapsEarthCover'"
+
+  - description: "Find datasets within a bounding box"
+    sql: |
+      SELECT * FROM items
+      WHERE spatial_extent.west >= -10
+        AND spatial_extent.east <= 5
+        AND spatial_extent.south >= 35
+        AND spatial_extent.north <= 45
+
+  - description: "Find datasets from a specific organization"
+    sql: "SELECT * FROM items WHERE contact.organization LIKE '%ESA%'"
+```
+
+### Dataset-Level OSI
+
+Each table or resource can have its own OSI description:
+
+```yaml
+# Stored at: catalog/osi/datasets/{dataset_name}.osi.yaml
+osi_version: "1.0"
+name: "administrative_boundaries"
+description: "Official administrative boundaries including municipalities and regions"
+
+schema:
+  columns:
+    id:
+      type: string
+      description: "Unique boundary identifier (ISO 3166-2 code)"
+    name:
+      type: string
+      description: "Official name of the administrative unit"
+    admin_level:
+      type: integer
+      description: "Administrative level (1=country, 2=region, 3=province, 4=municipality)"
+    population:
+      type: integer
+      description: "Population count (latest census)"
+    geometry:
+      type: geometry
+      srid: 4326
+      geometry_type: MultiPolygon
+      description: "Boundary polygon in WGS84"
+
+example_queries:
+  - description: "Get all municipalities (admin_level 4)"
+    sql: "SELECT name, population FROM administrative_boundaries WHERE admin_level = 4"
+
+  - description: "Find boundaries containing a point"
+    sql: |
+      SELECT name, admin_level
+      FROM administrative_boundaries
+      WHERE ST_Contains(geometry, ST_Point(-3.7, 40.4))
+```
+
+### OSI Storage Layout
+
+```
+catalog/
+├── osi/
+│   ├── catalog.osi.yaml      # Catalog-level OSI (how to query the catalog)
+│   └── datasets/
+│       ├── boundaries.osi.yaml
+│       ├── elevation.osi.yaml
+│       └── imagery.osi.yaml
+├── v1/                        # Iceberg REST catalog
+├── stac/                      # STAC (if enabled)
+└── data/                      # Actual data files
+```
+
+### AI Discovery Workflow
+
+With OSI, an AI agent can autonomously navigate the catalog:
+
+1. **Read catalog OSI** → Understand catalog structure and query patterns
+2. **Query catalog** → Find relevant datasets using SQL
+3. **Read dataset OSI** → Understand specific dataset schema
+4. **Query data** → Extract insights from the actual data
+
+```python
+# Example AI workflow (pseudocode)
+catalog_osi = fetch("s3://catalog/osi/catalog.osi.yaml")
+# AI now knows: "items table has spatial_extent, topic_category, etc."
+
+datasets = query("SELECT name, title FROM items WHERE topic_category = 'elevation'")
+# AI found: elevation_spain dataset
+
+dataset_osi = fetch(f"s3://catalog/osi/datasets/{datasets[0].name}.osi.yaml")
+# AI now knows: "elevation_m column is meters above sea level"
+
+result = query("SELECT AVG(elevation_m) FROM elevation_spain WHERE region = 'Pyrenees'")
+# AI got the answer
+```
+
 ## Entity Relationship Diagram
 
 ```mermaid
 erDiagram
     CATALOG ||--o{ NAMESPACE : contains
+    CATALOG ||--|| OSI_CATALOG : "described by"
     NAMESPACE ||--o{ TABLE : contains
     NAMESPACE ||--o{ RESOURCE : contains
     TABLE ||--o| SOURCE : "derived from"
     TABLE ||--o| CACHE : "cached at"
+    TABLE ||--o| OSI_DATASET : "described by"
     RESOURCE ||--o| CACHE : "cached at"
+    RESOURCE ||--o| OSI_DATASET : "described by"
     TABLE ||--|| METADATA : has
     RESOURCE ||--|| METADATA : has
 
@@ -33,6 +279,21 @@ erDiagram
         string name
         string warehouse_location
         timestamp created_at
+    }
+
+    OSI_CATALOG {
+        string osi_version
+        string description
+        json tables
+        json example_queries
+    }
+
+    OSI_DATASET {
+        string osi_version
+        string name
+        string description
+        json schema
+        json example_queries
     }
 
     NAMESPACE {
@@ -496,6 +757,20 @@ warehouse/
 │           └── {namespace}/
 │               ├── tables/       # Table metadata
 │               └── resources/    # Resource metadata
+├── osi/                          # Open Semantic Interchange metadata
+│   ├── catalog.osi.yaml          # Catalog-level OSI (how to query catalog)
+│   └── datasets/                 # Per-dataset OSI
+│       ├── {table}.osi.yaml
+│       └── {resource}.osi.yaml
+├── stac/                         # STAC catalog (if enabled)
+│   ├── catalog.json
+│   └── collections/
+│       └── {collection}/
+├── ogc/                          # OGC endpoints (if enabled)
+│   ├── records/                  # OGC API - Records
+│   └── csw/                      # CSW GetCapabilities/GetRecords
+├── dcat/                         # GeoDCAT-AP (if enabled)
+│   └── catalog.jsonld
 ├── data/
 │   └── {namespace}/
 │       ├── {table}/              # Managed table data (Parquet)
