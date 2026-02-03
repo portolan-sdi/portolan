@@ -201,10 +201,13 @@ def generate_manifest_files(
         manifest_writer.add_entry(manifest_entry)
         manifest_file = manifest_writer.to_manifest_file()
 
+    # Get the actual file size (pyiceberg sometimes returns 0 for manifest_length)
+    actual_manifest_length = Path(manifest_path).stat().st_size
+
     # Update manifest path to URL for the manifest-list
     manifest_file_with_url = ManifestFile.from_args(
         manifest_path=manifest_url,
-        manifest_length=manifest_file.manifest_length,
+        manifest_length=actual_manifest_length,  # Use actual file size
         partition_spec_id=manifest_file.partition_spec_id,
         content=manifest_file.content,
         sequence_number=manifest_file.sequence_number,

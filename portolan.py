@@ -1025,18 +1025,25 @@ def stac_item_to_resource(item: dict, item_url: str) -> dict:
 
 @cli.command("build")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.option("--base-url", help="Base URL where catalog will be hosted (e.g., gs://bucket/path)")
 @click.pass_context
-def build(ctx, verbose: bool):
-    """Build queryable Parquet catalog from resources.
+def build(ctx, verbose: bool, base_url: str | None):
+    """Build Iceberg catalog from resources.
 
-    Generates a Parquet file containing all resource metadata,
-    enabling SQL queries via DuckDB or other engines.
+    Generates a proper Iceberg table with metadata, manifests, and snapshots.
+    The catalog can be queried with DuckDB, BigQuery, Snowflake, etc.
 
     \b
     Example:
-        portolan build
-        duckdb -c "SELECT name, format, title FROM '.portolan/catalog.parquet'"
+        portolan build --base-url gs://my-bucket/catalog
+        duckdb -c "SELECT * FROM iceberg_scan('gs://my-bucket/catalog/data/resources/metadata/v1.metadata.json')"
     """
+    from iceberg_catalog import (
+        IcebergTable,
+        generate_static_catalog,
+        add_iceberg_field_ids,
+        _arrow_schema_to_iceberg,
+    )
     import pyarrow as pa
     import pyarrow.parquet as pq
 
@@ -1110,15 +1117,57 @@ def build(ctx, verbose: bool):
         rows.append(row)
 
     # Create PyArrow table
-    table = pa.Table.from_pylist(rows)
+    pa_table = pa.Table.from_pylist(rows)
 
-    # Write to Parquet
-    output_path = catalog.path / "catalog.parquet"
-    pq.write_table(table, output_path)
+    # Create data directory and write Parquet file
+    data_dir = catalog.path / "data" / "resources"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = data_dir / "resources.parquet"
+    pq.write_table(pa_table, parquet_path, compression="zstd")
+
+    # Add Iceberg field IDs to the Parquet file
+    click.echo("Adding Iceberg field IDs...")
+    add_iceberg_field_ids(parquet_path)
+
+    # Re-read to get updated schema with field IDs
+    pa_table = pq.read_table(parquet_path)
+
+    # Create IcebergTable object
+    iceberg_table = IcebergTable(
+        name="resources",
+        parquet_path="resources/resources.parquet",
+        schema=_arrow_schema_to_iceberg(pa_table.schema),
+        arrow_schema=pa_table.schema,
+        num_rows=len(rows),
+        file_size_bytes=parquet_path.stat().st_size,
+    )
+
+    # Determine base URL
+    if base_url:
+        data_base_url = base_url.rstrip("/")
+    else:
+        # Default to local path for testing
+        data_base_url = f"file://{catalog.path.absolute()}"
+
+    # Generate full Iceberg catalog
+    click.echo("Generating Iceberg catalog...")
+    generate_static_catalog(
+        tables=[iceberg_table],
+        output_dir=str(catalog.path),
+        namespace="portolan",
+        prefix="catalog",
+        data_base_url=data_base_url,
+        verbose=verbose,
+    )
+
+    # Also keep a simple catalog.parquet at root for easy access
+    simple_parquet = catalog.path / "catalog.parquet"
+    shutil.copy(parquet_path, simple_parquet)
 
     click.echo()
-    click.echo(click.style(f"Built catalog: {output_path}", fg="green"))
+    click.echo(click.style("Built Iceberg catalog!", fg="green"))
     click.echo(f"  Resources: {len(resources)}")
+    click.echo(f"  Location: {catalog.path}")
 
     # Show format breakdown
     format_counts = {}
@@ -1130,11 +1179,18 @@ def build(ctx, verbose: bool):
     for fmt, count in sorted(format_counts.items()):
         click.echo(f"  {fmt}: {count}")
 
-    click.echo(f"\nQuery with DuckDB:")
-    click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{output_path}'\"")
-    click.echo(f"\nOr in Python:")
-    click.echo(f"  import duckdb")
-    click.echo(f"  duckdb.sql(\"SELECT * FROM '{output_path}' WHERE format = 'cog'\")")
+    click.echo(f"\nQuery with DuckDB (simple Parquet):")
+    click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{simple_parquet}'\"")
+
+    click.echo(f"\nQuery with DuckDB (Iceberg):")
+    metadata_path = catalog.path / "data" / "resources" / "metadata" / "v1.metadata.json"
+    click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
+
+    if base_url:
+        click.echo(f"\nAfter uploading to {base_url}:")
+        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{base_url}/data/resources/metadata/v1.metadata.json')\"")
+        click.echo(f"\nBigQuery (BigLake Iceberg table):")
+        click.echo(f"  bq mk --table --external_table_definition=ICEBERG={base_url}/data/resources/metadata/v1.metadata.json dataset.resources")
 
 
 @import_cmd.command("stac")
