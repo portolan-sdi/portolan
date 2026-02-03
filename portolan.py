@@ -1132,7 +1132,7 @@ def build(ctx, verbose: bool, base_url: str | None):
     # Re-read to get updated schema with field IDs
     pa_table = pq.read_table(parquet_path)
 
-    # Create IcebergTable object
+    # Create IcebergTable object for the resources registry
     iceberg_table = IcebergTable(
         name="resources",
         parquet_path="resources/resources.parquet",
@@ -1142,6 +1142,94 @@ def build(ctx, verbose: bool, base_url: str | None):
         file_size_bytes=parquet_path.stat().st_size,
     )
 
+    # Collect all tables to register (resources + direct data tables)
+    all_tables = [iceberg_table]
+
+    # Register GeoParquet and Raquet files as direct Iceberg tables
+    click.echo("Registering direct data tables...")
+    direct_table_formats = {"geoparquet", "raquet"}
+
+    for r in resources:
+        fmt = r.get("format", "")
+        rtype = r.get("type", "external")
+        name = r.get("name", "")
+        assets = r.get("assets", {})
+
+        if fmt not in direct_table_formats:
+            continue
+
+        # Get the data URL
+        data_asset = assets.get("data", {}) or assets.get("cache", {})
+        data_url = data_asset.get("href", "")
+
+        if not data_url:
+            if verbose:
+                click.echo(f"  Skipping {name}: no data URL")
+            continue
+
+        # For managed/cached data, copy to the catalog
+        # For external with HTTP/GCS URLs, download
+        try:
+            table_data_dir = catalog.path / "data" / name
+            table_data_dir.mkdir(parents=True, exist_ok=True)
+            table_parquet_path = table_data_dir / f"{name}.parquet"
+
+            if rtype == "managed" and data_url.startswith("gs://"):
+                # Will be uploaded later, create placeholder from local file if exists
+                local_file = catalog.path / "sample_cities.parquet" if "cities" in name else None
+                if local_file and local_file.exists():
+                    shutil.copy(local_file, table_parquet_path)
+                else:
+                    if verbose:
+                        click.echo(f"  Skipping {name}: managed file not found locally")
+                    continue
+            elif data_url.startswith(("http://", "https://", "gs://")):
+                # Download the file
+                if verbose:
+                    click.echo(f"  Downloading {name}...")
+
+                import httpx
+                if data_url.startswith("gs://"):
+                    # Convert gs:// to https://
+                    https_url = data_url.replace("gs://", "https://storage.googleapis.com/")
+                else:
+                    https_url = data_url
+
+                response = httpx.get(https_url, follow_redirects=True, timeout=60)
+                response.raise_for_status()
+
+                with open(table_parquet_path, "wb") as f:
+                    f.write(response.content)
+            else:
+                if verbose:
+                    click.echo(f"  Skipping {name}: unsupported URL scheme")
+                continue
+
+            # Add Iceberg field IDs
+            add_iceberg_field_ids(table_parquet_path)
+
+            # Read schema
+            table_pa = pq.read_table(table_parquet_path)
+
+            # Create IcebergTable
+            direct_table = IcebergTable(
+                name=name,
+                parquet_path=f"{name}/{name}.parquet",
+                schema=_arrow_schema_to_iceberg(table_pa.schema),
+                arrow_schema=table_pa.schema,
+                num_rows=table_pa.num_rows,
+                file_size_bytes=table_parquet_path.stat().st_size,
+            )
+            all_tables.append(direct_table)
+
+            if verbose:
+                click.echo(f"  Registered {name} ({fmt}, {table_pa.num_rows} rows)")
+
+        except Exception as e:
+            if verbose:
+                click.echo(f"  Error registering {name}: {e}", err=True)
+            continue
+
     # Determine base URL
     if base_url:
         data_base_url = base_url.rstrip("/")
@@ -1150,9 +1238,9 @@ def build(ctx, verbose: bool, base_url: str | None):
         data_base_url = f"file://{catalog.path.absolute()}"
 
     # Generate full Iceberg catalog
-    click.echo("Generating Iceberg catalog...")
+    click.echo(f"Generating Iceberg catalog with {len(all_tables)} tables...")
     generate_static_catalog(
-        tables=[iceberg_table],
+        tables=all_tables,
         output_dir=str(catalog.path),
         namespace="portolan",
         prefix="catalog",
@@ -1167,6 +1255,7 @@ def build(ctx, verbose: bool, base_url: str | None):
     click.echo()
     click.echo(click.style("Built Iceberg catalog!", fg="green"))
     click.echo(f"  Resources: {len(resources)}")
+    click.echo(f"  Direct tables: {len(all_tables) - 1}")  # Minus the resources table
     click.echo(f"  Location: {catalog.path}")
 
     # Show format breakdown
@@ -1178,6 +1267,13 @@ def build(ctx, verbose: bool, base_url: str | None):
     click.echo(f"\nFormats:")
     for fmt, count in sorted(format_counts.items()):
         click.echo(f"  {fmt}: {count}")
+
+    # Show registered direct tables
+    if len(all_tables) > 1:
+        click.echo(f"\nDirect tables (queryable as catalog.portolan.<name>):")
+        for t in all_tables:
+            if t.name != "resources":
+                click.echo(f"  - {t.name}")
 
     click.echo(f"\nQuery with DuckDB (simple Parquet):")
     click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{simple_parquet}'\"")
@@ -1199,7 +1295,13 @@ def build(ctx, verbose: bool, base_url: str | None):
         click.echo(f"      ENDPOINT '{https_url}',")
         click.echo(f"      AUTHORIZATION_TYPE 'none'")
         click.echo(f"  );")
+        click.echo(f"  -- Discovery table:")
         click.echo(f"  SELECT * FROM catalog.portolan.resources;")
+        if len(all_tables) > 1:
+            direct_names = [t.name for t in all_tables if t.name != "resources"]
+            click.echo(f"  -- Direct data tables:")
+            for tname in direct_names[:3]:  # Show first 3
+                click.echo(f"  SELECT * FROM catalog.portolan.{tname} LIMIT 10;")
         click.echo(f"\nBigQuery (BigLake Iceberg table):")
         click.echo(f"  bq mk --table --external_table_definition=ICEBERG={base_url}/data/resources/metadata/v1.metadata.json dataset.resources")
 

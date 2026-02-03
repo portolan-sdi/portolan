@@ -336,3 +336,74 @@ Then, depending on the format, use the appropriate DuckDB extension to query the
 - **COG/Zarr**: Use STAC URLs with appropriate libraries
 
 This is the essence of a modern **Spatial Data Infrastructure (SDI)** - discover once, query with the best tool for each format.
+
+---
+
+## Complete Workflow: Discover → Query Raquet
+
+This example shows the full power of the catalog: discover a dataset through SQL, then query it directly.
+
+```sql
+INSTALL iceberg; INSTALL httpfs;
+LOAD iceberg; LOAD httpfs;
+LOAD raquet;  -- For raster queries
+
+-- 1. Attach the catalog
+ATTACH '' AS catalog (
+    TYPE iceberg,
+    ENDPOINT 'https://storage.googleapis.com/portolan-demo-catalog',
+    AUTHORIZATION_TYPE 'none'
+);
+
+-- 2. Find the Raquet dataset and get its URL
+WITH raquet_dataset AS (
+    SELECT
+        name,
+        title,
+        json_extract_string(assets, '$.data.href') as data_url
+    FROM catalog.portolan.resources
+    WHERE format = 'raquet'
+    LIMIT 1
+)
+SELECT * FROM raquet_dataset;
+
+-- Result:
+-- ┌─────────────────┬────────────────────────────────────────┬─────────────────────────────────────────────────────────────┐
+-- │ name            │ title                                  │ data_url                                                    │
+-- ├─────────────────┼────────────────────────────────────────┼─────────────────────────────────────────────────────────────┤
+-- │ modis_lst_spain │ MODIS Land Surface Temperature - Spain │ https://storage.googleapis.com/raquet_demo_data/modis_lst.. │
+-- └─────────────────┴────────────────────────────────────────┴─────────────────────────────────────────────────────────────┘
+
+-- 3. Get temperature at Madrid using the discovered URL
+WITH raquet_url AS (
+    SELECT json_extract_string(assets, '$.data.href') as url
+    FROM catalog.portolan.resources
+    WHERE format = 'raquet' LIMIT 1
+),
+madrid AS (SELECT -3.7038 as lon, 40.4168 as lat)
+SELECT
+    'Madrid' as city,
+    ST_RasterValue(
+        r.block, r.band_1,
+        madrid.lon, madrid.lat,
+        'float32', 256, 'gzip'
+    ) * 0.02 - 273.15 as temperature_celsius
+FROM read_raquet((SELECT url FROM raquet_url)) r, madrid
+WHERE r.block = quadbin_from_lonlat(madrid.lon, madrid.lat, 13);
+```
+
+### Or use the Direct Table (no URL lookup needed!)
+
+Since Raquet files are registered as direct Iceberg tables, you can also query directly:
+
+```sql
+-- Direct access without URL lookup
+SELECT
+    block,
+    (quadbin_to_lonlat(block)).* as center,
+    (ST_RasterSummaryStats(band_1, 'float32', 256, 256, 'gzip')).mean as mean_temp_raw
+FROM catalog.portolan.modis_lst_spain
+LIMIT 5;
+```
+
+This is the hybrid approach: use `catalog.portolan.resources` for **discovery** across all formats, then use direct tables like `catalog.portolan.modis_lst_spain` for **querying** Parquet-based data.
