@@ -1187,8 +1187,19 @@ def build(ctx, verbose: bool, base_url: str | None):
     click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
 
     if base_url:
-        click.echo(f"\nAfter uploading to {base_url}:")
-        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{base_url}/data/resources/metadata/v1.metadata.json')\"")
+        # Convert gs:// to https:// for public access
+        https_url = base_url.replace("gs://", "https://storage.googleapis.com/")
+
+        click.echo(f"\nAfter uploading with: .portolan/upload_static_catalog.sh {base_url}")
+        click.echo(f"\nQuery with DuckDB (iceberg_scan):")
+        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{https_url}/data/resources/metadata/v1.metadata.json')\"")
+        click.echo(f"\nQuery with DuckDB (REST catalog ATTACH):")
+        click.echo(f"  ATTACH '' AS catalog (")
+        click.echo(f"      TYPE iceberg,")
+        click.echo(f"      ENDPOINT '{https_url}',")
+        click.echo(f"      AUTHORIZATION_TYPE 'none'")
+        click.echo(f"  );")
+        click.echo(f"  SELECT * FROM catalog.portolan.resources;")
         click.echo(f"\nBigQuery (BigLake Iceberg table):")
         click.echo(f"  bq mk --table --external_table_definition=ICEBERG={base_url}/data/resources/metadata/v1.metadata.json dataset.resources")
 

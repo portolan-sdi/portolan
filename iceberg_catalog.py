@@ -463,9 +463,14 @@ def generate_static_catalog(
     """
     Generate all static JSON files for an Iceberg REST catalog.
 
-    Creates two output structures:
-    1. A directory structure for local development/testing
-    2. A flat `gcs/` directory with URL-path filenames for static hosting
+    Creates three output structures:
+    1. A directory structure (`v1/`) for local development/testing with __list__ files
+    2. A flat `gcs/` directory with URL-path filenames (double-underscore separated)
+    3. A `static/` directory with files at exact REST endpoint paths for static hosting
+
+    The `static/` directory is designed for direct upload to GCS/S3 where files are
+    served at their exact object paths. This allows DuckDB to ATTACH directly to the
+    static catalog endpoint.
 
     Args:
         tables: List of IcebergTable objects to include
@@ -495,17 +500,26 @@ def generate_static_catalog(
     for d in [v1_dir, catalog_dir, ns_dir, ns_detail_dir, tables_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
-    # Create GCS-ready flat directory
+    # Create GCS-ready flat directory (with __ separators)
     gcs_dir = output_path / "gcs"
     gcs_dir.mkdir(parents=True, exist_ok=True)
 
     # Track GCS objects to create
     gcs_objects = {}
 
+    # Track files for static hosting upload script
+    static_upload_map = {}
+
     def write_endpoint(url_path: str, data: dict, local_path: Path):
-        """Write endpoint to local dir and track for GCS."""
+        """Write endpoint to local dir and track for static hosting upload."""
+        # Write to local development directory
         with open(local_path, "w") as f:
             json.dump(data, f, indent=2)
+
+        # Track for static hosting - store the URL path and local file
+        # We'll generate upload commands later
+        static_upload_map[url_path] = str(local_path)
+
         gcs_objects[url_path] = data
         files_created[url_path] = str(local_path)
         if verbose:
@@ -557,17 +571,37 @@ def generate_static_catalog(
         with open(metadata_file, "w") as f:
             json.dump(metadata, f, indent=2)
 
+        # Track metadata for static upload
+        static_upload_map[f"/data/{table.name}/metadata/v1.metadata.json"] = str(metadata_file)
+
         # Generate manifest files (required by Iceberg readers like DuckDB)
         generate_manifest_files(table, data_base_url, metadata_dir, table.arrow_schema)
         if verbose:
             print(f"Created manifest files in {metadata_dir}")
+
+        # Track manifest files for static upload
+        manifest_path = metadata_dir / "snap-1-manifest.avro"
+        manifest_list_path = metadata_dir / "snap-1-manifest-list.avro"
+        if manifest_path.exists():
+            static_upload_map[f"/data/{table.name}/metadata/snap-1-manifest.avro"] = str(manifest_path)
+        if manifest_list_path.exists():
+            static_upload_map[f"/data/{table.name}/metadata/snap-1-manifest-list.avro"] = str(manifest_list_path)
+
+        # Track the data parquet file for upload
+        # The data file is at output_path/data/{table.name}/{table.name}.parquet
+        # This matches the path in the Iceberg manifest
+        data_parquet_path = output_path / "data" / table.name / f"{table.name}.parquet"
+        if data_parquet_path.exists():
+            static_upload_map[f"/data/{table.name}/{table.name}.parquet"] = str(data_parquet_path)
+            if verbose:
+                print(f"Tracking data file: {data_parquet_path}")
 
         gcs_objects[f"/data/{table.name}/metadata/v1.metadata.json"] = metadata
 
         if verbose:
             print(f"Created {metadata_file}")
 
-    # Write GCS manifest and individual files
+    # Write GCS manifest and individual files (flat structure with __ separators)
     manifest_path = gcs_dir / "manifest.json"
     with open(manifest_path, "w") as f:
         json.dump({
@@ -583,7 +617,74 @@ def generate_static_catalog(
         if verbose:
             print(f"Created GCS file: {file_path}")
 
+    # Generate upload script for static hosting
+    upload_script_path = output_path / "upload_static_catalog.sh"
+    with open(upload_script_path, "w") as f:
+        f.write("#!/bin/bash\n")
+        f.write("# Upload script for static Iceberg REST catalog\n")
+        f.write("# This uploads files to exact REST endpoint paths in GCS\n")
+        f.write("# Usage: ./upload_static_catalog.sh gs://your-bucket\n")
+        f.write("#\n")
+        f.write("# After upload, connect with DuckDB:\n")
+        f.write("#   ATTACH '' AS catalog (\n")
+        f.write("#       TYPE iceberg,\n")
+        f.write("#       ENDPOINT 'https://storage.googleapis.com/YOUR-BUCKET',\n")
+        f.write("#       AUTHORIZATION_TYPE 'none'\n")
+        f.write("#   );\n")
+        f.write(f"#   SELECT * FROM catalog.{namespace}.TABLE_NAME;\n\n")
+        f.write("BUCKET=${1:?\"Usage: $0 gs://bucket-name\"}\n\n")
+        f.write("echo \"Uploading static catalog to $BUCKET...\"\n\n")
+
+        # Separate REST endpoints from data files
+        rest_endpoints = []
+        data_files = []
+        for url_path, local_path in sorted(static_upload_map.items()):
+            if url_path.startswith("/v1/"):
+                rest_endpoints.append((url_path, local_path))
+            else:
+                data_files.append((url_path, local_path))
+
+        # Data files can use regular gsutil cp
+        if data_files:
+            f.write("# Data files\n")
+            for url_path, local_path in data_files:
+                gcs_path = url_path.lstrip("/")
+                f.write(f"gsutil cp \"{local_path}\" \"$BUCKET/{gcs_path}\"\n")
+            f.write("\n")
+
+        # REST endpoints must use cat | gsutil cp - to create objects at exact paths
+        if rest_endpoints:
+            f.write("# REST endpoints (use stdin to create objects at exact paths)\n")
+            for url_path, local_path in rest_endpoints:
+                gcs_path = url_path.lstrip("/")
+                f.write(f"cat \"{local_path}\" | gsutil cp - \"$BUCKET/{gcs_path}\"\n")
+
+        f.write("\necho \"\"\n")
+        f.write("echo \"Upload complete!\"\n")
+        f.write("echo \"Catalog endpoint: https://storage.googleapis.com/${BUCKET#gs://}/v1/config\"\n")
+        f.write("echo \"\"\n")
+        f.write("echo \"Connect with DuckDB:\"\n")
+        f.write("echo \"  ATTACH '' AS catalog (\"\n")
+        f.write("echo \"      TYPE iceberg,\"\n")
+        f.write("echo \"      ENDPOINT 'https://storage.googleapis.com/${BUCKET#gs://}',\"\n")
+        f.write("echo \"      AUTHORIZATION_TYPE 'none'\"\n")
+        f.write("echo \"  );\"\n")
+        f.write(f"echo \"  SELECT * FROM catalog.{namespace}.TABLE_NAME;\"\n")
+
+    # Make script executable
+    upload_script_path.chmod(0o755)
+
+    # Also generate a static upload map JSON for programmatic use
+    upload_map_path = output_path / "static_upload_map.json"
+    with open(upload_map_path, "w") as f:
+        json.dump(static_upload_map, f, indent=2)
+
     print(f"Generated static catalog with {len(tables)} tables")
+    print(f"  - v1/: Local dev structure (with __list__ files)")
+    print(f"  - gcs/: Flat files with __ separators")
+    print(f"\nTo serve as REST catalog with static hosting:")
+    print(f"  {upload_script_path} gs://your-bucket")
+    print(f"\nOr use the upload map: {upload_map_path}")
     return files_created
 
 
