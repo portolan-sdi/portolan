@@ -1009,6 +1009,327 @@ def web_deploy(ctx, remote: str | None):
     click.echo(f"  Private catalogs: {private_count}")
 
 
+# ============== CLONE ==============
+
+@cli.command()
+@click.argument("url")
+@click.argument("path", type=click.Path(), default=".", required=False)
+@click.option("--name", "-n", default="origin", help="Name for the remote (default: origin)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+def clone(url: str, path: str, name: str, verbose: bool):
+    """Clone an existing Portolan catalog from a remote URL.
+
+    Downloads the catalog metadata and resources to create a local working copy.
+    The remote becomes the source of truth - use 'portolan pull' to get updates.
+
+    \b
+    Examples:
+        portolan clone https://storage.googleapis.com/portolan-demo-catalog
+        portolan clone gs://my-bucket/catalog ./my-local-copy
+    """
+    import httpx
+
+    # Convert gs:// to https:// for fetching
+    if url.startswith("gs://"):
+        fetch_url = url.replace("gs://", "https://storage.googleapis.com/")
+        remote_url = url  # Keep gs:// for remote config
+    else:
+        fetch_url = url.rstrip("/")
+        remote_url = url
+
+    catalog_path = Path(path).resolve() / ".portolan"
+
+    if catalog_path.exists():
+        raise click.ClickException(f"Catalog already exists at {catalog_path}")
+
+    click.echo(f"Cloning from {url}...")
+
+    # Try to fetch the Iceberg resources table to get the catalog contents
+    resources_url = f"{fetch_url}/data/resources/metadata/v1.metadata.json"
+
+    try:
+        # First verify the catalog exists by checking config
+        config_url = f"{fetch_url}/v1/config"
+        response = httpx.get(config_url, follow_redirects=True, timeout=30)
+        response.raise_for_status()
+        if verbose:
+            click.echo(f"  Found catalog config at {config_url}")
+    except Exception as e:
+        raise click.ClickException(f"Could not find Portolan catalog at {url}: {e}")
+
+    # Create local catalog structure
+    catalog = CatalogConfig(path=catalog_path)
+    catalog.path.mkdir(parents=True, exist_ok=True)
+    catalog.data_dir.mkdir(exist_ok=True)
+    catalog.metadata_dir.mkdir(exist_ok=True)
+
+    # Add the remote
+    catalog.add_remote(name, remote_url, set_default=True)
+
+    # Try to download resources from the STAC catalog (easier to parse than Iceberg)
+    stac_url = f"{fetch_url}/stac/collections"
+    resources_dir = catalog.path / "resources"
+
+    try:
+        # Try STAC catalog first
+        stac_catalog_url = f"{fetch_url}/stac/catalog.json"
+        response = httpx.get(stac_catalog_url, follow_redirects=True, timeout=30)
+
+        if response.status_code == 200:
+            stac_catalog = response.json()
+            click.echo("  Found STAC catalog, downloading resources...")
+
+            # Get collections from links
+            for link in stac_catalog.get("links", []):
+                if link.get("rel") == "child":
+                    collection_href = link.get("href", "")
+                    collection_url = f"{fetch_url}/stac/{collection_href.lstrip('./')}"
+
+                    try:
+                        coll_response = httpx.get(collection_url, follow_redirects=True, timeout=30)
+                        if coll_response.status_code == 200:
+                            collection = coll_response.json()
+                            coll_id = collection.get("id", "default")
+
+                            # Create namespace directory
+                            ns_dir = resources_dir / coll_id
+                            ns_dir.mkdir(parents=True, exist_ok=True)
+
+                            # Download items
+                            for item_link in collection.get("links", []):
+                                if item_link.get("rel") == "item":
+                                    item_href = item_link.get("href", "")
+                                    item_url = f"{fetch_url}/stac/collections/{coll_id}/{item_href.lstrip('./')}"
+
+                                    try:
+                                        item_response = httpx.get(item_url, follow_redirects=True, timeout=30)
+                                        if item_response.status_code == 200:
+                                            item = item_response.json()
+                                            item_id = item.get("id", "unknown")
+
+                                            # Convert STAC item to Portolan resource format
+                                            resource = _stac_item_to_portolan_resource(item)
+
+                                            # Save resource
+                                            resource_file = ns_dir / f"{item_id}.json"
+                                            with open(resource_file, "w") as f:
+                                                json.dump(resource, f, indent=2)
+
+                                            if verbose:
+                                                click.echo(f"    Downloaded: {coll_id}/{item_id}")
+                                    except Exception as e:
+                                        if verbose:
+                                            click.echo(f"    Error downloading item {item_href}: {e}")
+
+                    except Exception as e:
+                        if verbose:
+                            click.echo(f"  Error downloading collection {collection_href}: {e}")
+
+            # Enable STAC output since the remote has it
+            catalog.outputs["stac"] = True
+
+    except Exception as e:
+        if verbose:
+            click.echo(f"  No STAC catalog found, skipping resource download: {e}")
+
+    # Check for ISO 19139
+    try:
+        iso_test_url = f"{fetch_url}/iso19139/"
+        response = httpx.get(iso_test_url, follow_redirects=True, timeout=10)
+        if response.status_code == 200:
+            catalog.outputs["iso19139"] = True
+            if verbose:
+                click.echo("  Found ISO 19139 metadata")
+    except Exception:
+        pass
+
+    catalog.save()
+
+    # Count what we got
+    resource_count = sum(1 for _ in resources_dir.rglob("*.json")) if resources_dir.exists() else 0
+
+    click.echo()
+    click.echo(click.style("Cloned successfully!", fg="green"))
+    click.echo(f"  Location: {catalog_path}")
+    click.echo(f"  Remote: {name} ({remote_url})")
+    click.echo(f"  Resources: {resource_count}")
+    click.echo(f"  Outputs: {', '.join(k for k, v in catalog.outputs.items() if v)}")
+    click.echo()
+    click.echo("Next steps:")
+    click.echo("  portolan status          # View catalog status")
+    click.echo("  portolan pull            # Get latest from remote")
+    click.echo("  portolan dataset add ... # Add new data")
+    click.echo("  portolan sync            # Push changes to remote")
+
+
+def _stac_item_to_portolan_resource(item: dict) -> dict:
+    """Convert a STAC item to Portolan resource format."""
+    properties = item.get("properties", {})
+    bbox = item.get("bbox", [])
+
+    spatial_extent = None
+    if len(bbox) >= 4:
+        spatial_extent = {
+            "west": bbox[0],
+            "south": bbox[1],
+            "east": bbox[2],
+            "north": bbox[3],
+        }
+
+    # Extract format from portolan extension or guess from assets
+    fmt = properties.get("portolan:format", "unknown")
+    rtype = properties.get("portolan:type", "external")
+
+    # Convert assets
+    assets = {}
+    for key, asset in item.get("assets", {}).items():
+        assets[key] = {
+            "href": asset.get("href", ""),
+            "type": asset.get("type", ""),
+            "title": asset.get("title", key),
+        }
+
+    return {
+        "name": item.get("id", "unknown"),
+        "type": rtype,
+        "format": fmt,
+        "title": properties.get("title", item.get("id", "")),
+        "abstract": properties.get("description", ""),
+        "spatial_extent": spatial_extent,
+        "crs": "EPSG:4326",
+        "assets": assets,
+        "properties": properties,
+        "created_at": properties.get("datetime"),
+        "updated_at": properties.get("datetime"),
+    }
+
+
+# ============== PULL ==============
+
+@cli.command()
+@click.option("--remote", "-r", help="Remote name (default: uses default remote)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def pull(ctx, remote: str | None, verbose: bool):
+    """Pull latest changes from remote catalog.
+
+    Downloads new and updated resources from the remote, similar to 'git pull'.
+    Local changes that haven't been synced will be preserved.
+
+    \b
+    Examples:
+        portolan pull              # Pull from default remote
+        portolan pull -r origin    # Pull from specific remote
+    """
+    import httpx
+
+    catalog = get_catalog(ctx)
+
+    # Get remote config
+    remote_name = remote or catalog.default_remote
+    if not remote_name:
+        raise click.ClickException("No remote configured. Add one with 'portolan remote add'")
+
+    if remote_name not in catalog.remotes:
+        raise click.ClickException(f"Remote '{remote_name}' not found")
+
+    remote_config = catalog.remotes[remote_name]
+    url = remote_config.url
+
+    # Convert gs:// to https://
+    if url.startswith("gs://"):
+        fetch_url = url.replace("gs://", "https://storage.googleapis.com/")
+    else:
+        fetch_url = url.rstrip("/")
+
+    click.echo(f"Pulling from {remote_name} ({url})...")
+
+    resources_dir = catalog.path / "resources"
+    added = 0
+    updated = 0
+    unchanged = 0
+
+    # Try to pull from STAC catalog
+    try:
+        stac_catalog_url = f"{fetch_url}/stac/catalog.json"
+        response = httpx.get(stac_catalog_url, follow_redirects=True, timeout=30)
+
+        if response.status_code == 200:
+            stac_catalog = response.json()
+
+            for link in stac_catalog.get("links", []):
+                if link.get("rel") == "child":
+                    collection_href = link.get("href", "")
+                    collection_url = f"{fetch_url}/stac/{collection_href.lstrip('./')}"
+
+                    try:
+                        coll_response = httpx.get(collection_url, follow_redirects=True, timeout=30)
+                        if coll_response.status_code == 200:
+                            collection = coll_response.json()
+                            coll_id = collection.get("id", "default")
+                            ns_dir = resources_dir / coll_id
+                            ns_dir.mkdir(parents=True, exist_ok=True)
+
+                            for item_link in collection.get("links", []):
+                                if item_link.get("rel") == "item":
+                                    item_href = item_link.get("href", "")
+                                    item_url = f"{fetch_url}/stac/collections/{coll_id}/{item_href.lstrip('./')}"
+
+                                    try:
+                                        item_response = httpx.get(item_url, follow_redirects=True, timeout=30)
+                                        if item_response.status_code == 200:
+                                            item = item_response.json()
+                                            item_id = item.get("id", "unknown")
+                                            resource = _stac_item_to_portolan_resource(item)
+
+                                            resource_file = ns_dir / f"{item_id}.json"
+
+                                            # Check if exists and compare
+                                            if resource_file.exists():
+                                                with open(resource_file) as f:
+                                                    existing = json.load(f)
+
+                                                # Simple comparison - check if assets changed
+                                                if existing.get("assets") != resource.get("assets"):
+                                                    with open(resource_file, "w") as f:
+                                                        json.dump(resource, f, indent=2)
+                                                    updated += 1
+                                                    if verbose:
+                                                        click.echo(f"  Updated: {coll_id}/{item_id}")
+                                                else:
+                                                    unchanged += 1
+                                            else:
+                                                with open(resource_file, "w") as f:
+                                                    json.dump(resource, f, indent=2)
+                                                added += 1
+                                                if verbose:
+                                                    click.echo(f"  Added: {coll_id}/{item_id}")
+
+                                    except Exception as e:
+                                        if verbose:
+                                            click.echo(f"  Error: {item_href}: {e}")
+
+                    except Exception as e:
+                        if verbose:
+                            click.echo(f"  Error fetching collection: {e}")
+
+        else:
+            click.echo("  No STAC catalog found on remote")
+
+    except Exception as e:
+        raise click.ClickException(f"Failed to pull from remote: {e}")
+
+    click.echo()
+    click.echo(click.style("Pull complete!", fg="green"))
+    click.echo(f"  Added: {added}")
+    click.echo(f"  Updated: {updated}")
+    click.echo(f"  Unchanged: {unchanged}")
+
+    if added > 0 or updated > 0:
+        click.echo()
+        click.echo("Run 'portolan rebuild' to regenerate outputs with new data")
+
+
 # ============== IMPORT ==============
 
 @cli.group(name="import")
