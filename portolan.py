@@ -61,6 +61,11 @@ class CatalogConfig:
     path: Path
     default_remote: Optional[str] = None
     remotes: dict[str, RemoteConfig] = field(default_factory=dict)
+    outputs: dict[str, bool] = field(default_factory=lambda: {
+        "iceberg": True,   # Always enabled - core catalog
+        "stac": False,     # STAC static catalog
+        "iso19139": False, # ISO 19139 XML metadata
+    })
 
     @property
     def config_file(self) -> Path:
@@ -74,12 +79,21 @@ class CatalogConfig:
     def metadata_dir(self) -> Path:
         return self.path / "v1"
 
+    @property
+    def stac_dir(self) -> Path:
+        return self.path / "stac"
+
+    @property
+    def iso_dir(self) -> Path:
+        return self.path / "iso19139"
+
     def save(self):
         """Save catalog configuration."""
         self.path.mkdir(parents=True, exist_ok=True)
         data = {
             "default_remote": self.default_remote,
             "remotes": {name: r.to_dict() for name, r in self.remotes.items()},
+            "outputs": self.outputs,
         }
         with open(self.config_file, "w") as f:
             json.dump(data, f, indent=2)
@@ -95,10 +109,14 @@ class CatalogConfig:
                 name: RemoteConfig.from_dict(r)
                 for name, r in data.get("remotes", {}).items()
             }
+            # Load outputs with defaults for missing keys
+            default_outputs = {"iceberg": True, "stac": False, "iso19139": False}
+            outputs = {**default_outputs, **data.get("outputs", {})}
             return cls(
                 path=path,
                 default_remote=data.get("default_remote"),
                 remotes=remotes,
+                outputs=outputs,
             )
         return cls(path=path)
 
@@ -258,7 +276,9 @@ def cli(ctx):
 @click.argument("path", type=click.Path(), default=".", required=False)
 @click.option("--remote", "-r", help="Remote storage URL (e.g., s3://bucket/path)")
 @click.option("--name", "-n", default="origin", help="Name for the remote (default: origin)")
-def init(path: str, remote: str | None, name: str):
+@click.option("--stac/--no-stac", default=False, help="Enable STAC output generation")
+@click.option("--iso/--no-iso", "iso19139", default=False, help="Enable ISO 19139 output generation")
+def init(path: str, remote: str | None, name: str, stac: bool, iso19139: bool):
     """Initialize a new Portolan catalog.
 
     Creates a .portolan directory in the specified PATH (default: current directory).
@@ -268,7 +288,8 @@ def init(path: str, remote: str | None, name: str):
         portolan init                           # Initialize in current directory
         portolan init ./my-catalog              # Initialize in specific directory
         portolan init -r s3://my-bucket/data    # Initialize with S3 remote
-        portolan init -r gs://my-bucket         # Initialize with GCS remote
+        portolan init --stac                    # Initialize with STAC output enabled
+        portolan init --stac --iso              # Enable both STAC and ISO outputs
     """
     catalog_path = Path(path).resolve() / ".portolan"
 
@@ -276,8 +297,9 @@ def init(path: str, remote: str | None, name: str):
         click.echo(f"Catalog already exists at {catalog_path}")
         return
 
-    # Create catalog structure
-    catalog = CatalogConfig(path=catalog_path)
+    # Create catalog structure with outputs config
+    outputs = {"iceberg": True, "stac": stac, "iso19139": iso19139}
+    catalog = CatalogConfig(path=catalog_path, outputs=outputs)
     catalog.path.mkdir(parents=True, exist_ok=True)
     catalog.data_dir.mkdir(exist_ok=True)
     catalog.metadata_dir.mkdir(exist_ok=True)
@@ -290,12 +312,21 @@ def init(path: str, remote: str | None, name: str):
     catalog.save()
 
     click.echo(f"Initialized Portolan catalog at {catalog_path}")
+
+    # Show enabled outputs
+    enabled_outputs = [k for k, v in outputs.items() if v]
+    click.echo(f"Outputs: {', '.join(enabled_outputs)}")
+
     click.echo()
     click.echo("Next steps:")
     click.echo("  portolan dataset add <file.parquet> --public")
     if not remote:
         click.echo("  portolan remote add origin s3://your-bucket/path")
     click.echo("  portolan sync")
+    click.echo()
+    click.echo("To enable more outputs later:")
+    click.echo("  portolan outputs enable stac")
+    click.echo("  portolan outputs enable iso19139")
 
 
 # ============== REMOTE ==============
@@ -396,6 +427,74 @@ def remote_set_default(ctx, name: str):
     catalog.default_remote = name
     catalog.save()
     click.echo(f"Set '{name}' as default remote")
+
+
+# ============== OUTPUTS ==============
+
+@cli.group()
+def outputs():
+    """Manage output format generation (STAC, ISO 19139, etc.)."""
+    pass
+
+
+@outputs.command("list")
+@click.pass_context
+def outputs_list(ctx):
+    """List output formats and their status."""
+    catalog = get_catalog(ctx)
+
+    click.echo("Output formats:")
+    for name, enabled in catalog.outputs.items():
+        status = click.style("enabled", fg="green") if enabled else click.style("disabled", fg="red")
+        click.echo(f"  {name}: {status}")
+
+
+@outputs.command("enable")
+@click.argument("format_name", type=click.Choice(["stac", "iso19139"]))
+@click.option("--rebuild", is_flag=True, help="Rebuild the output immediately")
+@click.pass_context
+def outputs_enable(ctx, format_name: str, rebuild: bool):
+    """Enable an output format.
+
+    \b
+    Formats:
+        stac      - STAC (SpatioTemporal Asset Catalog) JSON files
+        iso19139  - ISO 19139 XML metadata files
+
+    \b
+    Examples:
+        portolan outputs enable stac
+        portolan outputs enable iso19139 --rebuild
+    """
+    from output_generators import regenerate_all_outputs
+
+    catalog = get_catalog(ctx)
+    catalog.outputs[format_name] = True
+    catalog.save()
+
+    click.echo(f"Enabled {format_name} output")
+
+    if rebuild:
+        click.echo(f"Rebuilding {format_name}...")
+        regenerate_all_outputs(catalog, verbose=True)
+    else:
+        click.echo(f"Run 'portolan rebuild' to generate {format_name} files for existing resources")
+
+
+@outputs.command("disable")
+@click.argument("format_name", type=click.Choice(["stac", "iso19139"]))
+@click.pass_context
+def outputs_disable(ctx, format_name: str):
+    """Disable an output format.
+
+    Note: This does not delete existing output files. Use --clean to remove them.
+    """
+    catalog = get_catalog(ctx)
+    catalog.outputs[format_name] = False
+    catalog.save()
+
+    click.echo(f"Disabled {format_name} output")
+    click.echo(f"Existing {format_name} files remain in place. Delete manually if needed.")
 
 
 # ============== DATASET ==============
@@ -634,9 +733,17 @@ def sync(ctx, remote: str | None, verbose: bool, dry_run: bool):
     remote_config = catalog.remotes[remote_name]
     click.echo(f"Syncing to {remote_config.url}...")
 
-    # Count files to sync
+    # Count files to sync (including output formats)
     files_to_sync = []
-    for subdir in ["public", "private", "v1"]:
+    sync_dirs = ["public", "private", "v1", "data", "gcs"]
+
+    # Add output format directories if enabled
+    if catalog.outputs.get("stac"):
+        sync_dirs.append("stac")
+    if catalog.outputs.get("iso19139"):
+        sync_dirs.append("iso19139")
+
+    for subdir in sync_dirs:
         local_dir = catalog.path / subdir
         if local_dir.exists():
             for f in local_dir.rglob("*"):
@@ -745,6 +852,12 @@ def status(ctx):
             click.echo(f"  {name}: {remote.url}{default}")
     else:
         click.echo("  No remotes configured")
+
+    # Show outputs
+    click.echo(f"\nOutputs:")
+    for name, enabled in catalog.outputs.items():
+        status = click.style("enabled", fg="green") if enabled else click.style("disabled", dim=True)
+        click.echo(f"  {name}: {status}")
 
     # Check sync status
     if catalog.default_remote:
@@ -1023,21 +1136,38 @@ def stac_item_to_resource(item: dict, item_url: str) -> dict:
     }
 
 
-@cli.command("build")
+@cli.command("rebuild")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.option("--base-url", help="Base URL where catalog will be hosted (e.g., gs://bucket/path)")
+@click.option("--outputs-only", is_flag=True, help="Only rebuild STAC/ISO outputs, not Iceberg")
 @click.pass_context
-def build(ctx, verbose: bool, base_url: str | None):
-    """Build Iceberg catalog from resources.
+def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
+    """Rebuild catalog and all enabled outputs from scratch.
 
-    Generates a proper Iceberg table with metadata, manifests, and snapshots.
-    The catalog can be queried with DuckDB, BigQuery, Snowflake, etc.
+    Use this after changing output settings or to regenerate everything.
+    For normal workflow, outputs are updated automatically when adding data.
 
     \b
-    Example:
-        portolan build --base-url gs://my-bucket/catalog
-        duckdb -c "SELECT * FROM iceberg_scan('gs://my-bucket/catalog/data/resources/metadata/v1.metadata.json')"
+    Examples:
+        portolan rebuild                              # Rebuild everything
+        portolan rebuild --outputs-only               # Only rebuild STAC/ISO
+        portolan rebuild --base-url gs://my-bucket    # Rebuild with specific base URL
     """
+    from output_generators import regenerate_all_outputs
+
+    catalog = get_catalog(ctx)
+
+    # Show what will be rebuilt
+    enabled = [k for k, v in catalog.outputs.items() if v]
+    click.echo(f"Rebuilding: {', '.join(enabled)}")
+
+    if outputs_only:
+        click.echo("Skipping Iceberg rebuild (--outputs-only)")
+        regenerate_all_outputs(catalog, verbose=verbose)
+        click.echo(click.style("Outputs rebuilt!", fg="green"))
+        return
+
+    # Continue with full Iceberg rebuild...
     from iceberg_catalog import (
         IcebergTable,
         generate_static_catalog,
@@ -1258,6 +1388,9 @@ def build(ctx, verbose: bool, base_url: str | None):
     click.echo(f"  Direct tables: {len(all_tables) - 1}")  # Minus the resources table
     click.echo(f"  Location: {catalog.path}")
 
+    # Regenerate all enabled outputs (STAC, ISO, etc.)
+    regenerate_all_outputs(catalog, verbose=verbose)
+
     # Show format breakdown
     format_counts = {}
     for r in resources:
@@ -1459,7 +1592,10 @@ def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tupl
     resources_dir = catalog.path / "resources" / namespace
     resources_dir.mkdir(parents=True, exist_ok=True)
 
-    # Save each resource as JSON
+    # Import output generators
+    from output_generators import update_all_outputs
+
+    # Save each resource as JSON and update outputs
     saved = 0
     for item in items_to_import:
         resource_file = resources_dir / f"{item['name']}.json"
@@ -1470,6 +1606,10 @@ def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tupl
 
         with open(resource_file, "w") as f:
             json.dump(item, f, indent=2)
+
+        # Update all enabled outputs (STAC, ISO, etc.)
+        update_all_outputs(catalog, item, namespace, verbose=verbose)
+
         saved += 1
 
     # Save a summary/index file
@@ -1486,9 +1626,15 @@ def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tupl
     with open(resources_dir / "_index.json", "w") as f:
         json.dump(index, f, indent=2)
 
+    # Show enabled outputs
+    enabled = [k for k, v in catalog.outputs.items() if v and k != "iceberg"]
+    outputs_msg = f" + {', '.join(enabled)}" if enabled else ""
+
     click.echo()
     click.echo(click.style(f"Imported {saved} resources!", fg="green"))
     click.echo(f"  Location: {resources_dir}")
+    if enabled:
+        click.echo(f"  Also updated: {', '.join(enabled)}")
     click.echo(f"\nRun 'portolan sync' to push to remote storage.")
 
 
