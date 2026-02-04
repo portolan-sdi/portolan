@@ -346,9 +346,10 @@ def remote():
 @click.option("--region", default="us-east-1", help="AWS region (default: us-east-1)")
 @click.option("--anonymous", is_flag=True, help="Use anonymous access (no credentials)")
 @click.option("--default", "set_default", is_flag=True, help="Set as default remote")
+@click.option("--setup-cors", "do_cors", is_flag=True, help="Configure CORS for browser access")
 @click.pass_context
 def remote_add(ctx, name: str, url: str, access_key: str | None, secret_key: str | None,
-               endpoint: str | None, region: str, anonymous: bool, set_default: bool):
+               endpoint: str | None, region: str, anonymous: bool, set_default: bool, do_cors: bool):
     """Add a remote storage backend.
 
     \b
@@ -361,9 +362,8 @@ def remote_add(ctx, name: str, url: str, access_key: str | None, secret_key: str
     \b
     Examples:
         portolan remote add origin s3://my-bucket/portolan
+        portolan remote add origin gs://my-bucket --setup-cors
         portolan remote add minio s3://warehouse --endpoint http://localhost:9000
-        portolan remote add gcs gs://my-bucket/data
-        portolan remote add local file:///var/data/portolan
     """
     catalog = get_catalog(ctx)
 
@@ -382,6 +382,16 @@ def remote_add(ctx, name: str, url: str, access_key: str | None, secret_key: str
 
     if set_default or catalog.default_remote == name:
         click.echo(f"Set '{name}' as default remote")
+
+    # Setup CORS if requested
+    if do_cors:
+        click.echo("Setting up CORS for browser access...")
+        try:
+            setup_cors_for_url(url, options)
+            click.echo(click.style("CORS configured!", fg="green"))
+        except Exception as e:
+            click.echo(click.style(f"Warning: Could not configure CORS: {e}", fg="yellow"))
+            click.echo("Run 'portolan remote setup-cors' later to enable browser access")
 
 
 @remote.command("list")
@@ -427,6 +437,142 @@ def remote_set_default(ctx, name: str):
     catalog.default_remote = name
     catalog.save()
     click.echo(f"Set '{name}' as default remote")
+
+
+@remote.command("setup-cors")
+@click.argument("name", required=False)
+@click.pass_context
+def remote_setup_cors(ctx, name: str | None):
+    """Configure CORS on remote storage for browser access.
+
+    This enables STAC Browser and other web tools to access your catalog.
+    Supports GCS (gs://), S3 (s3://), and Azure (az://).
+
+    \b
+    Examples:
+        portolan remote setup-cors           # Setup CORS on default remote
+        portolan remote setup-cors origin    # Setup CORS on specific remote
+    """
+    catalog = get_catalog(ctx)
+
+    remote_name = name or catalog.default_remote
+    if not remote_name:
+        raise click.ClickException("No remote specified and no default remote configured")
+
+    if remote_name not in catalog.remotes:
+        raise click.ClickException(f"Remote '{remote_name}' not found")
+
+    remote_config = catalog.remotes[remote_name]
+    url = remote_config.url
+
+    click.echo(f"Setting up CORS for {remote_name} ({url})...")
+
+    try:
+        setup_cors_for_url(url, remote_config.options)
+
+        # Mark CORS as configured so we don't keep prompting
+        remote_config.options["cors_configured"] = True
+        catalog.save()
+
+        click.echo(click.style("CORS configured successfully!", fg="green"))
+        click.echo("Your STAC catalog is now accessible from web browsers.")
+    except Exception as e:
+        raise click.ClickException(f"Failed to configure CORS: {e}")
+
+
+def setup_cors_for_url(url: str, options: dict | None = None):
+    """Configure CORS for a storage URL."""
+    import subprocess
+    import tempfile
+
+    options = options or {}
+
+    if url.startswith("gs://"):
+        # Google Cloud Storage
+        bucket = url[5:].split("/")[0]
+
+        cors_config = [
+            {
+                "origin": ["*"],
+                "method": ["GET", "HEAD", "OPTIONS"],
+                "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Access-Control-Allow-Origin"],
+                "maxAgeSeconds": 3600
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(cors_config, f)
+            cors_file = f.name
+
+        try:
+            result = subprocess.run(
+                ["gsutil", "cors", "set", cors_file, f"gs://{bucket}"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+        finally:
+            Path(cors_file).unlink()
+
+    elif url.startswith("s3://"):
+        # Amazon S3
+        bucket = url[5:].split("/")[0]
+
+        cors_config = {
+            "CORSRules": [
+                {
+                    "AllowedOrigins": ["*"],
+                    "AllowedMethods": ["GET", "HEAD"],
+                    "AllowedHeaders": ["*"],
+                    "MaxAgeSeconds": 3600
+                }
+            ]
+        }
+
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            json.dump(cors_config, f)
+            cors_file = f.name
+
+        try:
+            result = subprocess.run(
+                ["aws", "s3api", "put-bucket-cors", "--bucket", bucket, "--cors-configuration", f"file://{cors_file}"],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+        finally:
+            Path(cors_file).unlink()
+
+    elif url.startswith("az://"):
+        # Azure Blob Storage - requires az CLI
+        container = url[5:].split("/")[0]
+        account = options.get("account_name", "")
+
+        if not account:
+            raise ValueError("Azure storage account name required in remote options")
+
+        result = subprocess.run(
+            [
+                "az", "storage", "cors", "add",
+                "--services", "b",
+                "--methods", "GET", "HEAD", "OPTIONS",
+                "--origins", "*",
+                "--allowed-headers", "*",
+                "--exposed-headers", "*",
+                "--max-age", "3600",
+                "--account-name", account
+            ],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+
+    elif url.startswith("file://"):
+        # Local filesystem - no CORS needed
+        pass
+
+    else:
+        raise ValueError(f"Unsupported storage URL for CORS: {url}")
 
 
 # ============== OUTPUTS ==============
@@ -812,6 +958,13 @@ def sync(ctx, remote: str | None, verbose: bool, dry_run: bool):
 
     # Show the remote URL
     click.echo(f"\nRemote catalog: {remote_config.url}")
+
+    # Hint about CORS if STAC/ISO outputs were synced
+    has_browser_outputs = catalog.outputs.get("stac") or catalog.outputs.get("iso19139")
+    if has_browser_outputs and not remote_config.options.get("cors_configured"):
+        click.echo()
+        click.echo(click.style("Tip:", bold=True) + " To access STAC/ISO from web browsers, run:")
+        click.echo(f"  portolan remote setup-cors {remote_name}")
 
 
 # ============== STATUS ==============
