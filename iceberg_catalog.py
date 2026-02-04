@@ -659,6 +659,18 @@ def generate_static_catalog(
                 gcs_path = url_path.lstrip("/")
                 f.write(f"cat \"{local_path}\" | gsutil cp - \"$BUCKET/{gcs_path}\"\n")
 
+        # Add STAC and ISO directories if they exist
+        f.write("\n# Compatibility layer outputs (STAC, ISO 19139)\n")
+        f.write(f"SCRIPT_DIR=\"$(dirname \"$0\")\"\n")
+        f.write(f"if [ -d \"$SCRIPT_DIR/stac\" ]; then\n")
+        f.write(f"    echo \"Uploading STAC catalog...\"\n")
+        f.write(f"    gsutil -m cp -r \"$SCRIPT_DIR/stac\" \"$BUCKET/\"\n")
+        f.write(f"fi\n")
+        f.write(f"if [ -d \"$SCRIPT_DIR/iso19139\" ]; then\n")
+        f.write(f"    echo \"Uploading ISO 19139 metadata...\"\n")
+        f.write(f"    gsutil -m cp -r \"$SCRIPT_DIR/iso19139\" \"$BUCKET/\"\n")
+        f.write(f"fi\n")
+
         f.write("\necho \"\"\n")
         f.write("echo \"Upload complete!\"\n")
         f.write("echo \"Catalog endpoint: https://storage.googleapis.com/${BUCKET#gs://}/v1/config\"\n")
