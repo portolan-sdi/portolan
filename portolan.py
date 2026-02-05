@@ -144,6 +144,104 @@ def get_catalog(ctx: click.Context) -> CatalogConfig:
     return catalog
 
 
+# ============== REMOTE PARQUET HELPERS ==============
+
+
+def _parse_remote_url(url: str) -> tuple[str, str]:
+    """
+    Parse a remote URL into (scheme, path) for filesystem resolution.
+
+    Supports:
+    - s3://bucket/path
+    - gs://bucket/path
+    - https://host/path (including S3/GCS public URLs)
+
+    Returns:
+        Tuple of (scheme, path_for_filesystem)
+    """
+    if url.startswith("s3://"):
+        return "s3", url[5:]
+    if url.startswith("gs://"):
+        return "gs", url[5:]
+    if url.startswith("https://") or url.startswith("http://"):
+        # Detect S3 public URLs: https://bucket.s3.amazonaws.com/path
+        # or https://bucket.s3.region.amazonaws.com/path
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = parsed.hostname or ""
+
+        if ".s3." in host and ".amazonaws.com" in host:
+            # S3-style URL: extract bucket and key
+            bucket = host.split(".s3.")[0]
+            key = parsed.path.lstrip("/")
+            return "s3", f"{bucket}/{key}"
+
+        if "storage.googleapis.com" in host:
+            # GCS-style URL
+            key = parsed.path.lstrip("/")
+            return "gs", key
+
+        return "https", url
+    return "file", url
+
+
+def _open_remote_parquet(url: str):
+    """
+    Open a remote Parquet file and return a ParquetFile object.
+
+    Only reads the metadata footer (range request), not the full file.
+    Supports s3://, gs://, and https:// URLs.
+    """
+    import pyarrow.parquet as pq
+
+    scheme, path = _parse_remote_url(url)
+
+    if scheme == "s3":
+        from pyarrow.fs import S3FileSystem
+        # Extract region from path or use default
+        s3fs = S3FileSystem(anonymous=True, region="us-west-2")
+        return pq.ParquetFile(path, filesystem=s3fs)
+
+    if scheme == "gs":
+        from pyarrow.fs import GcsFileSystem
+        gcsfs = GcsFileSystem(anonymous=True)
+        return pq.ParquetFile(path, filesystem=gcsfs)
+
+    if scheme == "https":
+        import fsspec
+        f = fsspec.open(url, "rb").open()
+        return pq.ParquetFile(f)
+
+    # Local file fallback
+    return pq.ParquetFile(path)
+
+
+def _get_remote_file_size(url: str) -> int:
+    """Get the file size of a remote file via HEAD request or filesystem info."""
+    scheme, path = _parse_remote_url(url)
+
+    if scheme == "s3":
+        from pyarrow.fs import S3FileSystem
+        s3fs = S3FileSystem(anonymous=True, region="us-west-2")
+        info = s3fs.get_file_info(path)
+        return info.size
+
+    if scheme == "gs":
+        from pyarrow.fs import GcsFileSystem
+        gcsfs = GcsFileSystem(anonymous=True)
+        info = gcsfs.get_file_info(path)
+        return info.size
+
+    if scheme == "https":
+        import httpx
+        response = httpx.head(url, follow_redirects=True, timeout=10)
+        content_length = response.headers.get("content-length")
+        return int(content_length) if content_length else 0
+
+    # Local file
+    return Path(path).stat().st_size
+
+
 # ============== CLI ==============
 
 @click.group()
@@ -218,6 +316,1126 @@ def init(path: str, remote: str | None):
     click.echo("  stac, iso19139, web")
 
 
+# ============== CONNECTION MANAGEMENT ==============
+
+
+def load_connection(catalog_path: Path, name: str | None) -> dict | None:
+    """Load a connection configuration by name."""
+    if not name:
+        return None
+
+    connections_file = catalog_path / "connections.json"
+    if not connections_file.exists():
+        return None
+
+    with open(connections_file) as f:
+        connections = json.load(f)
+
+    return connections.get("connections", {}).get(name)
+
+
+def save_connection(catalog_path: Path, name: str, config: dict) -> None:
+    """Save a connection configuration."""
+    connections_file = catalog_path / "connections.json"
+
+    if connections_file.exists():
+        with open(connections_file) as f:
+            connections = json.load(f)
+    else:
+        connections = {"connections": {}}
+
+    connections["connections"][name] = config
+
+    with open(connections_file, "w") as f:
+        json.dump(connections, f, indent=2)
+
+
+def delete_connection(catalog_path: Path, name: str) -> bool:
+    """Delete a connection configuration. Returns True if deleted."""
+    connections_file = catalog_path / "connections.json"
+
+    if not connections_file.exists():
+        return False
+
+    with open(connections_file) as f:
+        connections = json.load(f)
+
+    if name not in connections.get("connections", {}):
+        return False
+
+    del connections["connections"][name]
+
+    with open(connections_file, "w") as f:
+        json.dump(connections, f, indent=2)
+
+    return True
+
+
+# ============== RESOURCE LIFECYCLE ==============
+
+
+@cli.command()
+@click.argument("origin_type", type=click.Choice([
+    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle"
+]))
+@click.argument("url")
+@click.option("--name", "-n", help="Resource name (default: derived from URL)")
+@click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--layer", "-l", help="Layer name (for multi-layer sources)")
+@click.option("--connection-ref", help="Connection reference for database sources (stored in .portolan/connections.json)")
+@click.option("--title", help="Human-readable title")
+@click.option("--description", help="Description")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def register(ctx, origin_type: str, url: str, name: str | None, namespace: str,
+             layer: str | None, connection_ref: str | None, title: str | None,
+             description: str | None, verbose: bool):
+    """
+    Register an external resource (creates EXTERNAL state).
+
+    Creates a pointer to remote data without downloading.
+    Use 'portolan snapshot' to download the data locally.
+
+    \b
+    Examples:
+        portolan register file /path/to/data.parquet --name cities
+        portolan register arcgis_featureserver https://services.arcgis.com/.../0 --name boundaries
+        portolan register arcgis_imageserver https://services.arcgis.com/.../ImageServer --name dem
+        portolan register stac https://earth-search.aws.element84.com/v1/items/xyz
+        portolan register postgres "public.buildings" --connection-ref mydb --name buildings
+        portolan register wfs https://example.com/wfs --layer boundaries
+    """
+    from portolan_resource import (
+        Origin,
+        Resource,
+        ResourceMetadata,
+        UserMetadata,
+        save_resource,
+    )
+    from schemas import validate_resource
+
+    catalog = get_catalog(ctx)
+
+    # Derive name from URL if not provided
+    if not name:
+        if origin_type == "file":
+            name = Path(url).stem
+        else:
+            # Extract last path component or use hash
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            path_parts = [p for p in parsed.path.split("/") if p]
+            name = path_parts[-1] if path_parts else f"resource_{hash(url) % 10000}"
+
+    # Sanitize name
+    name = name.lower().replace(" ", "_").replace("-", "_")
+    name = "".join(c for c in name if c.isalnum() or c == "_")
+
+    # Detect kind based on origin type
+    kind = "vector"  # Default
+    if origin_type == "arcgis_imageserver":
+        kind = "raster"
+
+    # For database types, layer is the table name, URL is optional
+    if origin_type in ("postgres", "oracle"):
+        # URL is actually the table name for database sources
+        table_name = url
+        if not layer:
+            layer = table_name
+        url = None  # No URL for database sources
+
+    # Create origin
+    # For "file" type, detect if it's a remote URL (s3://, gs://, https://) and keep as-is
+    if origin_type == "file" and url and not any(url.startswith(p) for p in ("s3://", "gs://", "https://", "http://")):
+        resolved_url = str(Path(url).resolve())
+    elif origin_type in ("postgres", "oracle"):
+        resolved_url = None
+    else:
+        resolved_url = url
+
+    origin = Origin(
+        type=origin_type,
+        url=resolved_url,
+        layer=layer,
+        connection_ref=connection_ref,
+    )
+
+    # Create resource in EXTERNAL state
+    resource = Resource(
+        name=name,
+        kind=kind,
+        origin=origin,
+        metadata=ResourceMetadata(
+            user=UserMetadata(title=title, description=description),
+        ),
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    # Validate before saving
+    errors = validate_resource(resource.to_dict())
+    if errors:
+        click.echo(click.style("Validation errors:", fg="red"))
+        for error in errors:
+            click.echo(f"  - {error}")
+        raise click.ClickException("Resource validation failed")
+
+    # Save resource
+    resources_dir = catalog.path / "resources" / namespace
+    resource_path = resources_dir / f"{name}.json"
+    save_resource(resource, resource_path)
+
+    click.echo(f"Registered {origin_type} resource: {name}")
+    click.echo(f"  State: {resource.state.upper()}")
+    click.echo(f"  URL: {url}")
+    click.echo(f"  Location: {resource_path}")
+    click.echo()
+    click.echo(f"Next: portolan snapshot {name} --namespace {namespace}")
+
+
+@cli.command()
+@click.argument("resource_name", required=False)
+@click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--all", "all_resources", is_flag=True, help="Snapshot all EXTERNAL resources in namespace")
+@click.option("--force", "-f", is_flag=True, help="Re-snapshot even if already cached")
+@click.option("--bbox", help="Bounding box filter: xmin,ymin,xmax,ymax (WGS84). For ImageServer/raster sources.")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool, force: bool, bbox: str | None, verbose: bool):
+    """
+    Create a durable snapshot of an external resource.
+
+    Downloads/extracts data to local storage in cloud-native format.
+
+    For vector resources: creates GeoParquet + auto-registers as Iceberg
+    (EXTERNAL -> MATERIALIZED in one step, since Iceberg registration is free).
+
+    For raster resources: creates COG/Zarr cache only (EXTERNAL -> CACHED).
+    Use 'portolan materialize' to convert to Raquet and register as Iceberg.
+
+    \b
+    Examples:
+        portolan snapshot cities
+        portolan snapshot boundaries --namespace public
+        portolan snapshot mydata --force  # Re-snapshot
+        portolan snapshot satellite --bbox "-10,35,5,45"  # Spain bbox
+        portolan snapshot --all --namespace federated_wildfire  # Batch snapshot
+    """
+    from portolan_resource import (
+        SnapshotAsset,
+        compute_derived_metadata,
+        load_resource,
+        save_resource,
+    )
+    from schemas import validate_resource
+
+    catalog = get_catalog(ctx)
+
+    # Handle --all flag for batch operations
+    if all_resources:
+        namespace_dir = catalog.path / "resources" / namespace
+        if not namespace_dir.exists():
+            raise click.ClickException(f"Namespace not found: {namespace}")
+
+        # Find all EXTERNAL resources
+        resource_files = list(namespace_dir.glob("*.json"))
+        if not resource_files:
+            click.echo(f"No resources found in namespace: {namespace}")
+            return
+
+        external_resources = []
+        for rf in resource_files:
+            res = load_resource(rf)
+            if res.state == "external" or (force and res.state == "cached"):
+                external_resources.append(rf.stem)
+
+        if not external_resources:
+            click.echo(f"No EXTERNAL resources to snapshot in namespace: {namespace}")
+            return
+
+        click.echo(f"Batch snapshotting {len(external_resources)} resources in {namespace}...")
+        click.echo()
+
+        success = 0
+        failed = 0
+        for res_name in external_resources:
+            try:
+                # Recursively invoke snapshot for each resource
+                ctx.invoke(snapshot, resource_name=res_name, namespace=namespace,
+                          all_resources=False, force=force, bbox=bbox, verbose=verbose)
+                success += 1
+            except click.ClickException as e:
+                click.echo(click.style(f"  Failed: {res_name} - {e.message}", fg="red"))
+                failed += 1
+            click.echo()
+
+        click.echo(f"Batch snapshot complete: {success} succeeded, {failed} failed")
+        return
+
+    # Single resource mode
+    if not resource_name:
+        raise click.ClickException("Resource name required (or use --all)")
+
+    # Load resource
+    resource_path = catalog.path / "resources" / namespace / f"{resource_name}.json"
+    if not resource_path.exists():
+        raise click.ClickException(f"Resource not found: {resource_name} in namespace {namespace}")
+
+    resource = load_resource(resource_path)
+
+    if resource.state == "materialized" and not force:
+        click.echo("Resource is already materialized. Use --force to re-snapshot.")
+        return
+
+    if resource.state == "cached" and not force:
+        click.echo("Resource is already cached. Use --force to re-snapshot.")
+        return
+
+    if not resource.origin:
+        raise click.ClickException("Resource has no origin - cannot snapshot.")
+
+    click.echo(f"Snapshotting {resource_name}...")
+
+    import shutil
+
+    # Output path for snapshot
+    snapshot_dir = catalog.path / "data" / "raw" / namespace / resource_name
+    snapshot_dir.mkdir(parents=True, exist_ok=True)
+    output_path = snapshot_dir / f"{resource_name}.parquet"
+
+    # Extract based on origin type
+    if resource.origin.type == "file":
+        source_path = Path(resource.origin.url)
+        if not source_path.exists():
+            raise click.ClickException(f"Source file not found: {source_path}")
+
+        if source_path.suffix in (".parquet", ".geoparquet"):
+            # Copy parquet file
+            shutil.copy(source_path, output_path)
+            if verbose:
+                click.echo(f"  Copied {source_path} to {output_path}")
+        else:
+            # Convert to GeoParquet using geopandas
+            import geopandas as gpd
+            gdf = gpd.read_file(source_path)
+            gdf.to_parquet(output_path)
+            if verbose:
+                click.echo(f"  Converted {source_path} to GeoParquet")
+
+    elif resource.origin.type == "arcgis_featureserver":
+        # Fetch layer metadata from ArcGIS REST API
+        import httpx
+        import subprocess
+        from portolan_resource import SourceMetadata
+
+        metadata_url = f"{resource.origin.url}?f=json"
+        if verbose:
+            click.echo(f"  Fetching layer metadata from {metadata_url}...")
+
+        layer_meta = {}
+        try:
+            response = httpx.get(metadata_url, follow_redirects=True, timeout=30)
+            response.raise_for_status()
+            layer_meta = response.json()
+        except Exception as e:
+            if verbose:
+                click.echo(f"  Warning: Could not fetch layer metadata: {e}")
+
+        # Extract key metadata
+        layer_name = layer_meta.get("name", "")
+        layer_desc = layer_meta.get("description", "")
+        geometry_type = layer_meta.get("geometryType", "")
+        extent = layer_meta.get("extent", {})
+        fields = layer_meta.get("fields", [])
+
+        if verbose and layer_name:
+            click.echo(f"  Layer: {layer_name}")
+            click.echo(f"  Geometry: {geometry_type}")
+
+        # Use gpio for extraction
+        cmd = ["gpio", "extract", "arcgis", resource.origin.url, str(output_path)]
+        if verbose:
+            click.echo(f"  Running: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, check=True, capture_output=not verbose)
+        except subprocess.CalledProcessError as e:
+            raise click.ClickException(f"Failed to extract from ArcGIS: {e}")
+        except FileNotFoundError:
+            raise click.ClickException(
+                "gpio command not found. Install: pip install geoparquet-io"
+            )
+
+        # Store ArcGIS metadata
+        if layer_meta:
+            resource.metadata.source = SourceMetadata(
+                provider="arcgis",
+                ref={"service_url": resource.origin.url, "layer_id": layer_meta.get("id")},
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                data={
+                    "name": layer_name,
+                    "description": layer_desc,
+                    "geometryType": geometry_type,
+                    "extent": extent,
+                    "fields": [{"name": f.get("name"), "type": f.get("type"), "alias": f.get("alias")} for f in fields],
+                    "capabilities": layer_meta.get("capabilities"),
+                    "currentVersion": layer_meta.get("currentVersion"),
+                },
+            )
+
+    elif resource.origin.type == "wfs":
+        # Use ogr2ogr for WFS extraction
+        import subprocess
+        from portolan_resource import SourceMetadata
+
+        wfs_url = f"WFS:{resource.origin.url}"
+        cmd = ["ogr2ogr", "-f", "Parquet", str(output_path), wfs_url]
+        if resource.origin.layer:
+            cmd.append(resource.origin.layer)
+        if verbose:
+            click.echo(f"  Running: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, check=True, capture_output=not verbose)
+        except subprocess.CalledProcessError as e:
+            raise click.ClickException(f"Failed to extract from WFS: {e}")
+
+        # Store WFS metadata (basic info - full metadata requires XML parsing)
+        resource.metadata.source = SourceMetadata(
+            provider="wfs",
+            ref={"service_url": resource.origin.url, "layer": resource.origin.layer},
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            data={
+                "service_type": "WFS",
+                "layer": resource.origin.layer,
+            },
+        )
+
+    elif resource.origin.type == "arcgis_imageserver":
+        # Fetch service metadata from ArcGIS REST API
+        import httpx
+        import subprocess
+        from portolan_resource import SourceMetadata
+
+        metadata_url = f"{resource.origin.url}?f=json"
+        if verbose:
+            click.echo(f"  Fetching service metadata from {metadata_url}...")
+
+        service_meta = {}
+        try:
+            response = httpx.get(metadata_url, follow_redirects=True, timeout=30)
+            response.raise_for_status()
+            service_meta = response.json()
+        except Exception as e:
+            if verbose:
+                click.echo(f"  Warning: Could not fetch service metadata: {e}")
+
+        # Extract key metadata
+        service_name = service_meta.get("name", "")
+        service_desc = service_meta.get("description", "")
+        extent = service_meta.get("extent", {})
+        pixel_size_x = service_meta.get("pixelSizeX")
+        pixel_size_y = service_meta.get("pixelSizeY")
+        band_count = service_meta.get("bandCount")
+
+        if verbose and service_name:
+            click.echo(f"  Service: {service_name}")
+            click.echo(f"  Bands: {band_count}, Pixel size: {pixel_size_x} x {pixel_size_y}")
+
+        # Update kind to raster
+        resource.kind = "raster"
+
+        # Use raquet-io for extraction (outputs Raquet format)
+        cmd = ["raquet-io", "convert", "imageserver", resource.origin.url, str(output_path)]
+        if bbox:
+            cmd.extend(["--bbox", bbox])
+        if verbose:
+            cmd.append("-v")
+        click.echo(f"  Running: {' '.join(cmd)}")
+        try:
+            subprocess.run(cmd, check=True, capture_output=not verbose)
+        except subprocess.CalledProcessError as e:
+            raise click.ClickException(f"Failed to extract from ArcGIS ImageServer: {e}")
+        except FileNotFoundError:
+            raise click.ClickException(
+                "raquet-io command not found. Install: pip install 'raquet-io[imageserver]'\n"
+                "Note: GDAL must be installed separately (brew install gdal on macOS)"
+            )
+
+        # Store ImageServer metadata
+        if service_meta:
+            resource.metadata.source = SourceMetadata(
+                provider="arcgis_imageserver",
+                ref={"service_url": resource.origin.url},
+                fetched_at=datetime.now(timezone.utc).isoformat(),
+                data={
+                    "name": service_name,
+                    "description": service_desc,
+                    "extent": extent,
+                    "pixelSizeX": pixel_size_x,
+                    "pixelSizeY": pixel_size_y,
+                    "bandCount": band_count,
+                    "serviceDataType": service_meta.get("serviceDataType"),
+                    "currentVersion": service_meta.get("currentVersion"),
+                },
+            )
+
+    elif resource.origin.type == "stac":
+        # Download primary asset from STAC item
+        import httpx
+        from portolan_resource import SourceMetadata
+
+        if verbose:
+            click.echo(f"  Fetching STAC item from {resource.origin.url}...")
+
+        try:
+            response = httpx.get(resource.origin.url, follow_redirects=True, timeout=30)
+            response.raise_for_status()
+            item = response.json()
+        except Exception as e:
+            raise click.ClickException(f"Failed to fetch STAC item: {e}")
+
+        # Extract STAC metadata
+        stac_id = item.get("id")
+        stac_collection = item.get("collection")
+        stac_bbox = item.get("bbox")
+        stac_properties = item.get("properties", {})
+
+        # Update origin with STAC-specific fields
+        resource.origin.stac_collection = stac_collection
+        resource.origin.stac_item_id = stac_id
+
+        if verbose:
+            click.echo(f"  STAC Item: {stac_id}")
+            click.echo(f"  Collection: {stac_collection}")
+            if stac_bbox:
+                click.echo(f"  Bbox: {stac_bbox}")
+
+        # Find the primary data asset
+        assets = item.get("assets", {})
+        primary_asset = None
+
+        # Priority order for asset keys
+        priority_keys = ["data", "visual", "image", "default", "asset"]
+        for key in priority_keys:
+            if key in assets:
+                primary_asset = assets[key]
+                break
+
+        # Fall back to first asset with parquet/tiff type
+        if not primary_asset:
+            for key, asset in assets.items():
+                asset_type = asset.get("type", "")
+                if "parquet" in asset_type or "tiff" in asset_type or "geotiff" in asset_type:
+                    primary_asset = asset
+                    break
+
+        # Final fallback to first asset
+        if not primary_asset and assets:
+            primary_asset = next(iter(assets.values()))
+
+        if not primary_asset:
+            raise click.ClickException("No downloadable asset found in STAC item")
+
+        asset_url = primary_asset.get("href")
+        if not asset_url:
+            raise click.ClickException("Asset has no href")
+
+        # Convert s3:// URLs to https:// for public buckets
+        if asset_url.startswith("s3://"):
+            # s3://bucket-name/path -> https://bucket-name.s3.amazonaws.com/path
+            parts = asset_url[5:].split("/", 1)
+            bucket = parts[0]
+            key = parts[1] if len(parts) > 1 else ""
+            asset_url = f"https://{bucket}.s3.amazonaws.com/{key}"
+            if verbose:
+                click.echo(f"  Converted S3 URL to HTTPS")
+
+        # Determine asset type
+        asset_type = primary_asset.get("type", "")
+        is_raster = "tiff" in asset_type.lower() or "geotiff" in asset_type.lower() or asset_url.endswith(".tif")
+        is_parquet = "parquet" in asset_type.lower() or asset_url.endswith(".parquet")
+
+        if verbose:
+            click.echo(f"  Asset type: {asset_type}")
+            click.echo(f"  Downloading asset from {asset_url}...")
+
+        if is_raster:
+            # For raster assets, download then convert with raquet-io
+            import subprocess
+            import tempfile
+
+            # Download to temp file first
+            temp_file = snapshot_dir / "temp_raster.tif"
+            if verbose:
+                click.echo(f"  Downloading raster to temp file...")
+            try:
+                response = httpx.get(asset_url, follow_redirects=True, timeout=300)
+                response.raise_for_status()
+                with open(temp_file, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                raise click.ClickException(f"Failed to download STAC raster: {e}")
+
+            # Convert to Raquet format
+            if verbose:
+                click.echo(f"  Converting raster to Raquet format...")
+            cmd = ["raquet-io", "convert", "raster", str(temp_file), str(output_path)]
+            if verbose:
+                cmd.append("-v")
+            try:
+                subprocess.run(cmd, check=True, capture_output=not verbose)
+            except subprocess.CalledProcessError as e:
+                raise click.ClickException(f"Failed to convert raster STAC asset: {e}")
+            except FileNotFoundError:
+                raise click.ClickException(
+                    "raquet-io command not found. Install: pip install raquet-io\n"
+                    "Note: GDAL must be installed separately (brew install gdal on macOS)"
+                )
+            finally:
+                # Clean up temp file
+                if temp_file.exists():
+                    temp_file.unlink()
+        else:
+            # For parquet/vector assets, download directly
+            try:
+                response = httpx.get(asset_url, follow_redirects=True, timeout=300)
+                response.raise_for_status()
+                with open(output_path, "wb") as f:
+                    f.write(response.content)
+            except Exception as e:
+                raise click.ClickException(f"Failed to download STAC asset: {e}")
+
+        # Store STAC metadata in resource
+        resource.metadata.source = SourceMetadata(
+            provider="stac",
+            ref={"item_url": resource.origin.url, "item_id": stac_id},
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            data={
+                "collection": stac_collection,
+                "bbox": stac_bbox,
+                "properties": stac_properties,
+                "assets": {k: {"href": v.get("href"), "type": v.get("type")} for k, v in item.get("assets", {}).items()},
+            },
+        )
+
+        # Update kind based on asset type
+        if is_raster:
+            resource.kind = "raster"
+
+        # Store bbox in derived metadata if available
+        if stac_bbox and len(stac_bbox) >= 4:
+            # Will be merged with computed derived metadata later
+            pass  # bbox will be set from stac_bbox below
+
+    elif resource.origin.type == "postgres":
+        # Extract from PostgreSQL using geopandas
+        import geopandas as gpd
+
+        conn_config = load_connection(catalog.path, resource.origin.connection_ref)
+        if not conn_config:
+            raise click.ClickException(
+                f"Connection '{resource.origin.connection_ref}' not found. "
+                f"Add it with: portolan connection add {resource.origin.connection_ref} <connection_string>"
+            )
+
+        table_name = resource.origin.layer
+        if not table_name:
+            raise click.ClickException("No table specified. Use --layer to specify the table name.")
+
+        if verbose:
+            click.echo(f"  Extracting from PostgreSQL table: {table_name}...")
+
+        try:
+            gdf = gpd.read_postgis(
+                sql=f"SELECT * FROM {table_name}",
+                con=conn_config["connection_string"],
+                geom_col=conn_config.get("geometry_column", "geom"),
+            )
+            gdf.to_parquet(output_path)
+        except Exception as e:
+            raise click.ClickException(f"Failed to extract from PostgreSQL: {e}")
+
+    elif resource.origin.type == "oracle":
+        # Extract from Oracle using geopandas with cx_Oracle
+        import geopandas as gpd
+
+        conn_config = load_connection(catalog.path, resource.origin.connection_ref)
+        if not conn_config:
+            raise click.ClickException(
+                f"Connection '{resource.origin.connection_ref}' not found. "
+                f"Add it with: portolan connection add {resource.origin.connection_ref} <connection_string>"
+            )
+
+        table_name = resource.origin.layer
+        if not table_name:
+            raise click.ClickException("No table specified. Use --layer to specify the table name.")
+
+        if verbose:
+            click.echo(f"  Extracting from Oracle table: {table_name}...")
+
+        try:
+            gdf = gpd.read_postgis(
+                sql=f"SELECT * FROM {table_name}",
+                con=conn_config["connection_string"],
+                geom_col=conn_config.get("geometry_column", "GEOMETRY"),
+            )
+            gdf.to_parquet(output_path)
+        except Exception as e:
+            raise click.ClickException(f"Failed to extract from Oracle: {e}")
+
+    else:
+        raise click.ClickException(f"Unsupported origin type: {resource.origin.type}")
+
+    # Compute derived metadata
+    if verbose:
+        click.echo("  Computing derived metadata...")
+    derived = compute_derived_metadata(output_path)
+
+    # Check for schema drift
+    old_derived = resource.metadata.derived
+    if old_derived and old_derived.schema_hash:
+        old_hash = old_derived.schema_hash
+        new_hash = derived.schema_hash
+        if old_hash != new_hash:
+            click.echo()
+            click.echo(click.style(f"⚠️  Schema drift detected for {resource_name}", fg="yellow"))
+            click.echo(f"  Previous schema hash: {old_hash}")
+            click.echo(f"  New schema hash:      {new_hash}")
+            if not force:
+                click.echo()
+                click.echo("The schema has changed since the last snapshot.")
+                click.echo("Use --force to accept the new schema.")
+                raise click.ClickException("Schema drift detected. Use --force to accept new schema.")
+
+            # Track the schema change
+            derived.previous_schema_hash = old_hash
+            derived.schema_changed_at = datetime.now(timezone.utc).isoformat()
+            click.echo(click.style("  Schema change accepted with --force", fg="green"))
+
+    # Update resource
+    resource.assets.snapshot = SnapshotAsset(
+        href=str(output_path.relative_to(catalog.path)),
+        type="application/vnd.apache.parquet",
+        taken_at=datetime.now(timezone.utc).isoformat(),
+        format="geoparquet",
+    )
+    resource.metadata.derived = derived
+    resource.updated_at = datetime.now(timezone.utc).isoformat()
+
+    # Validate before saving
+    errors = validate_resource(resource.to_dict())
+    if errors:
+        click.echo(click.style("Validation errors:", fg="red"))
+        for error in errors:
+            click.echo(f"  - {error}")
+        raise click.ClickException("Resource validation failed after snapshot")
+
+    # For vector resources (GeoParquet), auto-create Iceberg metadata
+    # This is "lightweight Iceberg" - just metadata, no data rewrite needed
+    if resource.kind == "vector" and resource.assets.snapshot and resource.assets.snapshot.format == "geoparquet":
+        import uuid
+
+        from iceberg_catalog import (
+            create_table_metadata,
+            generate_manifest_files,
+            parquet_to_iceberg_table,
+        )
+        from portolan_resource import IcebergAsset
+
+        if verbose:
+            click.echo("  Auto-creating Iceberg metadata for vector resource...")
+
+        table = parquet_to_iceberg_table(str(output_path), table_name=resource_name)
+        metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+
+        table_uuid = str(uuid.uuid4())
+        data_base_url = f"file://{catalog.path.absolute()}"
+        table_path = f"{namespace}/{resource_name}"
+        snapshot_file_url = f"file://{output_path.absolute()}"
+
+        generate_manifest_files(
+            table=table,
+            data_base_url=data_base_url,
+            metadata_dir=metadata_dir,
+            arrow_schema=table.arrow_schema,
+            snapshot_id=1,
+            sequence_number=1,
+            table_path=table_path,
+            data_file_path=snapshot_file_url,
+        )
+
+        metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
+        metadata_path = metadata_dir / "v1.metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        resource.assets.iceberg = IcebergAsset(
+            metadata=str(metadata_path.relative_to(catalog.path)),
+        )
+
+    # Validate before saving
+    errors = validate_resource(resource.to_dict())
+    if errors:
+        click.echo(click.style("Validation errors:", fg="red"))
+        for error in errors:
+            click.echo(f"  - {error}")
+        raise click.ClickException("Resource validation failed after snapshot")
+
+    # Save
+    save_resource(resource, resource_path)
+
+    click.echo(f"Snapshot created: {output_path}")
+    click.echo(f"  State: {resource.state.upper()}")
+    click.echo(f"  Size: {output_path.stat().st_size / 1024:.1f} KB")
+    if derived.row_count:
+        click.echo(f"  Rows: {derived.row_count}")
+
+    if resource.assets.iceberg:
+        # Vector: auto-materialized
+        click.echo(f"  Iceberg: auto-registered (lightweight)")
+        click.echo()
+        click.echo("Query with DuckDB:")
+        iceberg_meta = catalog.path / resource.assets.iceberg.metadata
+        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{iceberg_meta}')\"")
+    else:
+        # Raster/other: needs explicit materialize
+        click.echo()
+        click.echo(f"Next: portolan materialize {resource_name} --namespace {namespace}")
+
+
+@cli.command()
+@click.argument("resource_name", required=False)
+@click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--all", "all_resources", is_flag=True, help="Materialize all CACHED resources in namespace")
+@click.option("--remote", is_flag=True, help="Create Iceberg metadata pointing to remote data (no download)")
+@click.option("--force", "-f", is_flag=True, help="Re-materialize even if already done")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def materialize(ctx, resource_name: str | None, namespace: str, all_resources: bool, remote: bool, force: bool, verbose: bool):
+    """
+    Create Iceberg table from cached or remote data.
+
+    For vector resources (GeoParquet), this is usually a no-op since
+    snapshot auto-creates Iceberg metadata. Use --force to regenerate.
+
+    For raster resources (COG/Zarr), this converts to Raquet format
+    and creates Iceberg metadata (expensive operation).
+
+    With --remote, creates Iceberg metadata pointing to a remote GeoParquet
+    file without downloading it. Only reads the Parquet schema (range request).
+
+    \b
+    Examples:
+        portolan materialize cities
+        portolan materialize boundaries --namespace public
+        portolan materialize buildings --remote          # Remote Iceberg (no download)
+        portolan materialize --all --namespace federated_wildfire  # Batch materialize
+    """
+    import json
+    import uuid
+
+    from iceberg_catalog import (
+        create_table_metadata,
+        generate_manifest_files,
+        parquet_to_iceberg_table,
+    )
+    from portolan_resource import IcebergAsset, load_resource, save_resource
+    from schemas import validate_resource
+
+    catalog = get_catalog(ctx)
+
+    # Handle --all flag for batch operations
+    if all_resources:
+        namespace_dir = catalog.path / "resources" / namespace
+        if not namespace_dir.exists():
+            raise click.ClickException(f"Namespace not found: {namespace}")
+
+        # Find all CACHED resources
+        resource_files = list(namespace_dir.glob("*.json"))
+        if not resource_files:
+            click.echo(f"No resources found in namespace: {namespace}")
+            return
+
+        cached_resources = []
+        for rf in resource_files:
+            res = load_resource(rf)
+            if res.state == "cached" or (force and res.state == "materialized"):
+                cached_resources.append(rf.stem)
+
+        if not cached_resources:
+            click.echo(f"No CACHED resources to materialize in namespace: {namespace}")
+            return
+
+        click.echo(f"Batch materializing {len(cached_resources)} resources in {namespace}...")
+        click.echo()
+
+        success = 0
+        failed = 0
+        for res_name in cached_resources:
+            try:
+                # Recursively invoke materialize for each resource
+                ctx.invoke(materialize, resource_name=res_name, namespace=namespace,
+                          all_resources=False, remote=False, force=force, verbose=verbose)
+                success += 1
+            except click.ClickException as e:
+                click.echo(click.style(f"  Failed: {res_name} - {e.message}", fg="red"))
+                failed += 1
+            click.echo()
+
+        click.echo(f"Batch materialize complete: {success} succeeded, {failed} failed")
+        return
+
+    # Single resource mode
+    if not resource_name:
+        raise click.ClickException("Resource name required (or use --all)")
+
+    # Load resource
+    resource_path = catalog.path / "resources" / namespace / f"{resource_name}.json"
+    if not resource_path.exists():
+        raise click.ClickException(f"Resource not found: {resource_name} in namespace {namespace}")
+
+    resource = load_resource(resource_path)
+
+    if resource.state == "materialized" and not force:
+        if resource.kind == "vector":
+            click.echo("Vector resource already has Iceberg metadata (auto-created during snapshot).")
+            click.echo("Use --force to regenerate.")
+        else:
+            click.echo("Resource is already materialized. Use --force to re-materialize.")
+        return
+
+    # --remote: Create Iceberg metadata pointing to remote data (no download)
+    if remote:
+        if resource.state != "external" and not force:
+            raise click.ClickException(
+                "Resource is not EXTERNAL. Use --remote only with registered (not cached) resources."
+            )
+
+        if not resource.origin or not resource.origin.url:
+            raise click.ClickException("Resource has no origin URL - cannot create remote Iceberg metadata.")
+
+        remote_url = resource.origin.url
+
+        click.echo(f"Creating remote Iceberg metadata for {resource_name}...")
+        click.echo(f"  Remote URL: {remote_url}")
+
+        if verbose:
+            click.echo("  Reading Parquet schema from remote (range request only)...")
+
+        # Read schema from remote Parquet file without downloading
+        import pyarrow.parquet as pq
+
+        try:
+            remote_pf = _open_remote_parquet(remote_url)
+        except Exception as e:
+            raise click.ClickException(f"Failed to read remote Parquet schema: {e}")
+
+        arrow_schema = remote_pf.schema_arrow
+        num_rows = remote_pf.metadata.num_rows
+
+        # Get file size from remote
+        try:
+            file_size = _get_remote_file_size(remote_url)
+        except Exception:
+            file_size = 0  # Fallback if we can't determine size
+
+        if verbose:
+            click.echo(f"  Schema: {len(arrow_schema)} fields")
+            click.echo(f"  Rows: {num_rows}")
+            click.echo(f"  Size: {file_size / 1024 / 1024:.1f} MB")
+
+        # Create Iceberg table from remote schema
+        from iceberg_catalog import IcebergTable, _arrow_schema_to_iceberg
+
+        iceberg_schema = _arrow_schema_to_iceberg(arrow_schema)
+        table = IcebergTable(
+            name=resource_name,
+            parquet_path=remote_url,
+            schema=iceberg_schema,
+            arrow_schema=arrow_schema,
+            num_rows=num_rows,
+            file_size_bytes=file_size,
+        )
+
+        # Generate metadata directory
+        metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
+        metadata_dir.mkdir(parents=True, exist_ok=True)
+
+        table_uuid = str(uuid.uuid4())
+        data_base_url = f"file://{catalog.path.absolute()}"
+        table_path = f"{namespace}/{resource_name}"
+
+        # Data file path points to the REMOTE URL
+        generate_manifest_files(
+            table=table,
+            data_base_url=data_base_url,
+            metadata_dir=metadata_dir,
+            arrow_schema=arrow_schema,
+            snapshot_id=1,
+            sequence_number=1,
+            table_path=table_path,
+            data_file_path=remote_url,
+        )
+
+        metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
+        metadata_path = metadata_dir / "v1.metadata.json"
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+
+        # Update resource with Iceberg asset (no snapshot asset - data stays remote)
+        resource.assets.iceberg = IcebergAsset(
+            metadata=str(metadata_path.relative_to(catalog.path)),
+        )
+        resource.updated_at = datetime.now(timezone.utc).isoformat()
+
+        # Validate before saving
+        errors = validate_resource(resource.to_dict())
+        if errors:
+            click.echo(click.style("Validation errors:", fg="red"))
+            for error in errors:
+                click.echo(f"  - {error}")
+            raise click.ClickException("Resource validation failed after remote materialize")
+
+        save_resource(resource, resource_path)
+
+        click.echo(f"Remote Iceberg metadata created: {metadata_path}")
+        click.echo(f"  State: {resource.state.upper()}")
+        click.echo(f"  Data: stays at {remote_url} (not downloaded)")
+        click.echo()
+        click.echo("Query with DuckDB:")
+        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
+        return
+
+    # Standard materialize (from cached snapshot)
+    if resource.state == "external":
+        raise click.ClickException(
+            f"Resource must be cached first. Run: portolan snapshot {resource_name} --namespace {namespace}\n"
+            f"Or use --remote to create Iceberg metadata without downloading."
+        )
+
+    if not resource.assets.snapshot:
+        raise click.ClickException("Resource has no snapshot - cannot materialize.")
+
+    snapshot_path = catalog.path / resource.assets.snapshot.href
+
+    if not snapshot_path.exists():
+        raise click.ClickException(f"Snapshot not found: {snapshot_path}")
+
+    click.echo(f"Materializing {resource_name}...")
+
+    # Lightweight Iceberg: no Parquet rewrite needed
+    # We use schema.name-mapping.default property for column matching by name
+
+    # Create Iceberg table
+    if verbose:
+        click.echo("  Creating Iceberg table metadata...")
+    table = parquet_to_iceberg_table(str(snapshot_path), table_name=resource_name)
+
+    # Generate metadata directory
+    metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate Iceberg metadata
+    table_uuid = str(uuid.uuid4())
+    data_base_url = f"file://{catalog.path.absolute()}"
+
+    # Table path includes namespace
+    table_path = f"{namespace}/{resource_name}"
+
+    # Generate manifest files
+    if verbose:
+        click.echo("  Generating manifest files...")
+    # Use actual snapshot path for data file
+    snapshot_file_url = f"file://{snapshot_path.absolute()}"
+    generate_manifest_files(
+        table=table,
+        data_base_url=data_base_url,
+        metadata_dir=metadata_dir,
+        arrow_schema=table.arrow_schema,
+        snapshot_id=1,
+        sequence_number=1,
+        table_path=table_path,
+        data_file_path=snapshot_file_url,
+    )
+
+    # Create table metadata
+    metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
+
+    metadata_path = metadata_dir / "v1.metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    # Update resource
+    resource.assets.iceberg = IcebergAsset(
+        metadata=str(metadata_path.relative_to(catalog.path)),
+    )
+    resource.updated_at = datetime.now(timezone.utc).isoformat()
+
+    # Validate before saving
+    errors = validate_resource(resource.to_dict())
+    if errors:
+        click.echo(click.style("Validation errors:", fg="red"))
+        for error in errors:
+            click.echo(f"  - {error}")
+        raise click.ClickException("Resource validation failed after materialize")
+
+    save_resource(resource, resource_path)
+
+    click.echo(f"Materialized: {metadata_path}")
+    click.echo(f"  State: {resource.state.upper()}")
+    click.echo()
+    click.echo("Query with DuckDB:")
+    click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
+
+
+@cli.command("add")
+@click.argument("source", type=click.Path(exists=True))
+@click.option("--name", "-n", help="Resource name (default: filename)")
+@click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--title", help="Human-readable title")
+@click.option("--description", help="Description")
+@click.option("--public", is_flag=True, help="Make public (sets namespace to 'public')")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def add_resource(ctx, source: str, name: str | None, namespace: str,
+                 title: str | None, description: str | None, public: bool,
+                 verbose: bool):
+    """
+    Add a resource (convenience: register + snapshot + materialize).
+
+    This is the quickest way to add a local file to the catalog.
+
+    \b
+    Examples:
+        portolan add /path/to/data.parquet --public
+        portolan add countries.geojson --name world-countries --title "World Countries"
+    """
+    if public:
+        namespace = "public"
+
+    source_path = Path(source).resolve()
+
+    # Derive name
+    if not name:
+        name = source_path.stem
+
+    click.echo(f"Adding resource: {name}")
+    click.echo()
+
+    # Step 1: Register
+    ctx.invoke(register, origin_type="file", url=str(source_path), name=name,
+               namespace=namespace, title=title, description=description,
+               verbose=verbose)
+
+    # Step 2: Snapshot
+    ctx.invoke(snapshot, resource_name=name, namespace=namespace, verbose=verbose)
+
+    # Step 3: Materialize (will be no-op for vectors since snapshot already did it)
+    ctx.invoke(materialize, resource_name=name, namespace=namespace, remote=False, verbose=verbose)
+
+    click.echo()
+    click.echo(click.style("Resource added successfully!", fg="green"))
+    click.echo()
+    click.echo("Run 'portolan sync' to push to remote storage.")
 
 
 
@@ -466,6 +1684,360 @@ def dataset_remove(ctx, dataset_path: str, force: bool):
 
     shutil.rmtree(target_dir)
     click.echo(f"Removed dataset: {dataset_path}")
+
+
+# ============== CONNECTION MANAGEMENT CLI ==============
+
+
+@cli.group()
+def connection():
+    """Manage database connections for extractors."""
+    pass
+
+
+@connection.command("add")
+@click.argument("name")
+@click.argument("connection_string")
+@click.option("--geometry-column", "-g", default="geom", help="Geometry column name")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def connection_add(ctx, name: str, connection_string: str, geometry_column: str, verbose: bool):
+    """Add a database connection.
+
+    Stores connection configuration for use with postgres/oracle extractors.
+    Connection strings are stored locally in .portolan/connections.json.
+
+    \b
+    Examples:
+        portolan connection add mydb "postgresql://user:pass@host:5432/dbname"
+        portolan connection add oracle_prod "oracle://user:pass@host:1521/service" -g GEOMETRY
+    """
+    catalog = get_catalog(ctx)
+
+    config = {
+        "connection_string": connection_string,
+        "geometry_column": geometry_column,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    save_connection(catalog.path, name, config)
+
+    click.echo(f"Added connection: {name}")
+    if verbose:
+        click.echo(f"  Geometry column: {geometry_column}")
+
+
+@connection.command("list")
+@click.option("--verbose", "-v", is_flag=True, help="Show connection details")
+@click.pass_context
+def connection_list(ctx, verbose: bool):
+    """List configured database connections."""
+    catalog = get_catalog(ctx)
+
+    connections_file = catalog.path / "connections.json"
+    if not connections_file.exists():
+        click.echo("No connections configured.")
+        click.echo("Add one with: portolan connection add <name> <connection_string>")
+        return
+
+    with open(connections_file) as f:
+        connections = json.load(f)
+
+    conns = connections.get("connections", {})
+    if not conns:
+        click.echo("No connections configured.")
+        return
+
+    click.echo(f"Configured connections ({len(conns)}):")
+    for name, config in conns.items():
+        if verbose:
+            # Mask password in connection string
+            conn_str = config.get("connection_string", "")
+            masked = conn_str
+            if "://" in conn_str:
+                # Basic password masking
+                import re
+                masked = re.sub(r":([^:@]+)@", r":****@", conn_str)
+            click.echo(f"  {name}:")
+            click.echo(f"    Connection: {masked}")
+            click.echo(f"    Geometry column: {config.get('geometry_column', 'geom')}")
+        else:
+            click.echo(f"  {name}")
+
+
+@connection.command("remove")
+@click.argument("name")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def connection_remove(ctx, name: str, force: bool):
+    """Remove a database connection."""
+    catalog = get_catalog(ctx)
+
+    if not force:
+        click.confirm(f"Remove connection '{name}'?", abort=True)
+
+    if delete_connection(catalog.path, name):
+        click.echo(f"Removed connection: {name}")
+    else:
+        raise click.ClickException(f"Connection not found: {name}")
+
+
+# ============== CATALOG SOURCE FEDERATION ==============
+
+
+@cli.group("catalog")
+def catalog_cmd():
+    """Manage federated catalog sources."""
+    pass
+
+
+@catalog_cmd.command("add")
+@click.argument("url")
+@click.option("--name", "-n", help="Catalog name (default: derived from URL)")
+@click.option("--type", "catalog_type", type=click.Choice(["stac", "arcgis", "wfs", "portolan"]),
+              help="Catalog type (auto-detected if not specified)")
+@click.option("--collections", "-c", multiple=True, help="Filter to specific collections (STAC only)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def catalog_add(ctx, url: str, name: str | None, catalog_type: str | None,
+                collections: tuple, verbose: bool):
+    """Register an upstream catalog for federation.
+
+    Registers a catalog URL that can be synced to import resources.
+
+    \b
+    Examples:
+        portolan catalog add https://earth-search.aws.element84.com/v1 --name earth-search
+        portolan catalog add https://services.arcgis.com/... --name city-gis --type arcgis
+        portolan catalog add https://example.com/stac -c sentinel-2-l2a -c landsat
+    """
+    from catalog_sources import CatalogSource, CatalogSourceStore
+
+    catalog = get_catalog(ctx)
+    store = CatalogSourceStore(catalog.path)
+
+    # Auto-detect catalog type if not specified
+    if not catalog_type:
+        if "stac" in url.lower() or "element84" in url.lower() or "earth-search" in url.lower():
+            catalog_type = "stac"
+        elif "arcgis" in url.lower():
+            catalog_type = "arcgis"
+        elif "wfs" in url.lower():
+            catalog_type = "wfs"
+        else:
+            catalog_type = "stac"  # Default to STAC
+            click.echo(f"Auto-detected catalog type: {catalog_type}")
+
+    # Derive name from URL if not provided
+    if not name:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host_parts = parsed.netloc.split(".")
+        name = host_parts[0] if host_parts else "catalog"
+        # Sanitize
+        name = name.lower().replace("-", "_")
+        name = "".join(c for c in name if c.isalnum() or c == "_")
+
+    # Check if already exists
+    existing = store.get_source(name)
+    if existing:
+        click.echo(f"Catalog source '{name}' already exists.")
+        click.echo(f"  URL: {existing.url}")
+        click.echo("Use a different --name or remove the existing one first.")
+        return
+
+    # Create catalog source
+    filters = {}
+    if collections:
+        filters["collections"] = list(collections)
+
+    source = CatalogSource(
+        name=name,
+        type=catalog_type,
+        url=url,
+        filters=filters,
+        created_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+    store.add_source(source)
+
+    click.echo(f"Registered catalog source: {name}")
+    click.echo(f"  Type: {catalog_type}")
+    click.echo(f"  URL: {url}")
+    if filters:
+        click.echo(f"  Filters: {filters}")
+    click.echo()
+    click.echo(f"Next: portolan catalog sync {name}")
+
+
+@catalog_cmd.command("list")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed information")
+@click.pass_context
+def catalog_list(ctx, verbose: bool):
+    """List registered catalog sources."""
+    from catalog_sources import CatalogSourceStore
+
+    catalog = get_catalog(ctx)
+    store = CatalogSourceStore(catalog.path)
+    sources = store.list_sources()
+
+    if not sources:
+        click.echo("No catalog sources registered.")
+        click.echo("Add one with: portolan catalog add <url> --name <name>")
+        return
+
+    click.echo(f"Registered catalog sources ({len(sources)}):")
+    click.echo()
+
+    for source in sources:
+        if source.last_sync:
+            sync_info = f"last sync: {source.last_sync[:10]}"
+        else:
+            sync_info = "never synced"
+
+        click.echo(f"  {source.name} ({source.type}) - {sync_info}")
+
+        if verbose:
+            click.echo(f"    URL: {source.url}")
+            if source.filters:
+                click.echo(f"    Filters: {source.filters}")
+            if source.sync_hash:
+                click.echo(f"    Sync hash: {source.sync_hash}")
+
+
+@catalog_cmd.command("sync")
+@click.argument("name", required=False)
+@click.option("--max-items", type=int, default=100, help="Maximum items to sync (0 = all)")
+@click.option("--dry-run", is_flag=True, help="Show what would be synced without saving")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def catalog_sync(ctx, name: str | None, max_items: int, dry_run: bool, verbose: bool):
+    """Sync resources from upstream catalogs.
+
+    Syncs all catalogs if no name specified, or just the named catalog.
+
+    \b
+    Examples:
+        portolan catalog sync                    # Sync all catalogs
+        portolan catalog sync earth-search       # Sync specific catalog
+        portolan catalog sync --dry-run          # Preview changes
+    """
+    from catalog_sources import CatalogSourceStore, sync_stac_catalog
+
+    catalog = get_catalog(ctx)
+    store = CatalogSourceStore(catalog.path)
+    resources_dir = catalog.path / "resources"
+
+    # Get sources to sync
+    if name:
+        source = store.get_source(name)
+        if not source:
+            raise click.ClickException(f"Catalog source not found: {name}")
+        sources = [source]
+    else:
+        sources = store.list_sources()
+        if not sources:
+            click.echo("No catalog sources registered.")
+            click.echo("Add one with: portolan catalog add <url> --name <name>")
+            return
+
+    for source in sources:
+        click.echo(f"Syncing {source.name} ({source.type})...")
+
+        if source.type == "stac":
+            results = sync_stac_catalog(
+                source=source,
+                resources_dir=resources_dir,
+                max_items=max_items,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+
+            if results["errors"]:
+                click.echo(click.style(f"  Errors: {len(results['errors'])}", fg="yellow"))
+                if verbose:
+                    for error in results["errors"][:5]:
+                        click.echo(f"    - {error}")
+
+            if dry_run:
+                click.echo(f"  Would add: {len(results['added'])}")
+                if verbose and results["added"]:
+                    for name_item in results["added"][:10]:
+                        click.echo(f"    + {name_item}")
+                    if len(results["added"]) > 10:
+                        click.echo(f"    ... and {len(results['added']) - 10} more")
+            else:
+                if results["unchanged"] and not results["added"] and not results["updated"]:
+                    click.echo(f"  No changes ({len(results['unchanged'])} items unchanged)")
+                else:
+                    click.echo(f"  Added: {len(results['added'])}")
+                    click.echo(f"  Updated: {len(results['updated'])}")
+
+                # Update sync state
+                if results["new_hash"]:
+                    store.update_sync_state(source.name, results["new_hash"])
+
+        elif source.type == "arcgis":
+            from catalog_sources import sync_arcgis_server
+
+            results = sync_arcgis_server(
+                source=source,
+                resources_dir=resources_dir,
+                verbose=verbose,
+                dry_run=dry_run,
+            )
+
+            if results["added"]:
+                click.echo(f"  Added: {len(results['added'])} resources")
+                if verbose:
+                    for name in results["added"]:
+                        click.echo(f"    + {name}")
+            if results["updated"]:
+                click.echo(f"  Updated: {len(results['updated'])} resources")
+            if results["unchanged"]:
+                click.echo(f"  Unchanged: {len(results['unchanged'])} resources")
+            if results["errors"]:
+                click.echo(click.style(f"  Errors: {len(results['errors'])}", fg="yellow"))
+                for error in results["errors"]:
+                    click.echo(f"    - {error}")
+
+            if not dry_run and results["new_hash"]:
+                if results["added"] or results["updated"]:
+                    store.update_sync_state(source.name, results["new_hash"])
+
+        elif source.type == "wfs":
+            click.echo("  WFS catalog sync not yet implemented")
+
+        else:
+            click.echo(f"  Unknown catalog type: {source.type}")
+
+    if not dry_run:
+        click.echo()
+        click.echo(click.style("Sync complete!", fg="green"))
+
+
+@catalog_cmd.command("remove")
+@click.argument("name")
+@click.option("--force", "-f", is_flag=True, help="Skip confirmation")
+@click.pass_context
+def catalog_remove(ctx, name: str, force: bool):
+    """Remove a registered catalog source."""
+    from catalog_sources import CatalogSourceStore
+
+    catalog = get_catalog(ctx)
+    store = CatalogSourceStore(catalog.path)
+
+    source = store.get_source(name)
+    if not source:
+        raise click.ClickException(f"Catalog source not found: {name}")
+
+    if not force:
+        click.confirm(f"Remove catalog source '{name}'?", abort=True)
+
+    if store.remove_source(name):
+        click.echo(f"Removed catalog source: {name}")
+    else:
+        raise click.ClickException(f"Failed to remove catalog source: {name}")
 
 
 # ============== CORS HELPER ==============
@@ -815,6 +2387,105 @@ def status(ctx, verbose: bool):
         click.echo(f"  {name}: {out_status}")
 
 
+
+
+# ============== VALIDATE ==============
+
+@cli.command()
+@click.argument("target", required=False)
+@click.option("--resources-only", is_flag=True, help="Only validate resources, not config/state")
+@click.option("--verbose", "-v", is_flag=True, help="Show all validation details")
+@click.pass_context
+def validate(ctx, target: str | None, resources_only: bool, verbose: bool):
+    """Validate catalog configuration and resources against schemas.
+
+    Checks JSON files for schema compliance and reports errors.
+
+    \b
+    Examples:
+        portolan validate                    # Validate entire catalog
+        portolan validate --resources-only   # Only validate resources
+        portolan validate default/cities     # Validate specific resource
+    """
+    from schemas import (
+        validate_catalog,
+        validate_config_file,
+        validate_resource_file,
+        validate_state_file,
+    )
+
+    catalog = find_catalog()
+    if catalog is None:
+        click.echo("No Portolan catalog found. Run 'portolan init' to create one.")
+        return
+
+    all_errors: dict[str, list[str]] = {}
+
+    if target:
+        # Validate specific resource
+        parts = target.split("/")
+        if len(parts) == 2:
+            namespace, name = parts
+        else:
+            namespace = "default"
+            name = target
+
+        resource_path = catalog.path / "resources" / namespace / f"{name}.json"
+        if not resource_path.exists():
+            raise click.ClickException(f"Resource not found: {resource_path}")
+
+        errors = validate_resource_file(resource_path)
+        if errors:
+            all_errors[str(resource_path)] = errors
+    else:
+        # Validate entire catalog
+        if not resources_only:
+            # Validate config
+            config_path = catalog.path / "config.json"
+            if config_path.exists():
+                errors = validate_config_file(config_path)
+                if errors:
+                    all_errors[str(config_path)] = errors
+                elif verbose:
+                    click.echo(f"✓ {config_path}")
+
+            # Validate state
+            state_path = catalog.path / "state.json"
+            if state_path.exists():
+                errors = validate_state_file(state_path)
+                if errors:
+                    all_errors[str(state_path)] = errors
+                elif verbose:
+                    click.echo(f"✓ {state_path}")
+
+        # Validate all resources
+        resources_dir = catalog.path / "resources"
+        if resources_dir.exists():
+            resource_files = list(resources_dir.rglob("*.json"))
+            # Skip _index.json files
+            resource_files = [f for f in resource_files if not f.name.startswith("_")]
+
+            for resource_file in resource_files:
+                errors = validate_resource_file(resource_file)
+                if errors:
+                    all_errors[str(resource_file)] = errors
+                elif verbose:
+                    click.echo(f"✓ {resource_file}")
+
+    # Report results
+    if all_errors:
+        click.echo()
+        click.echo(click.style("Validation errors found:", fg="red", bold=True))
+        click.echo()
+        for path, errors in all_errors.items():
+            click.echo(click.style(f"  {path}:", fg="yellow"))
+            for error in errors:
+                click.echo(f"    - {error}")
+        click.echo()
+        raise click.ClickException(f"Validation failed: {len(all_errors)} file(s) with errors")
+    else:
+        file_count = 1 if target else len(list((catalog.path / "resources").rglob("*.json"))) + 2
+        click.echo(click.style(f"✓ Validation passed ({file_count} files)", fg="green"))
 
 
 # ============== CLONE ==============

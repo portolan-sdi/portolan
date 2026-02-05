@@ -33,6 +33,13 @@ ksa_geoparquet/
 .DS_Store
 Thumbs.db
 
+# Coverage
+.coverage
+htmlcov/
+
+# Local catalog data
+.portolan/
+
 # Logs
 *.log
 nohup.out

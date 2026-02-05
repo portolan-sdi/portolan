@@ -150,3 +150,224 @@ class TestRebuildCommand:
         with runner.isolated_filesystem(temp_dir=catalog_with_resource.path.parent):
             result = runner.invoke(cli, ["rebuild", "-v"])
             assert result.exit_code == 0
+
+
+class TestRegisterCommand:
+    """Test suite for register command."""
+
+    def test_register_file(self, initialized_catalog, sample_geoparquet):
+        """Test registering a local file."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register",
+                    "file",
+                    str(sample_geoparquet),
+                    "--name",
+                    "test_file",
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "Registered file resource" in result.output
+            assert "State: EXTERNAL" in result.output
+
+            # Check resource file was created
+            resource_path = initialized_catalog.path / "resources" / "default" / "test_file.json"
+            assert resource_path.exists()
+
+    def test_register_with_namespace(self, initialized_catalog, sample_geoparquet):
+        """Test registering with custom namespace."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register",
+                    "file",
+                    str(sample_geoparquet),
+                    "--name",
+                    "test_ns",
+                    "--namespace",
+                    "custom",
+                ],
+            )
+
+            assert result.exit_code == 0
+            resource_path = initialized_catalog.path / "resources" / "custom" / "test_ns.json"
+            assert resource_path.exists()
+
+    def test_register_with_title(self, initialized_catalog, sample_geoparquet):
+        """Test registering with title and description."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register",
+                    "file",
+                    str(sample_geoparquet),
+                    "--name",
+                    "titled",
+                    "--title",
+                    "My Title",
+                    "--description",
+                    "My Description",
+                ],
+            )
+
+            assert result.exit_code == 0
+
+            # Check metadata
+            import json
+            resource_path = initialized_catalog.path / "resources" / "default" / "titled.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["metadata"]["user"]["title"] == "My Title"
+            assert data["metadata"]["user"]["description"] == "My Description"
+
+
+class TestSnapshotCommand:
+    """Test suite for snapshot command."""
+
+    def test_snapshot_file(self, initialized_catalog, sample_geoparquet):
+        """Test snapshotting a registered vector file auto-creates Iceberg metadata."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # First register
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "snap_test"],
+            )
+
+            # Then snapshot
+            result = runner.invoke(cli, ["snapshot", "snap_test"])
+
+            assert result.exit_code == 0
+            assert "Snapshot created" in result.output
+            # Vector resources should be auto-materialized
+            assert "State: MATERIALIZED" in result.output
+            assert "Iceberg: auto-registered" in result.output
+
+            # Check snapshot file was created
+            snapshot_path = initialized_catalog.path / "data" / "raw" / "default" / "snap_test" / "snap_test.parquet"
+            assert snapshot_path.exists()
+
+            # Check Iceberg metadata was auto-created
+            metadata_path = initialized_catalog.path / "data" / "default" / "snap_test" / "metadata" / "v1.metadata.json"
+            assert metadata_path.exists()
+
+    def test_snapshot_not_found(self, initialized_catalog):
+        """Test snapshot of non-existent resource."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(cli, ["snapshot", "nonexistent"])
+
+            assert result.exit_code != 0
+            assert "Resource not found" in result.output
+
+
+class TestMaterializeCommand:
+    """Test suite for materialize command."""
+
+    def test_materialize_vector_already_done(self, initialized_catalog, sample_geoparquet):
+        """Test materializing a vector resource that was auto-materialized by snapshot."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Register and snapshot (auto-materializes for vectors)
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "mat_test"],
+            )
+            runner.invoke(cli, ["snapshot", "mat_test"])
+
+            # Materialize should recognize it's already done
+            result = runner.invoke(cli, ["materialize", "mat_test"])
+
+            assert result.exit_code == 0
+            assert "already has Iceberg metadata" in result.output
+
+            # Iceberg metadata should exist (from snapshot)
+            metadata_path = initialized_catalog.path / "data" / "default" / "mat_test" / "metadata" / "v1.metadata.json"
+            assert metadata_path.exists()
+
+    def test_materialize_force_vector(self, initialized_catalog, sample_geoparquet):
+        """Test force re-materializing a vector resource."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Register and snapshot (auto-materializes for vectors)
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "force_mat"],
+            )
+            runner.invoke(cli, ["snapshot", "force_mat"])
+
+            # Force materialize should regenerate
+            result = runner.invoke(cli, ["materialize", "force_mat", "--force"])
+
+            assert result.exit_code == 0
+            assert "Materialized" in result.output
+
+    def test_materialize_not_cached(self, initialized_catalog, sample_geoparquet):
+        """Test materializing without snapshotting first."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Register but don't snapshot
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "not_cached"],
+            )
+
+            result = runner.invoke(cli, ["materialize", "not_cached"])
+
+            assert result.exit_code != 0
+            assert "must be cached first" in result.output
+
+
+class TestAddCommand:
+    """Test suite for add convenience command."""
+
+    def test_add_full_lifecycle(self, initialized_catalog, sample_geoparquet):
+        """Test add runs full lifecycle (register + snapshot + materialize)."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "add",
+                    str(sample_geoparquet),
+                    "--name",
+                    "full_test",
+                    "--title",
+                    "Full Test",
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "Resource added successfully" in result.output
+
+            # Check resource is materialized
+            import json
+            resource_path = initialized_catalog.path / "resources" / "default" / "full_test.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+
+            assert "iceberg" in data["assets"]
+            assert data["metadata"]["user"]["title"] == "Full Test"
+
+    def test_add_public(self, initialized_catalog, sample_geoparquet):
+        """Test add with --public flag."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["add", str(sample_geoparquet), "--name", "public_test", "--public"],
+            )
+
+            assert result.exit_code == 0
+
+            # Check resource is in public namespace
+            resource_path = initialized_catalog.path / "resources" / "public" / "public_test.json"
+            assert resource_path.exists()

@@ -10,6 +10,7 @@ dependencies = [
     "fastavro>=1.12.1",
     "geopandas>=1.1.2",
     "httpx>=0.25.0",
+    "jsonschema>=4.0",
     "obstore>=0.3.0",
     "pyarrow>=14.0.0",
     "pyiceberg>=0.10.0",
@@ -30,7 +31,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
-only-include = ["portolan.py", "iceberg_catalog.py", "esri2iceberg.py", "catalog_state.py", "output_generators.py"]
+only-include = ["portolan.py", "iceberg_catalog.py", "esri2iceberg.py", "catalog_state.py", "output_generators.py", "portolan_resource.py", "schemas.py", "catalog_sources.py"]
 
 [tool.ruff]
 line-length = 100

@@ -1,0 +1,382 @@
+"""
+Tests for JSON Schema validation.
+"""
+
+import json
+import tempfile
+from pathlib import Path
+
+import pytest
+
+from schemas import (
+    validate_catalog,
+    validate_config,
+    validate_config_file,
+    validate_manifest,
+    validate_resource,
+    validate_resource_file,
+    validate_state,
+    validate_state_file,
+)
+
+
+class TestResourceValidation:
+    """Test suite for resource schema validation."""
+
+    def test_valid_minimal_resource(self):
+        """Test validation of minimal valid resource."""
+        data = {"name": "test_resource", "kind": "vector"}
+        errors = validate_resource(data)
+        assert errors == []
+
+    def test_valid_full_resource(self):
+        """Test validation of full resource with all fields."""
+        data = {
+            "name": "cities",
+            "kind": "vector",
+            "origin": {"type": "file", "url": "/path/to/data.parquet"},
+            "assets": {
+                "snapshot": {
+                    "href": "data/raw/default/cities/data.parquet",
+                    "type": "application/vnd.apache.parquet",
+                    "taken_at": "2024-01-01T00:00:00Z",
+                    "format": "geoparquet",
+                },
+                "iceberg": {"metadata": "data/default/cities/metadata/v1.metadata.json"},
+            },
+            "metadata": {
+                "user": {
+                    "title": "Major Cities",
+                    "description": "Population data for major cities",
+                    "tags": ["cities", "population"],
+                },
+                "derived": {
+                    "row_count": 100,
+                    "bbox": [-180, -90, 180, 90],
+                    "geometry_type": "Point",
+                    "crs": "EPSG:4326",
+                },
+                "sync": {"mode": "manual", "strategy": "update_source_only"},
+            },
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+        errors = validate_resource(data)
+        assert errors == []
+
+    def test_invalid_name_starts_with_number(self):
+        """Test that name starting with number fails."""
+        data = {"name": "123invalid", "kind": "vector"}
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "name" in errors[0]
+        assert "match" in errors[0].lower() or "pattern" in errors[0].lower()
+
+    def test_invalid_name_uppercase(self):
+        """Test that uppercase name fails."""
+        data = {"name": "InvalidName", "kind": "vector"}
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "name" in errors[0]
+
+    def test_invalid_kind(self):
+        """Test that invalid kind fails."""
+        data = {"name": "test", "kind": "unknown"}
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "kind" in errors[0]
+        assert "enum" in errors[0].lower() or "unknown" in errors[0]
+
+    def test_missing_required_name(self):
+        """Test that missing name fails."""
+        data = {"kind": "vector"}
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "name" in errors[0]
+
+    def test_missing_required_kind(self):
+        """Test that missing kind fails."""
+        data = {"name": "test"}
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "kind" in errors[0]
+
+    def test_invalid_origin_type(self):
+        """Test that invalid origin type fails."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "origin": {"type": "invalid_type"},
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "origin" in errors[0] or "type" in errors[0]
+
+    def test_valid_origin_types(self):
+        """Test all valid origin types."""
+        valid_types = [
+            "file",
+            "wfs",
+            "arcgis_featureserver",
+            "arcgis_imageserver",
+            "stac",
+            "oracle",
+            "postgres",
+        ]
+        for origin_type in valid_types:
+            data = {
+                "name": "test",
+                "kind": "vector",
+                "origin": {"type": origin_type},
+            }
+            errors = validate_resource(data)
+            assert errors == [], f"Origin type '{origin_type}' should be valid"
+
+    def test_invalid_bbox_length(self):
+        """Test that bbox with wrong length fails."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {"derived": {"bbox": [-180, -90, 180]}},  # Missing north
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "bbox" in errors[0]
+
+    def test_invalid_sync_mode(self):
+        """Test that invalid sync mode fails."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {"sync": {"mode": "invalid_mode"}},
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+        assert "mode" in errors[0]
+
+
+class TestConfigValidation:
+    """Test suite for config schema validation."""
+
+    def test_valid_config(self):
+        """Test validation of valid config."""
+        data = {
+            "outputs": {
+                "iceberg": True,
+                "stac": True,
+                "iso19139": True,
+                "ducklake": True,
+                "web": True,
+            }
+        }
+        errors = validate_config(data)
+        assert errors == []
+
+    def test_valid_partial_config(self):
+        """Test validation of partial config."""
+        data = {"outputs": {"iceberg": True, "stac": False}}
+        errors = validate_config(data)
+        assert errors == []
+
+    def test_valid_empty_config(self):
+        """Test validation of empty config."""
+        data = {}
+        errors = validate_config(data)
+        assert errors == []
+
+    def test_invalid_output_type(self):
+        """Test that non-boolean output fails."""
+        data = {"outputs": {"iceberg": "yes"}}  # Should be boolean
+        errors = validate_config(data)
+        assert len(errors) == 1
+        assert "boolean" in errors[0].lower() or "type" in errors[0].lower()
+
+    def test_invalid_extra_output(self):
+        """Test that unknown output key fails."""
+        data = {"outputs": {"unknown_output": True}}
+        errors = validate_config(data)
+        assert len(errors) == 1
+
+
+class TestStateValidation:
+    """Test suite for state schema validation."""
+
+    def test_valid_state(self):
+        """Test validation of valid state."""
+        data = {
+            "remote_url": "gs://bucket/path",
+            "base_manifest_hash": "a" * 64,
+        }
+        errors = validate_state(data)
+        assert errors == []
+
+    def test_valid_null_values(self):
+        """Test validation of null values."""
+        data = {"remote_url": None, "base_manifest_hash": None}
+        errors = validate_state(data)
+        assert errors == []
+
+    def test_valid_empty_state(self):
+        """Test validation of empty state."""
+        data = {}
+        errors = validate_state(data)
+        assert errors == []
+
+    def test_invalid_hash_length(self):
+        """Test that invalid hash length fails."""
+        data = {"base_manifest_hash": "abc123"}  # Too short
+        errors = validate_state(data)
+        assert len(errors) == 1
+        assert "hash" in errors[0].lower() or "pattern" in errors[0].lower()
+
+    def test_invalid_hash_characters(self):
+        """Test that invalid hash characters fail."""
+        data = {"base_manifest_hash": "g" * 64}  # 'g' is not hex
+        errors = validate_state(data)
+        assert len(errors) == 1
+
+
+class TestManifestValidation:
+    """Test suite for manifest schema validation."""
+
+    def test_valid_manifest(self):
+        """Test validation of valid manifest."""
+        data = {
+            "version": 1,
+            "files": [
+                {"path": "data/test.parquet", "hash": "a" * 64, "size": 1024},
+                {"path": "config.json", "hash": "b" * 64, "size": 256},
+            ],
+            "created_at": "2024-01-01T00:00:00Z",
+        }
+        errors = validate_manifest(data)
+        assert errors == []
+
+    def test_valid_empty_files(self):
+        """Test validation of manifest with empty files."""
+        data = {"version": 1, "files": []}
+        errors = validate_manifest(data)
+        assert errors == []
+
+    def test_missing_version(self):
+        """Test that missing version fails."""
+        data = {"files": []}
+        errors = validate_manifest(data)
+        assert len(errors) == 1
+        assert "version" in errors[0]
+
+    def test_invalid_version(self):
+        """Test that invalid version fails."""
+        data = {"version": 2, "files": []}  # Only version 1 is valid
+        errors = validate_manifest(data)
+        assert len(errors) == 1
+
+    def test_invalid_file_entry(self):
+        """Test that invalid file entry fails."""
+        data = {
+            "version": 1,
+            "files": [{"path": "test.txt"}],  # Missing hash and size
+        }
+        errors = validate_manifest(data)
+        assert len(errors) >= 1
+
+
+class TestFileValidation:
+    """Test suite for file-level validation."""
+
+    def test_validate_resource_file(self, tmp_path):
+        """Test validating a resource file."""
+        resource_path = tmp_path / "test.json"
+        resource_path.write_text(json.dumps({"name": "test", "kind": "vector"}))
+
+        errors = validate_resource_file(resource_path)
+        assert errors == []
+
+    def test_validate_invalid_resource_file(self, tmp_path):
+        """Test validating an invalid resource file."""
+        resource_path = tmp_path / "test.json"
+        resource_path.write_text(json.dumps({"name": "123bad", "kind": "vector"}))
+
+        errors = validate_resource_file(resource_path)
+        assert len(errors) == 1
+
+    def test_validate_invalid_json_file(self, tmp_path):
+        """Test validating a file with invalid JSON."""
+        resource_path = tmp_path / "test.json"
+        resource_path.write_text("{invalid json")
+
+        errors = validate_resource_file(resource_path)
+        assert len(errors) == 1
+        assert "JSON" in errors[0]
+
+    def test_validate_missing_file(self, tmp_path):
+        """Test validating a missing file."""
+        resource_path = tmp_path / "nonexistent.json"
+
+        errors = validate_resource_file(resource_path)
+        assert len(errors) == 1
+        assert "not found" in errors[0].lower()
+
+    def test_validate_config_file(self, tmp_path):
+        """Test validating a config file."""
+        config_path = tmp_path / "config.json"
+        config_path.write_text(json.dumps({"outputs": {"iceberg": True}}))
+
+        errors = validate_config_file(config_path)
+        assert errors == []
+
+    def test_validate_state_file(self, tmp_path):
+        """Test validating a state file."""
+        state_path = tmp_path / "state.json"
+        state_path.write_text(json.dumps({"remote_url": "gs://bucket"}))
+
+        errors = validate_state_file(state_path)
+        assert errors == []
+
+
+class TestCatalogValidation:
+    """Test suite for catalog-level validation."""
+
+    def test_validate_catalog(self, tmp_path):
+        """Test validating a full catalog."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+
+        # Create config
+        (portolan_dir / "config.json").write_text(
+            json.dumps({"outputs": {"iceberg": True}})
+        )
+
+        # Create state
+        (portolan_dir / "state.json").write_text(
+            json.dumps({"remote_url": None})
+        )
+
+        # Create resources
+        resources_dir = portolan_dir / "resources" / "default"
+        resources_dir.mkdir(parents=True)
+        (resources_dir / "test.json").write_text(
+            json.dumps({"name": "test", "kind": "vector"})
+        )
+
+        errors = validate_catalog(portolan_dir)
+        assert errors == {}
+
+    def test_validate_catalog_with_errors(self, tmp_path):
+        """Test validating a catalog with errors."""
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+
+        # Create invalid config
+        (portolan_dir / "config.json").write_text(
+            json.dumps({"outputs": {"iceberg": "yes"}})  # Should be boolean
+        )
+
+        # Create invalid resource
+        resources_dir = portolan_dir / "resources" / "default"
+        resources_dir.mkdir(parents=True)
+        (resources_dir / "bad.json").write_text(
+            json.dumps({"name": "123bad", "kind": "invalid"})
+        )
+
+        errors = validate_catalog(portolan_dir)
+        assert len(errors) == 2  # config + resource

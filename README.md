@@ -1,6 +1,10 @@
 # Portolan
 
-**Portolan** is an open, cloud-agnostic framework for building modern spatial data infrastructures. It enables governments and organizations to transform, publish, govern, and observe geospatial data using open standards such as GeoParquet, Raquet, and Apache Iceberg. Portolan provides the tooling, catalogs, and control plane required to share spatial data across clouds—including sovereign environments—while maintaining full visibility, governance, and interoperability.
+**Portolan** is an open, cloud-agnostic framework for building modern spatial data infrastructures. It enables organizations to transform, publish, govern, and observe geospatial data using open standards such as GeoParquet, Raquet, and Apache Iceberg.
+
+[![Tests](https://github.com/portolan-sdi/portolan/actions/workflows/test.yml/badge.svg)](https://github.com/portolan-sdi/portolan/actions)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
 ## Why Portolan?
 
@@ -8,271 +12,230 @@
 |---------|-----|
 | **Scalable** | Built on cloud object storage that scales to petabytes |
 | **Open** | 100% open source using open formats (GeoParquet, Raquet, Iceberg) |
-| **AI-Ready** | Rich semantics via STAC, ISO 19115, and [Open Semantic Interchange](https://opensemanticinterchange.org/) make data discoverable by humans and machines |
-| **Cheap** | Only pay for storage and egress—no servers to run, a few dollars/month for most catalogs |
-| **Sovereign** | Host anywhere (any cloud, on-prem, air-gapped), use any query engine you choose |
-| **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Snowflake, BigQuery, Databricks, Oracle, Trino, and other non-GIS tools just work |
+| **AI-Ready** | Rich semantics via STAC, ISO 19115, and [Open Semantic Interchange](https://opensemanticinterchange.org/) |
+| **Cheap** | Only pay for storage and egress—no servers to run |
+| **Sovereign** | Host anywhere (any cloud, on-prem, air-gapped) |
+| **Breaks the GIS silo** | Uses general analytics technology (Apache Iceberg), so DuckDB, Snowflake, BigQuery, Databricks, and other non-GIS tools just work |
 
-Portolan is a collaborative open source project—not controlled by any organization and with open decision-making from the start. Organizations like [Source Cooperative](https://source.coop) provide free hosting for open data, and Portolan runs seamlessly on those.
+## Quick Start
 
-## Getting Started
+```bash
+# Install
+git clone https://github.com/portolan-sdi/portolan.git
+cd portolan
+uv sync
+
+# Initialize a catalog
+uv run portolan init
+
+# Add a dataset (register + snapshot + materialize)
+uv run portolan add data.parquet --public --title "My Dataset"
+
+# Query with DuckDB
+duckdb -c "SELECT * FROM iceberg_scan('.portolan/data/default/my_dataset/metadata/v1.metadata.json') LIMIT 10"
+```
+
+See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide.
+
+## Architecture
+
+```
+                                 ┌─────────────────────────────────┐
+                                 │         Remote Storage          │
+                                 │   (GCS/S3/Azure/Local)          │
+                                 │                                 │
+                                 │  manifest.json                  │
+                                 │  resources/                     │
+                                 │  data/                          │
+                                 │  v1/ (Iceberg REST catalog)     │
+                                 └───────────────┬─────────────────┘
+                                                 │
+                                                 │ sync/pull
+                                                 │
+┌────────────────────────────────────────────────┴────────────────────────────────────────────────┐
+│                                        Local Catalog (.portolan/)                               │
+│                                                                                                 │
+│  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐      │
+│  │   config.json   │    │   state.json    │    │  connections    │    │    sources      │      │
+│  │                 │    │                 │    │    .json        │    │     .json       │      │
+│  │ - outputs       │    │ - remote_url    │    │                 │    │                 │      │
+│  │ - remotes       │    │ - manifest_hash │    │ DB credentials  │    │ Federated       │      │
+│  └─────────────────┘    └─────────────────┘    └─────────────────┘    │ catalogs        │      │
+│                                                                        └─────────────────┘      │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                              resources/{namespace}/{name}.json                          │   │
+│  │                                                                                         │   │
+│  │   Resource Lifecycle:  EXTERNAL ──► CACHED ──► MATERIALIZED                             │   │
+│  │                        (origin)    (+snapshot)  (+iceberg)                              │   │
+│  └─────────────────────────────────────────────────────────────────────────────────────────┘   │
+│                                                                                                 │
+│  ┌─────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                                    data/                                                │   │
+│  │   data/raw/{ns}/{name}/        Snapshot parquet files                                   │   │
+│  │   data/{ns}/{name}/metadata/   Iceberg table metadata                                   │   │
+│  └─────────────────────────────────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Resource Lifecycle
+
+Resources progress through three states based on what operations have been performed:
+
+| State | Condition | Description |
+|-------|-----------|-------------|
+| **EXTERNAL** | Has `origin`, no `assets.snapshot` | Pointer to remote data |
+| **CACHED** | Has `origin` + `assets.snapshot` | Downloaded to local GeoParquet |
+| **MATERIALIZED** | Has `origin` + `assets.snapshot` + `assets.iceberg` | Wrapped as Iceberg table |
+
+### Supported Origin Types
+
+| Type | Description | Extractor |
+|------|-------------|-----------|
+| `file` | Local file (Parquet, GeoJSON, Shapefile, etc.) | geopandas |
+| `wfs` | OGC Web Feature Service | ogr2ogr |
+| `arcgis_featureserver` | ArcGIS FeatureServer | gpio (geoparquet-io) |
+| `arcgis_imageserver` | ArcGIS ImageServer (raster) | gpio |
+| `stac` | STAC Item | httpx download |
+| `postgres` | PostgreSQL/PostGIS table | geopandas + psycopg2 |
+| `oracle` | Oracle Spatial table | geopandas + cx_Oracle |
+
+## Project Structure
+
+```
+portolan/
+├── portolan.py           # Main CLI (Click-based)
+├── resource.py           # Resource model and lifecycle
+├── catalog_sources.py    # Federation with upstream catalogs
+├── catalog_state.py      # Sync state management
+├── iceberg_catalog.py    # Iceberg catalog generation
+├── schemas.py            # JSON Schema validation
+├── output_generators.py  # STAC/ISO output generation
+├── esri2iceberg.py       # ArcGIS converter utilities
+├── web/                  # Browser-based catalog viewer
+│   └── index.html
+├── docs/                 # Additional documentation
+│   ├── catalog-data-model.md
+│   └── demo-catalog.md
+└── tests/                # Test suite
+    ├── test_cli.py
+    ├── test_resource.py
+    ├── test_schemas.py
+    └── test_catalog_sources.py
+```
+
+## Development
 
 ### Prerequisites
 
 - Python 3.10+
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- GDAL (for WFS extraction via ogr2ogr)
+- Optional: `gpio` CLI from [geoparquet-io](https://github.com/geoparquet/geoparquet-io) for ArcGIS extraction
 
-### Installation
+### Setup
 
 ```bash
-# Clone the repository
 git clone https://github.com/portolan-sdi/portolan.git
 cd portolan
-
-# Install dependencies
 uv sync
-
-# Verify installation
-uv run portolan --help
 ```
 
-### Quick Start
-
-Portolan uses a **local-first workflow**: work with data locally, then sync to remote storage.
-
-1. **Initialize a catalog** in your project directory:
+### Running Tests
 
 ```bash
-uv run portolan init
+# Run all tests
+uv run pytest
+
+# Run with verbose output
+uv run pytest -v
+
+# Run specific test file
+uv run pytest tests/test_resource.py -v
+
+# Run with coverage
+uv run pytest --cov=. --cov-report=html
 ```
 
-This creates a `.portolan` directory with your local catalog.
-
-2. **Add a dataset** to the local catalog:
+### Code Quality
 
 ```bash
-# Add a public dataset
-uv run portolan dataset add mydata.parquet --public --title "My Dataset"
+# Format code
+uv run ruff format .
 
-# Add a private dataset
-uv run portolan dataset add mydata.parquet --tenant acme --collection imagery
+# Lint
+uv run ruff check .
+
+# Type checking (optional)
+uv run mypy portolan.py resource.py
 ```
 
-3. **Configure a remote** storage backend (optional):
+### Adding New Extractors
 
-```bash
-# AWS S3
-uv run portolan remote add origin s3://my-bucket/portolan
+To add a new origin type:
 
-# Google Cloud Storage
-uv run portolan remote add origin gs://my-bucket/portolan
+1. Add the type to `ORIGIN_SCHEMA` in `schemas.py`
+2. Update the `register` command choices in `portolan.py`
+3. Add extraction logic in the `snapshot` command
+4. Add tests in `tests/test_cli.py`
 
-# MinIO or S3-compatible
-uv run portolan remote add origin s3://warehouse --endpoint http://localhost:9000
+Example extraction branch:
 
-# Local filesystem
-uv run portolan remote add origin file:///var/data/portolan
+```python
+elif resource.origin.type == "my_new_type":
+    # Your extraction logic here
+    # Output should be a GeoParquet file at output_path
+    pass
 ```
 
-4. **Sync to remote** when ready:
+### Key Design Decisions
 
-```bash
-uv run portolan sync
-```
+1. **Local-first**: All operations work locally first, then sync to remote
+2. **Git-like workflow**: `sync` and `pull` with manifest-based change tracking
+3. **Schema validation**: JSON Schema validation on all data models
+4. **Lifecycle states**: Explicit state machine (EXTERNAL → CACHED → MATERIALIZED)
+5. **Layered metadata**: User overrides > source metadata > derived metadata
+6. **Static catalog**: Generates static Iceberg REST catalog (no server needed)
 
-5. **Browse locally** with the web UI:
+## Dependencies
 
-```bash
-uv run portolan web serve
-# Open http://localhost:8080 in your browser
-```
+Core dependencies:
+- `click` - CLI framework
+- `pyarrow` - Parquet I/O and Arrow tables
+- `geopandas` - Geospatial data manipulation
+- `jsonschema` - Schema validation
+- `httpx` - HTTP client for STAC/API calls
 
-## Architecture
+Optional dependencies:
+- `psycopg2-binary` - PostgreSQL support
+- `cx_Oracle` - Oracle support
 
-Portolan creates a **static Iceberg REST catalog** that can be hosted on any cloud storage. This enables:
+## Related Projects
 
-- **Zero-server architecture**: No backend servers needed, just static files
-- **Local-first workflow**: Work locally, sync to remote when ready
-- **Pluggable storage**: AWS S3, Google Cloud Storage, Azure Blob, or local filesystem
-- **Standard formats**: Uses [GeoParquet](https://geoparquet.org/) for vectors and [Raquet](https://github.com/geoparquet/raquet) for rasters
-- **Iceberg metadata**: Full compatibility with Iceberg-aware tools like DuckDB, Snowflake, BigQuery, Databricks, Oracle, and Trino
-- **STAC + ISO 19115**: Metadata tables include both STAC and ISO 19115 fields for SDI compliance
-
-### Supported Storage Backends
-
-Portolan uses [obstore](https://github.com/developmentseed/obstore) for storage abstraction:
-
-| Backend | URL Format | Example |
-|---------|------------|---------|
-| AWS S3 | `s3://bucket/path` | `s3://my-data/portolan` |
-| Google Cloud | `gs://bucket/path` | `gs://my-bucket/portolan` |
-| Azure Blob | `az://container/path` | `az://mycontainer/portolan` |
-| Local filesystem | `file:///path` | `file:///var/data/portolan` |
-| S3-compatible | `s3://bucket` + `--endpoint` | MinIO, DigitalOcean Spaces, etc. |
-
-### Storage Layout
-
-```
-bucket/
-  manifest.json           # Catalog index for web UI
-  index.html              # Web UI (optional)
-  public/                 # Publicly accessible datasets
-    {collection}/
-      data/
-        {collection}/
-          items/          # STAC+ISO metadata table
-          {dataset}/      # Individual dataset files
-  private/                # Access-controlled datasets
-    {tenant}/
-      {collection}/
-        ...
-```
-
-### Components
-
-| File | Description |
-|------|-------------|
-| `portolan.py` | CLI tool for managing datasets, users, and access |
-| `iceberg_catalog.py` | Core library for generating Iceberg/STAC/ISO catalogs |
-| `esri2iceberg.py` | Converter for ArcGIS FeatureServer/ImageServer services |
-| `web/index.html` | Browser-based catalog viewer with DuckDB WASM |
-
-## CLI Reference
-
-### Initialize & Status
-
-```bash
-# Initialize a new catalog
-portolan init [path] [options]
-  --remote, -r   Remote storage URL (e.g., s3://bucket/path)
-  --name, -n     Name for the remote (default: origin)
-
-# Show catalog status
-portolan status
-```
-
-### Dataset Management
-
-```bash
-# Add a dataset
-portolan dataset add <file> [options]
-  --id           Dataset ID (default: filename)
-  --title        Dataset title
-  --description  Dataset description
-  --collection   Collection name (default: datasets)
-  --tenant       Tenant for private datasets (default: default)
-  --public       Make dataset publicly accessible
-  --topic        ISO topic category
-  --license      License (default: CC-BY-4.0)
-  --verbose      Show detailed output
-
-# List datasets
-portolan dataset list [--verbose]
-
-# Remove a dataset
-portolan dataset remove <visibility/collection/dataset> [--force]
-```
-
-### Remote Storage
-
-```bash
-# Add a remote
-portolan remote add <name> <url> [options]
-  --access-key   AWS access key (or set AWS_ACCESS_KEY_ID)
-  --secret-key   AWS secret key (or set AWS_SECRET_ACCESS_KEY)
-  --endpoint     Custom endpoint URL (for MinIO, etc.)
-  --region       AWS region (default: us-east-1)
-  --anonymous    Use anonymous access
-  --default      Set as default remote
-
-# List remotes
-portolan remote list
-
-# Remove a remote
-portolan remote remove <name>
-
-# Set default remote
-portolan remote set-default <name>
-```
-
-### Sync
-
-```bash
-# Sync to remote storage
-portolan sync [options]
-  --remote, -r   Remote name (default: uses default remote)
-  --verbose, -v  Show detailed output
-  --dry-run      Preview sync without uploading
-```
-
-### Web UI
-
-```bash
-# Serve locally for development
-portolan web serve [--port 8080] [--host 127.0.0.1]
-
-# Deploy web UI to remote storage
-portolan web deploy [--remote <name>]
-```
-
-## Web UI
-
-The web UI (`web/index.html`) provides a browser-based interface for exploring Portolan catalogs:
-
-- **Dataset browsing**: View all public datasets with metadata
-- **Authentication**: Sign in with S3 credentials to access private datasets
-- **Map preview**: Interactive maps for GeoParquet (vector) and Raquet (raster) data
-- **Query examples**: Copy-paste DuckDB queries for each dataset
-
-The UI uses DuckDB WASM to query parquet files directly from storage, requiring no backend server.
-
-## Converting ArcGIS Services
-
-Use `esri2iceberg.py` to convert ArcGIS REST services to Portolan format:
-
-```bash
-# Convert all FeatureServers and ImageServers
-python esri2iceberg.py https://services.arcgis.com/.../rest/services \
-  --bucket my-bucket \
-  --s3-endpoint storage.googleapis.com
-
-# Skip raster conversion
-python esri2iceberg.py <url> --bucket my-bucket --skip-rasters
-
-# Specify raster resolution
-python esri2iceberg.py <url> --bucket my-bucket --raster-resolution 12
-```
-
-## Querying with DuckDB
-
-Portolan catalogs work seamlessly with DuckDB:
-
-```sql
--- Load the Iceberg extension
-LOAD iceberg;
-
--- Attach a Portolan catalog
-ATTACH 'warehouse' AS catalog (
-    TYPE iceberg,
-    ENDPOINT 'http://localhost:9000/warehouse',
-    AUTHORIZATION_TYPE 'none'
-);
-
--- List all tables
-SHOW ALL TABLES;
-
--- Query a dataset
-SELECT * FROM catalog.default.my_dataset LIMIT 10;
-
--- Query the STAC+ISO metadata table
-SELECT id, title, bbox_west, bbox_south, bbox_east, bbox_north
-FROM catalog.datasets.items;
-```
-
-## License
-
-This project is open source. See the [LICENSE](LICENSE) file for details.
+- [GeoParquet](https://geoparquet.org/) - Cloud-native vector format
+- [Raquet](https://github.com/geoparquet/raquet) - Cloud-native raster format
+- [Apache Iceberg](https://iceberg.apache.org/) - Table format for analytics
+- [STAC](https://stacspec.org/) - SpatioTemporal Asset Catalog
+- [DuckDB](https://duckdb.org/) - Analytical database with Iceberg support
 
 ## Contributing
 
-Contributions are welcome! Please open an issue or pull request on GitHub.
+Contributions are welcome! Please:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/my-feature`)
+3. Make your changes with tests
+4. Run the test suite (`uv run pytest`)
+5. Submit a pull request
+
+For major changes, please open an issue first to discuss the approach.
+
+## License
+
+Apache 2.0 - See [LICENSE](LICENSE) for details.
+
+## Links
+
+- [Documentation](DOCUMENTATION.md)
+- [Data Model](docs/catalog-data-model.md)
+- [Demo Catalog](docs/demo-catalog.md)
+- [GitHub Issues](https://github.com/portolan-sdi/portolan/issues)

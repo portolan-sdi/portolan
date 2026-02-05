@@ -16,6 +16,60 @@ Both tables and resources can be:
 - **External**: Data hosted elsewhere, referenced by URL
 - **External + Cached**: External data with a local copy for SLA
 
+## Data Format Pipeline
+
+Resources progress through a **type-aware** lifecycle where the path depends on the data kind:
+
+```
+VECTOR:  EXTERNAL ──snapshot──▶ MATERIALIZED  (1 step, Iceberg is free)
+         (origin)               (GeoParquet + Iceberg metadata)
+
+RASTER:  EXTERNAL ──snapshot──▶ CACHED ──materialize──▶ MATERIALIZED
+         (origin)               (COG/Zarr)               (Raquet + Iceberg)
+```
+
+| Kind | Origin (various) | snapshot produces | materialize produces |
+|------|------------------|-------------------|----------------------|
+| **Vector** | Shapefile, GeoJSON, WFS, ArcGIS FeatureServer, PostGIS, etc. | GeoParquet + Iceberg metadata (done!) | No-op (already materialized) |
+| **Raster** | GeoTIFF, JPEG2000, ArcGIS ImageServer, STAC assets, etc. | COG or Zarr (cache only) | Raquet (QUADBIN indexed) + Iceberg |
+| **Point Cloud** | LAS, LAZ, E57, etc. | COPC (cache only) | Pointquet + Iceberg |
+| **Tileset** | MBTiles, PMTiles, 3D Tiles, etc. | Tilesets (cache only) | Tilequet + Iceberg |
+
+### Why Type-Aware?
+
+For **vector** data, the cache format (GeoParquet) is already Iceberg-compatible. Thanks to "lightweight Iceberg" (the `schema.name-mapping.default` property), we can register existing Parquet files without rewriting them. Iceberg registration is essentially free - just generating a few metadata JSON/Avro files.
+
+For **raster** data, the cache format (COG/Zarr) is NOT Iceberg-compatible. Converting to Raquet requires expensive processing (reading pixels, spatial indexing with QUADBIN). So materialization remains an explicit step.
+
+### Format Rationale
+
+- **Cache stage**: Uses industry-standard cloud-native formats that are widely compatible and can be queried by common tools (GDAL, DuckDB, PDAL, etc.)
+- **Materialized stage**: Uses the "quet" format family that adds spatial indexing (QUADBIN for raster) for Iceberg integration and efficient spatial queries
+- **Lightweight Iceberg**: Vector data skips the separate materialization step because GeoParquet IS the Iceberg data format - we only need to add metadata
+
+### Format Details
+
+| Format | Description | Query Tools |
+|--------|-------------|-------------|
+| **GeoParquet** | Columnar vector format with geometry | DuckDB, GeoPandas, QGIS |
+| **COG** | Cloud Optimized GeoTIFF | GDAL, rasterio, Titiler |
+| **Zarr** | N-dimensional chunked arrays | Xarray, Zarr, GDAL |
+| **COPC** | Cloud Optimized Point Cloud | PDAL, Potree |
+| **Raquet** | GeoParquet with QUADBIN spatial indexing for raster | DuckDB + Iceberg |
+| **Pointquet** | GeoParquet with spatial indexing for point clouds | DuckDB + Iceberg |
+| **Tilequet** | GeoParquet with tile indexing | DuckDB + Iceberg |
+
+### Cache Format Selection
+
+The cache format is determined by the source:
+
+| Source Type | Cache Format |
+|-------------|--------------|
+| ArcGIS ImageServer | COG (via raquet-io) |
+| STAC raster assets | COG (downloaded) |
+| Zarr archives | Zarr (referenced or downloaded) |
+| NetCDF/HDF5 | Zarr (converted) |
+
 ## Value Proposition: SQL-Queryable Federated Discovery
 
 A Portolan catalog provides value even with **zero data tables** - just by aggregating metadata from external sources (STAC, ArcGIS, CKAN).

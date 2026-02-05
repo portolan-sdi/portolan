@@ -130,6 +130,7 @@ def generate_manifest_files(
     snapshot_id: int = 1,
     sequence_number: int = 1,
     table_path: str | None = None,
+    data_file_path: str | None = None,
 ) -> str:
     """
     Generate Iceberg manifest and manifest-list Avro files using pyiceberg.
@@ -142,6 +143,7 @@ def generate_manifest_files(
         snapshot_id: Snapshot ID for the manifest
         sequence_number: Sequence number for the snapshot
         table_path: Optional path to table (e.g., "namespace/tablename"). If not provided, uses table.name
+        data_file_path: Optional full path to the data file. If not provided, constructs from table_path.
 
     Returns:
         Path to the manifest-list file (relative to data_base_url)
@@ -159,8 +161,9 @@ def generate_manifest_files(
     # Use table_path if provided, otherwise just table.name
     path_prefix = table_path if table_path else table.name
 
-    # Create data file entry
-    data_file_path = f"{data_base_url.rstrip('/')}/data/{path_prefix}/{table.name}.parquet"
+    # Create data file entry - use provided path or construct default
+    if data_file_path is None:
+        data_file_path = f"{data_base_url.rstrip('/')}/data/{path_prefix}/{table.name}.parquet"
 
     data_file = DataFile.from_args(
         content=DataFileContent.DATA,
@@ -240,6 +243,29 @@ def generate_manifest_files(
         manifest_list_writer.add_manifests([manifest_file_with_url])
 
     return manifest_list_url
+
+
+def create_name_mapping(schema: dict) -> str:
+    """
+    Create Iceberg name-mapping JSON from schema.
+
+    The name mapping tells Iceberg readers how to match columns by name
+    when field IDs are not present in the Parquet file. This enables
+    "lightweight Iceberg" - registering existing Parquet files without rewriting them.
+
+    Args:
+        schema: Iceberg schema dict with "fields" list
+
+    Returns:
+        JSON string of name mapping: [{"field-id": 1, "names": ["col1"]}, ...]
+    """
+    mapping = []
+    for field in schema.get("fields", []):
+        mapping.append({
+            "field-id": field["id"],
+            "names": [field["name"]],
+        })
+    return json.dumps(mapping)
 
 
 def _arrow_type_to_iceberg(arrow_type) -> dict:
@@ -378,6 +404,9 @@ def create_table_metadata(
         "properties": {
             "created-at": str(current_time_ms),
             "geoparquet.source": "portolan",
+            # Name mapping enables "lightweight Iceberg" - no Parquet rewrite needed
+            # Readers match columns by name instead of field ID
+            "schema.name-mapping.default": create_name_mapping(table.schema),
         },
         "current-snapshot-id": 1,
         "refs": {"main": {"snapshot-id": 1, "type": "branch"}},
