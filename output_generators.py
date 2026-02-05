@@ -13,7 +13,6 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
-from xml.etree import ElementTree as ET
 
 if TYPE_CHECKING:
     from portolan import CatalogConfig
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 # STAC Generator
 # =============================================================================
 
-def generate_stac_catalog(catalog: "CatalogConfig", verbose: bool = False) -> dict[str, Path]:
+def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[str, Path]:
     """
     Generate a static STAC catalog from Portolan resources.
 
@@ -276,7 +275,7 @@ def _calculate_collection_temporal(resources: list[dict]) -> dict | None:
     return None
 
 
-def update_stac_for_resource(catalog: "CatalogConfig", resource: dict, namespace: str, verbose: bool = False):
+def update_stac_for_resource(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
     """
     Update STAC catalog with a single resource (incremental update).
 
@@ -348,16 +347,8 @@ def update_stac_for_resource(catalog: "CatalogConfig", resource: dict, namespace
 # ISO 19139 Generator
 # =============================================================================
 
-# ISO 19139 XML namespaces
-ISO_NAMESPACES = {
-    "gmd": "http://www.isotc211.org/2005/gmd",
-    "gco": "http://www.isotc211.org/2005/gco",
-    "gml": "http://www.opengis.net/gml/3.2",
-    "xsi": "http://www.w3.org/2001/XMLSchema-instance",
-}
 
-
-def generate_iso19139_catalog(catalog: "CatalogConfig", verbose: bool = False) -> dict[str, Path]:
+def generate_iso19139_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[str, Path]:
     """
     Generate ISO 19139 XML metadata files from Portolan resources.
 
@@ -594,7 +585,7 @@ def _generate_distribution_xml(resource: dict) -> str:
     return "\n".join(transfers)
 
 
-def update_iso19139_for_resource(catalog: "CatalogConfig", resource: dict, namespace: str, verbose: bool = False):
+def update_iso19139_for_resource(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
     """
     Update ISO 19139 catalog with a single resource (incremental update).
     """
@@ -613,10 +604,436 @@ def update_iso19139_for_resource(catalog: "CatalogConfig", resource: dict, names
 
 
 # =============================================================================
+# DuckLake Generator
+# =============================================================================
+
+def generate_ducklake_catalog(catalog: CatalogConfig, verbose: bool = False) -> Path | None:
+    """
+    Generate a DuckLake catalog from Portolan resources.
+
+    Creates a .ducklake file that can be attached to DuckDB for querying.
+    The DuckLake catalog references the parquet files in the data directory.
+
+    Usage in DuckDB:
+        INSTALL ducklake;
+        ATTACH 'ducklake:catalog.ducklake' AS catalog (DATA_PATH 'data/');
+        SELECT * FROM catalog.main.table_name;
+
+    Args:
+        catalog: CatalogConfig with path to .portolan directory
+        verbose: Print progress
+
+    Returns:
+        Path to created .ducklake file, or None if DuckDB not available
+    """
+    try:
+        import duckdb
+    except ImportError:
+        if verbose:
+            print("DuckDB not installed, skipping DuckLake generation")
+            print("Install with: pip install duckdb")
+        return None
+
+    ducklake_path = catalog.path / "catalog.ducklake"
+    data_dir = catalog.data_dir
+
+    # Check if data directory has parquet files
+    parquet_files = list(data_dir.rglob("*.parquet")) if data_dir.exists() else []
+    if not parquet_files:
+        if verbose:
+            print("No parquet files found in data directory, skipping DuckLake generation")
+        return None
+
+    if verbose:
+        print(f"Generating DuckLake catalog with {len(parquet_files)} tables...")
+
+    # Remove existing catalog to start fresh
+    if ducklake_path.exists():
+        ducklake_path.unlink()
+
+    # Create DuckLake catalog
+    try:
+        conn = duckdb.connect()
+
+        # Install and load DuckLake extension
+        conn.execute("INSTALL ducklake")
+        conn.execute("LOAD ducklake")
+
+        # Attach as DuckLake catalog with data path
+        # Use absolute path for data directory
+        data_path = str(data_dir.absolute())
+        ducklake_file = str(ducklake_path.absolute())
+
+        conn.execute(f"""
+            ATTACH 'ducklake:{ducklake_file}' AS portolan (DATA_PATH '{data_path}/')
+        """)
+
+        # Create tables for each parquet file
+        tables_created = 0
+        for parquet_file in parquet_files:
+            table_name = parquet_file.stem
+            # Sanitize table name
+            table_name = table_name.replace("-", "_").replace(" ", "_")
+
+            try:
+                # Create table from parquet file
+                conn.execute(f"""
+                    CREATE TABLE portolan.main.{table_name} AS
+                    SELECT * FROM read_parquet('{parquet_file.absolute()}')
+                """)
+                tables_created += 1
+                if verbose:
+                    print(f"  Created table: {table_name}")
+            except Exception as e:
+                if verbose:
+                    print(f"  Error creating table {table_name}: {e}")
+
+        conn.close()
+
+        if verbose:
+            print(f"Created DuckLake catalog: {ducklake_path}")
+            print(f"  Tables: {tables_created}")
+            print()
+            print("Connect with DuckDB:")
+            print(f"  ATTACH 'ducklake:{ducklake_path}' AS catalog;")
+            print("  SHOW ALL TABLES;")
+
+        return ducklake_path
+
+    except Exception as e:
+        if verbose:
+            print(f"Error creating DuckLake catalog: {e}")
+        return None
+
+
+def update_ducklake_for_resource(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
+    """
+    Update DuckLake catalog with a single resource.
+
+    For DuckLake, we regenerate the entire catalog since it's a single file.
+    """
+    generate_ducklake_catalog(catalog, verbose=verbose)
+
+
+# =============================================================================
+# Web UI Generator
+# =============================================================================
+
+def generate_web_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[str, Path]:
+    """
+    Generate a static web UI for browsing the Portolan catalog.
+
+    Creates an index.html that can browse resources, with links to data files
+    and metadata in various formats.
+
+    Args:
+        catalog: CatalogConfig with path to .portolan directory
+        verbose: Print progress
+
+    Returns:
+        Dict mapping paths to created files
+    """
+    web_dir = catalog.path / "web"
+    web_dir.mkdir(parents=True, exist_ok=True)
+
+    resources_dir = catalog.path / "resources"
+    files_created = {}
+
+    # Collect all resources
+    all_resources = []
+    namespaces = {}
+
+    if resources_dir.exists():
+        for namespace_dir in resources_dir.iterdir():
+            if not namespace_dir.is_dir():
+                continue
+
+            namespace = namespace_dir.name
+            namespaces[namespace] = []
+
+            for resource_file in namespace_dir.glob("*.json"):
+                if resource_file.name.startswith("_"):
+                    continue
+
+                try:
+                    with open(resource_file) as f:
+                        resource = json.load(f)
+                    resource["_namespace"] = namespace
+                    all_resources.append(resource)
+                    namespaces[namespace].append(resource)
+                except Exception as e:
+                    if verbose:
+                        print(f"  Error reading {resource_file}: {e}")
+
+    # Generate index.html
+    html_content = _generate_web_html(all_resources, namespaces, catalog)
+    index_path = web_dir / "index.html"
+    with open(index_path, "w") as f:
+        f.write(html_content)
+    files_created["index.html"] = index_path
+
+    if verbose:
+        print(f"Generated web UI: {index_path}")
+        print(f"  Resources: {len(all_resources)}")
+        print(f"  Namespaces: {len(namespaces)}")
+
+    return files_created
+
+
+def _generate_web_html(resources: list[dict], namespaces: dict, catalog: CatalogConfig) -> str:
+    """Generate the HTML content for the web UI."""
+
+    # Build resource rows
+    resource_rows = []
+    for r in sorted(resources, key=lambda x: x.get("name", "")):
+        name = r.get("name", "unknown")
+        title = r.get("title", name)
+        namespace = r.get("_namespace", "default")
+        format_type = r.get("format", "unknown")
+        abstract = r.get("abstract", "")[:100]
+        if len(r.get("abstract", "")) > 100:
+            abstract += "..."
+
+        # Build links to assets
+        asset_links = []
+        for asset_key, asset_info in r.get("assets", {}).items():
+            if isinstance(asset_info, dict) and asset_info.get("href"):
+                href = asset_info["href"]
+                asset_links.append(f'<a href="{href}" class="asset-link">{asset_key}</a>')
+
+        assets_html = " ".join(asset_links) if asset_links else "-"
+
+        resource_rows.append(f"""
+            <tr>
+                <td><strong>{_html_escape(title)}</strong><br><small class="text-muted">{_html_escape(name)}</small></td>
+                <td><span class="badge">{_html_escape(namespace)}</span></td>
+                <td>{_html_escape(format_type)}</td>
+                <td>{_html_escape(abstract)}</td>
+                <td>{assets_html}</td>
+            </tr>
+        """)
+
+    resources_html = "\n".join(resource_rows)
+
+    # Build namespace stats
+    namespace_stats = []
+    for ns, items in sorted(namespaces.items()):
+        namespace_stats.append(f'<span class="badge">{ns}: {len(items)}</span>')
+    stats_html = " ".join(namespace_stats)
+
+    # Check which outputs are enabled
+    outputs_enabled = []
+    if catalog.outputs.get("stac"):
+        outputs_enabled.append('<a href="../stac/catalog.json" class="output-link">STAC</a>')
+    if catalog.outputs.get("iso19139"):
+        outputs_enabled.append('<a href="../iso19139/" class="output-link">ISO 19139</a>')
+    if catalog.outputs.get("ducklake"):
+        outputs_enabled.append('<span class="output-link">DuckLake</span>')
+    outputs_html = " | ".join(outputs_enabled) if outputs_enabled else "None"
+
+    html = f'''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portolan Catalog</title>
+    <style>
+        :root {{
+            --primary: #2563eb;
+            --bg: #f8fafc;
+            --card: #ffffff;
+            --text: #1e293b;
+            --muted: #64748b;
+            --border: #e2e8f0;
+        }}
+        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }}
+        .container {{ max-width: 1200px; margin: 0 auto; padding: 2rem; }}
+        header {{
+            background: var(--primary);
+            color: white;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }}
+        header h1 {{ font-size: 2rem; margin-bottom: 0.5rem; }}
+        header p {{ opacity: 0.9; }}
+        .stats {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            gap: 2rem;
+            flex-wrap: wrap;
+        }}
+        .stat-item {{ }}
+        .stat-label {{ font-size: 0.875rem; color: var(--muted); }}
+        .stat-value {{ font-size: 1.25rem; font-weight: 600; }}
+        .badge {{
+            display: inline-block;
+            background: var(--primary);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+        }}
+        table {{
+            width: 100%;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            border-collapse: collapse;
+            overflow: hidden;
+        }}
+        th, td {{
+            padding: 0.75rem 1rem;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }}
+        th {{
+            background: var(--bg);
+            font-weight: 600;
+            font-size: 0.875rem;
+            color: var(--muted);
+        }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover {{ background: var(--bg); }}
+        .text-muted {{ color: var(--muted); }}
+        .asset-link {{
+            display: inline-block;
+            background: #e2e8f0;
+            color: var(--text);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            font-size: 0.75rem;
+            text-decoration: none;
+            margin-right: 0.25rem;
+        }}
+        .asset-link:hover {{ background: #cbd5e1; }}
+        .output-link {{
+            color: var(--primary);
+            text-decoration: none;
+        }}
+        .output-link:hover {{ text-decoration: underline; }}
+        .search-box {{
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }}
+        .search-box:focus {{
+            outline: none;
+            border-color: var(--primary);
+        }}
+        footer {{
+            margin-top: 2rem;
+            padding: 1rem;
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.875rem;
+        }}
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>🧭 Portolan Catalog</h1>
+            <p>Geospatial data infrastructure</p>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-label">Resources</div>
+                <div class="stat-value">{len(resources)}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Namespaces</div>
+                <div class="stat-value">{len(namespaces)}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Collections</div>
+                <div class="stat-value">{stats_html}</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Outputs</div>
+                <div class="stat-value">{outputs_html}</div>
+            </div>
+        </div>
+
+        <input type="text" class="search-box" placeholder="Search resources..." id="search" onkeyup="filterTable()">
+
+        <table id="resources-table">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Namespace</th>
+                    <th>Format</th>
+                    <th>Description</th>
+                    <th>Assets</th>
+                </tr>
+            </thead>
+            <tbody>
+                {resources_html}
+            </tbody>
+        </table>
+    </div>
+
+    <footer>
+        Generated by <a href="https://github.com/cartodb/portolan">Portolan</a> &bull;
+        {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
+    </footer>
+
+    <script>
+        function filterTable() {{
+            const query = document.getElementById('search').value.toLowerCase();
+            const rows = document.querySelectorAll('#resources-table tbody tr');
+            rows.forEach(row => {{
+                const text = row.textContent.toLowerCase();
+                row.style.display = text.includes(query) ? '' : 'none';
+            }});
+        }}
+    </script>
+</body>
+</html>'''
+
+    return html
+
+
+def _html_escape(text: str) -> str:
+    """Escape special HTML characters."""
+    if not text:
+        return ""
+    return (str(text)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;"))
+
+
+def update_web_for_resource(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
+    """
+    Update web UI with a single resource.
+
+    For web UI, we regenerate the entire index since it's a single file.
+    """
+    generate_web_catalog(catalog, verbose=verbose)
+
+
+# =============================================================================
 # Main Update Function
 # =============================================================================
 
-def update_all_outputs(catalog: "CatalogConfig", resource: dict, namespace: str, verbose: bool = False):
+def update_all_outputs(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
     """
     Update all enabled output formats for a resource.
 
@@ -632,8 +1049,14 @@ def update_all_outputs(catalog: "CatalogConfig", resource: dict, namespace: str,
     if outputs.get("iso19139"):
         update_iso19139_for_resource(catalog, resource, namespace, verbose=verbose)
 
+    if outputs.get("ducklake"):
+        update_ducklake_for_resource(catalog, resource, namespace, verbose=verbose)
 
-def regenerate_all_outputs(catalog: "CatalogConfig", verbose: bool = False):
+    if outputs.get("web"):
+        update_web_for_resource(catalog, resource, namespace, verbose=verbose)
+
+
+def regenerate_all_outputs(catalog: CatalogConfig, verbose: bool = False):
     """
     Regenerate all enabled output formats from scratch.
 
@@ -650,3 +1073,13 @@ def regenerate_all_outputs(catalog: "CatalogConfig", verbose: bool = False):
         if verbose:
             print("Regenerating ISO 19139 metadata...")
         generate_iso19139_catalog(catalog, verbose=verbose)
+
+    if outputs.get("ducklake"):
+        if verbose:
+            print("Regenerating DuckLake catalog...")
+        generate_ducklake_catalog(catalog, verbose=verbose)
+
+    if outputs.get("web"):
+        if verbose:
+            print("Regenerating web UI...")
+        generate_web_catalog(catalog, verbose=verbose)

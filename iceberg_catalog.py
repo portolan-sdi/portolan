@@ -23,12 +23,10 @@ from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from pyiceberg.io.pyarrow import schema_to_pyarrow
 from pyiceberg.manifest import (
     DataFile,
     DataFileContent,
     FileFormat,
-    ManifestContent,
     ManifestEntry,
     ManifestEntryStatus,
     ManifestFile,
@@ -661,15 +659,15 @@ def generate_static_catalog(
 
         # Add STAC and ISO directories if they exist
         f.write("\n# Compatibility layer outputs (STAC, ISO 19139)\n")
-        f.write(f"SCRIPT_DIR=\"$(dirname \"$0\")\"\n")
-        f.write(f"if [ -d \"$SCRIPT_DIR/stac\" ]; then\n")
-        f.write(f"    echo \"Uploading STAC catalog...\"\n")
-        f.write(f"    gsutil -m cp -r \"$SCRIPT_DIR/stac\" \"$BUCKET/\"\n")
-        f.write(f"fi\n")
-        f.write(f"if [ -d \"$SCRIPT_DIR/iso19139\" ]; then\n")
-        f.write(f"    echo \"Uploading ISO 19139 metadata...\"\n")
-        f.write(f"    gsutil -m cp -r \"$SCRIPT_DIR/iso19139\" \"$BUCKET/\"\n")
-        f.write(f"fi\n")
+        f.write("SCRIPT_DIR=\"$(dirname \"$0\")\"\n")
+        f.write("if [ -d \"$SCRIPT_DIR/stac\" ]; then\n")
+        f.write("    echo \"Uploading STAC catalog...\"\n")
+        f.write("    gsutil -m cp -r \"$SCRIPT_DIR/stac\" \"$BUCKET/\"\n")
+        f.write("fi\n")
+        f.write("if [ -d \"$SCRIPT_DIR/iso19139\" ]; then\n")
+        f.write("    echo \"Uploading ISO 19139 metadata...\"\n")
+        f.write("    gsutil -m cp -r \"$SCRIPT_DIR/iso19139\" \"$BUCKET/\"\n")
+        f.write("fi\n")
 
         f.write("\necho \"\"\n")
         f.write("echo \"Upload complete!\"\n")
@@ -692,9 +690,9 @@ def generate_static_catalog(
         json.dump(static_upload_map, f, indent=2)
 
     print(f"Generated static catalog with {len(tables)} tables")
-    print(f"  - v1/: Local dev structure (with __list__ files)")
-    print(f"  - gcs/: Flat files with __ separators")
-    print(f"\nTo serve as REST catalog with static hosting:")
+    print("  - v1/: Local dev structure (with __list__ files)")
+    print("  - gcs/: Flat files with __ separators")
+    print("\nTo serve as REST catalog with static hosting:")
     print(f"  {upload_script_path} gs://your-bucket")
     print(f"\nOr use the upload map: {upload_map_path}")
     return files_created
