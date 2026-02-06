@@ -18,6 +18,70 @@ if TYPE_CHECKING:
     from portolan import CatalogConfig
 
 
+def _normalize_resource(resource: dict) -> dict:
+    """Normalize a resource dict to the common format expected by output generators.
+
+    Handles both old format (flat dict with 'type', 'format', 'spatial_extent')
+    and new format (Resource dataclass with 'origin', 'metadata', 'assets').
+    """
+    # Detect new format by checking if origin is a dict (old format has origin as string)
+    if isinstance(resource.get("origin"), dict):
+        # New Resource format
+        metadata = resource.get("metadata", {})
+        user_meta = metadata.get("user", {})
+        derived = metadata.get("derived", {})
+
+        # Build spatial_extent from bbox
+        spatial_extent = None
+        bbox = derived.get("bbox")
+        if bbox and len(bbox) >= 4:
+            spatial_extent = {
+                "west": bbox[0],
+                "south": bbox[1],
+                "east": bbox[2],
+                "north": bbox[3],
+            }
+
+        # Build assets dict for output generators
+        assets = {}
+        resource_assets = resource.get("assets", {})
+        snapshot = resource_assets.get("snapshot")
+        if isinstance(snapshot, dict) and snapshot.get("href"):
+            assets["data"] = {
+                "href": snapshot["href"],
+                "type": snapshot.get("type", "application/vnd.apache.parquet"),
+                "title": "Snapshot data",
+            }
+        iceberg = resource_assets.get("iceberg")
+        if isinstance(iceberg, dict) and iceberg.get("metadata"):
+            assets["iceberg"] = {
+                "href": iceberg["metadata"],
+                "type": "application/json",
+                "title": "Iceberg metadata",
+            }
+
+        return {
+            "name": resource.get("name", "unknown"),
+            "title": user_meta.get("title", resource.get("name", "unknown")),
+            "abstract": user_meta.get("description", ""),
+            "type": resource.get("kind", "vector"),
+            "format": resource.get("kind", "unknown"),
+            "spatial_extent": spatial_extent,
+            "crs": derived.get("crs"),
+            "temporal_extent": None,
+            "created_at": resource.get("created_at"),
+            "updated_at": resource.get("updated_at"),
+            "assets": assets,
+            "properties": {
+                "row_count": derived.get("row_count"),
+                "column_count": derived.get("column_count"),
+            },
+        }
+
+    # Old format - pass through unchanged
+    return resource
+
+
 # =============================================================================
 # STAC Generator
 # =============================================================================
@@ -65,7 +129,7 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
             try:
                 with open(resource_file) as f:
                     resource = json.load(f)
-                namespaces[namespace].append(resource)
+                namespaces[namespace].append(_normalize_resource(resource))
             except Exception as e:
                 if verbose:
                     print(f"  Error reading {resource_file}: {e}")
@@ -281,6 +345,7 @@ def update_stac_for_resource(catalog: CatalogConfig, resource: dict, namespace: 
 
     This is called when a new resource is added, avoiding full regeneration.
     """
+    resource = _normalize_resource(resource)
     stac_dir = catalog.stac_dir
 
     # Ensure directory structure exists
@@ -386,7 +451,7 @@ def generate_iso19139_catalog(catalog: CatalogConfig, verbose: bool = False) -> 
 
             try:
                 with open(resource_file) as f:
-                    resource = json.load(f)
+                    resource = _normalize_resource(json.load(f))
 
                 xml_content = _resource_to_iso19139(resource)
                 xml_path = ns_dir / f"{resource.get('name', 'unknown')}.xml"
@@ -589,6 +654,7 @@ def update_iso19139_for_resource(catalog: CatalogConfig, resource: dict, namespa
     """
     Update ISO 19139 catalog with a single resource (incremental update).
     """
+    resource = _normalize_resource(resource)
     iso_dir = catalog.iso_dir
     ns_dir = iso_dir / namespace
     ns_dir.mkdir(parents=True, exist_ok=True)
@@ -757,7 +823,7 @@ def generate_web_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[
 
                 try:
                     with open(resource_file) as f:
-                        resource = json.load(f)
+                        resource = _normalize_resource(json.load(f))
                     resource["_namespace"] = namespace
                     all_resources.append(resource)
                     namespaces[namespace].append(resource)

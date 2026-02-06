@@ -185,21 +185,23 @@ def _parse_remote_url(url: str) -> tuple[str, str]:
     return "file", url
 
 
-def _open_remote_parquet(url: str):
+def _open_remote_parquet(url: str, region: str | None = None):
     """
     Open a remote Parquet file and return a ParquetFile object.
 
     Only reads the metadata footer (range request), not the full file.
     Supports s3://, gs://, and https:// URLs.
     """
+    import os
+
     import pyarrow.parquet as pq
 
     scheme, path = _parse_remote_url(url)
 
     if scheme == "s3":
         from pyarrow.fs import S3FileSystem
-        # Extract region from path or use default
-        s3fs = S3FileSystem(anonymous=True, region="us-west-2")
+        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        s3fs = S3FileSystem(anonymous=True, region=s3_region)
         return pq.ParquetFile(path, filesystem=s3fs)
 
     if scheme == "gs":
@@ -216,13 +218,16 @@ def _open_remote_parquet(url: str):
     return pq.ParquetFile(path)
 
 
-def _get_remote_file_size(url: str) -> int:
+def _get_remote_file_size(url: str, region: str | None = None) -> int:
     """Get the file size of a remote file via HEAD request or filesystem info."""
+    import os
+
     scheme, path = _parse_remote_url(url)
 
     if scheme == "s3":
         from pyarrow.fs import S3FileSystem
-        s3fs = S3FileSystem(anonymous=True, region="us-west-2")
+        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        s3fs = S3FileSystem(anonymous=True, region=s3_region)
         info = s3fs.get_file_info(path)
         return info.size
 
@@ -595,394 +600,15 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
 
     click.echo(f"Snapshotting {resource_name}...")
 
-    import shutil
-
     # Output path for snapshot
     snapshot_dir = catalog.path / "data" / "raw" / namespace / resource_name
     snapshot_dir.mkdir(parents=True, exist_ok=True)
     output_path = snapshot_dir / f"{resource_name}.parquet"
 
-    # Extract based on origin type
-    if resource.origin.type == "file":
-        source_path = Path(resource.origin.url)
-        if not source_path.exists():
-            raise click.ClickException(f"Source file not found: {source_path}")
+    # Extract data using the appropriate extractor
+    from extractors import run_extractor
 
-        if source_path.suffix in (".parquet", ".geoparquet"):
-            # Copy parquet file
-            shutil.copy(source_path, output_path)
-            if verbose:
-                click.echo(f"  Copied {source_path} to {output_path}")
-        else:
-            # Convert to GeoParquet using geopandas
-            import geopandas as gpd
-            gdf = gpd.read_file(source_path)
-            gdf.to_parquet(output_path)
-            if verbose:
-                click.echo(f"  Converted {source_path} to GeoParquet")
-
-    elif resource.origin.type == "arcgis_featureserver":
-        # Fetch layer metadata from ArcGIS REST API
-        import httpx
-        import subprocess
-        from portolan_resource import SourceMetadata
-
-        metadata_url = f"{resource.origin.url}?f=json"
-        if verbose:
-            click.echo(f"  Fetching layer metadata from {metadata_url}...")
-
-        layer_meta = {}
-        try:
-            response = httpx.get(metadata_url, follow_redirects=True, timeout=30)
-            response.raise_for_status()
-            layer_meta = response.json()
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Warning: Could not fetch layer metadata: {e}")
-
-        # Extract key metadata
-        layer_name = layer_meta.get("name", "")
-        layer_desc = layer_meta.get("description", "")
-        geometry_type = layer_meta.get("geometryType", "")
-        extent = layer_meta.get("extent", {})
-        fields = layer_meta.get("fields", [])
-
-        if verbose and layer_name:
-            click.echo(f"  Layer: {layer_name}")
-            click.echo(f"  Geometry: {geometry_type}")
-
-        # Use gpio for extraction
-        cmd = ["gpio", "extract", "arcgis", resource.origin.url, str(output_path)]
-        if verbose:
-            click.echo(f"  Running: {' '.join(cmd)}")
-        try:
-            subprocess.run(cmd, check=True, capture_output=not verbose)
-        except subprocess.CalledProcessError as e:
-            raise click.ClickException(f"Failed to extract from ArcGIS: {e}")
-        except FileNotFoundError:
-            raise click.ClickException(
-                "gpio command not found. Install: pip install geoparquet-io"
-            )
-
-        # Store ArcGIS metadata
-        if layer_meta:
-            resource.metadata.source = SourceMetadata(
-                provider="arcgis",
-                ref={"service_url": resource.origin.url, "layer_id": layer_meta.get("id")},
-                fetched_at=datetime.now(timezone.utc).isoformat(),
-                data={
-                    "name": layer_name,
-                    "description": layer_desc,
-                    "geometryType": geometry_type,
-                    "extent": extent,
-                    "fields": [{"name": f.get("name"), "type": f.get("type"), "alias": f.get("alias")} for f in fields],
-                    "capabilities": layer_meta.get("capabilities"),
-                    "currentVersion": layer_meta.get("currentVersion"),
-                },
-            )
-
-    elif resource.origin.type == "wfs":
-        # Use ogr2ogr for WFS extraction
-        import subprocess
-        from portolan_resource import SourceMetadata
-
-        wfs_url = f"WFS:{resource.origin.url}"
-        cmd = ["ogr2ogr", "-f", "Parquet", str(output_path), wfs_url]
-        if resource.origin.layer:
-            cmd.append(resource.origin.layer)
-        if verbose:
-            click.echo(f"  Running: {' '.join(cmd)}")
-        try:
-            subprocess.run(cmd, check=True, capture_output=not verbose)
-        except subprocess.CalledProcessError as e:
-            raise click.ClickException(f"Failed to extract from WFS: {e}")
-
-        # Store WFS metadata (basic info - full metadata requires XML parsing)
-        resource.metadata.source = SourceMetadata(
-            provider="wfs",
-            ref={"service_url": resource.origin.url, "layer": resource.origin.layer},
-            fetched_at=datetime.now(timezone.utc).isoformat(),
-            data={
-                "service_type": "WFS",
-                "layer": resource.origin.layer,
-            },
-        )
-
-    elif resource.origin.type == "arcgis_imageserver":
-        # Fetch service metadata from ArcGIS REST API
-        import httpx
-        import subprocess
-        from portolan_resource import SourceMetadata
-
-        metadata_url = f"{resource.origin.url}?f=json"
-        if verbose:
-            click.echo(f"  Fetching service metadata from {metadata_url}...")
-
-        service_meta = {}
-        try:
-            response = httpx.get(metadata_url, follow_redirects=True, timeout=30)
-            response.raise_for_status()
-            service_meta = response.json()
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Warning: Could not fetch service metadata: {e}")
-
-        # Extract key metadata
-        service_name = service_meta.get("name", "")
-        service_desc = service_meta.get("description", "")
-        extent = service_meta.get("extent", {})
-        pixel_size_x = service_meta.get("pixelSizeX")
-        pixel_size_y = service_meta.get("pixelSizeY")
-        band_count = service_meta.get("bandCount")
-
-        if verbose and service_name:
-            click.echo(f"  Service: {service_name}")
-            click.echo(f"  Bands: {band_count}, Pixel size: {pixel_size_x} x {pixel_size_y}")
-
-        # Update kind to raster
-        resource.kind = "raster"
-
-        # Use raquet-io for extraction (outputs Raquet format)
-        cmd = ["raquet-io", "convert", "imageserver", resource.origin.url, str(output_path)]
-        if bbox:
-            cmd.extend(["--bbox", bbox])
-        if verbose:
-            cmd.append("-v")
-        click.echo(f"  Running: {' '.join(cmd)}")
-        try:
-            subprocess.run(cmd, check=True, capture_output=not verbose)
-        except subprocess.CalledProcessError as e:
-            raise click.ClickException(f"Failed to extract from ArcGIS ImageServer: {e}")
-        except FileNotFoundError:
-            raise click.ClickException(
-                "raquet-io command not found. Install: pip install 'raquet-io[imageserver]'\n"
-                "Note: GDAL must be installed separately (brew install gdal on macOS)"
-            )
-
-        # Store ImageServer metadata
-        if service_meta:
-            resource.metadata.source = SourceMetadata(
-                provider="arcgis_imageserver",
-                ref={"service_url": resource.origin.url},
-                fetched_at=datetime.now(timezone.utc).isoformat(),
-                data={
-                    "name": service_name,
-                    "description": service_desc,
-                    "extent": extent,
-                    "pixelSizeX": pixel_size_x,
-                    "pixelSizeY": pixel_size_y,
-                    "bandCount": band_count,
-                    "serviceDataType": service_meta.get("serviceDataType"),
-                    "currentVersion": service_meta.get("currentVersion"),
-                },
-            )
-
-    elif resource.origin.type == "stac":
-        # Download primary asset from STAC item
-        import httpx
-        from portolan_resource import SourceMetadata
-
-        if verbose:
-            click.echo(f"  Fetching STAC item from {resource.origin.url}...")
-
-        try:
-            response = httpx.get(resource.origin.url, follow_redirects=True, timeout=30)
-            response.raise_for_status()
-            item = response.json()
-        except Exception as e:
-            raise click.ClickException(f"Failed to fetch STAC item: {e}")
-
-        # Extract STAC metadata
-        stac_id = item.get("id")
-        stac_collection = item.get("collection")
-        stac_bbox = item.get("bbox")
-        stac_properties = item.get("properties", {})
-
-        # Update origin with STAC-specific fields
-        resource.origin.stac_collection = stac_collection
-        resource.origin.stac_item_id = stac_id
-
-        if verbose:
-            click.echo(f"  STAC Item: {stac_id}")
-            click.echo(f"  Collection: {stac_collection}")
-            if stac_bbox:
-                click.echo(f"  Bbox: {stac_bbox}")
-
-        # Find the primary data asset
-        assets = item.get("assets", {})
-        primary_asset = None
-
-        # Priority order for asset keys
-        priority_keys = ["data", "visual", "image", "default", "asset"]
-        for key in priority_keys:
-            if key in assets:
-                primary_asset = assets[key]
-                break
-
-        # Fall back to first asset with parquet/tiff type
-        if not primary_asset:
-            for key, asset in assets.items():
-                asset_type = asset.get("type", "")
-                if "parquet" in asset_type or "tiff" in asset_type or "geotiff" in asset_type:
-                    primary_asset = asset
-                    break
-
-        # Final fallback to first asset
-        if not primary_asset and assets:
-            primary_asset = next(iter(assets.values()))
-
-        if not primary_asset:
-            raise click.ClickException("No downloadable asset found in STAC item")
-
-        asset_url = primary_asset.get("href")
-        if not asset_url:
-            raise click.ClickException("Asset has no href")
-
-        # Convert s3:// URLs to https:// for public buckets
-        if asset_url.startswith("s3://"):
-            # s3://bucket-name/path -> https://bucket-name.s3.amazonaws.com/path
-            parts = asset_url[5:].split("/", 1)
-            bucket = parts[0]
-            key = parts[1] if len(parts) > 1 else ""
-            asset_url = f"https://{bucket}.s3.amazonaws.com/{key}"
-            if verbose:
-                click.echo(f"  Converted S3 URL to HTTPS")
-
-        # Determine asset type
-        asset_type = primary_asset.get("type", "")
-        is_raster = "tiff" in asset_type.lower() or "geotiff" in asset_type.lower() or asset_url.endswith(".tif")
-        is_parquet = "parquet" in asset_type.lower() or asset_url.endswith(".parquet")
-
-        if verbose:
-            click.echo(f"  Asset type: {asset_type}")
-            click.echo(f"  Downloading asset from {asset_url}...")
-
-        if is_raster:
-            # For raster assets, download then convert with raquet-io
-            import subprocess
-            import tempfile
-
-            # Download to temp file first
-            temp_file = snapshot_dir / "temp_raster.tif"
-            if verbose:
-                click.echo(f"  Downloading raster to temp file...")
-            try:
-                response = httpx.get(asset_url, follow_redirects=True, timeout=300)
-                response.raise_for_status()
-                with open(temp_file, "wb") as f:
-                    f.write(response.content)
-            except Exception as e:
-                raise click.ClickException(f"Failed to download STAC raster: {e}")
-
-            # Convert to Raquet format
-            if verbose:
-                click.echo(f"  Converting raster to Raquet format...")
-            cmd = ["raquet-io", "convert", "raster", str(temp_file), str(output_path)]
-            if verbose:
-                cmd.append("-v")
-            try:
-                subprocess.run(cmd, check=True, capture_output=not verbose)
-            except subprocess.CalledProcessError as e:
-                raise click.ClickException(f"Failed to convert raster STAC asset: {e}")
-            except FileNotFoundError:
-                raise click.ClickException(
-                    "raquet-io command not found. Install: pip install raquet-io\n"
-                    "Note: GDAL must be installed separately (brew install gdal on macOS)"
-                )
-            finally:
-                # Clean up temp file
-                if temp_file.exists():
-                    temp_file.unlink()
-        else:
-            # For parquet/vector assets, download directly
-            try:
-                response = httpx.get(asset_url, follow_redirects=True, timeout=300)
-                response.raise_for_status()
-                with open(output_path, "wb") as f:
-                    f.write(response.content)
-            except Exception as e:
-                raise click.ClickException(f"Failed to download STAC asset: {e}")
-
-        # Store STAC metadata in resource
-        resource.metadata.source = SourceMetadata(
-            provider="stac",
-            ref={"item_url": resource.origin.url, "item_id": stac_id},
-            fetched_at=datetime.now(timezone.utc).isoformat(),
-            data={
-                "collection": stac_collection,
-                "bbox": stac_bbox,
-                "properties": stac_properties,
-                "assets": {k: {"href": v.get("href"), "type": v.get("type")} for k, v in item.get("assets", {}).items()},
-            },
-        )
-
-        # Update kind based on asset type
-        if is_raster:
-            resource.kind = "raster"
-
-        # Store bbox in derived metadata if available
-        if stac_bbox and len(stac_bbox) >= 4:
-            # Will be merged with computed derived metadata later
-            pass  # bbox will be set from stac_bbox below
-
-    elif resource.origin.type == "postgres":
-        # Extract from PostgreSQL using geopandas
-        import geopandas as gpd
-
-        conn_config = load_connection(catalog.path, resource.origin.connection_ref)
-        if not conn_config:
-            raise click.ClickException(
-                f"Connection '{resource.origin.connection_ref}' not found. "
-                f"Add it with: portolan connection add {resource.origin.connection_ref} <connection_string>"
-            )
-
-        table_name = resource.origin.layer
-        if not table_name:
-            raise click.ClickException("No table specified. Use --layer to specify the table name.")
-
-        if verbose:
-            click.echo(f"  Extracting from PostgreSQL table: {table_name}...")
-
-        try:
-            gdf = gpd.read_postgis(
-                sql=f"SELECT * FROM {table_name}",
-                con=conn_config["connection_string"],
-                geom_col=conn_config.get("geometry_column", "geom"),
-            )
-            gdf.to_parquet(output_path)
-        except Exception as e:
-            raise click.ClickException(f"Failed to extract from PostgreSQL: {e}")
-
-    elif resource.origin.type == "oracle":
-        # Extract from Oracle using geopandas with cx_Oracle
-        import geopandas as gpd
-
-        conn_config = load_connection(catalog.path, resource.origin.connection_ref)
-        if not conn_config:
-            raise click.ClickException(
-                f"Connection '{resource.origin.connection_ref}' not found. "
-                f"Add it with: portolan connection add {resource.origin.connection_ref} <connection_string>"
-            )
-
-        table_name = resource.origin.layer
-        if not table_name:
-            raise click.ClickException("No table specified. Use --layer to specify the table name.")
-
-        if verbose:
-            click.echo(f"  Extracting from Oracle table: {table_name}...")
-
-        try:
-            gdf = gpd.read_postgis(
-                sql=f"SELECT * FROM {table_name}",
-                con=conn_config["connection_string"],
-                geom_col=conn_config.get("geometry_column", "GEOMETRY"),
-            )
-            gdf.to_parquet(output_path)
-        except Exception as e:
-            raise click.ClickException(f"Failed to extract from Oracle: {e}")
-
-    else:
-        raise click.ClickException(f"Unsupported origin type: {resource.origin.type}")
+    run_extractor(resource, output_path, catalog_path=catalog.path, bbox=bbox, verbose=verbose)
 
     # Compute derived metadata
     if verbose:
@@ -1468,14 +1094,13 @@ def dataset_add(ctx, file: str, dataset_id: str | None, title: str | None,
     Supports GeoParquet (vector) and Raquet (raster) files.
     The dataset is added locally - use 'portolan sync' to push to remote.
 
+    This command delegates to the new resource lifecycle (register + snapshot + materialize).
+
     \b
     Examples:
         portolan dataset add countries.parquet --public --title "World Countries"
         portolan dataset add imagery.parquet -c imagery --tenant acme
     """
-    from iceberg_catalog import extract_parquet_metadata, generate_sdi_catalog
-
-    catalog = get_catalog(ctx)
     file_path = Path(file).resolve()
 
     # Determine dataset ID
@@ -1486,119 +1111,20 @@ def dataset_add(ctx, file: str, dataset_id: str | None, title: str | None,
     dataset_id = dataset_id.lower().replace(" ", "_").replace("-", "_")
     dataset_id = "".join(c for c in dataset_id if c.isalnum() or c == "_")
 
-    # Determine visibility and path
-    visibility = "public" if is_public else "private"
-    if visibility == "public":
-        base_path = f"public/{collection}"
-    else:
-        base_path = f"private/{tenant}/{collection}"
+    # Determine namespace from public/collection
+    namespace = "public" if is_public else collection
 
-    # For local catalog, use relative path
-    base_url = f"./{base_path}"
-
-    # Extract metadata (auto-detects Raquet vs GeoParquet)
-    click.echo(f"Analyzing {file_path.name}...")
-    metadata = extract_parquet_metadata(str(file_path))
-    file_type = metadata.get("type", "geoparquet")
-    format_name = metadata.get("format_name", "Parquet")
-    spatial_representation = metadata.get("spatial_representation", "vector")
-    raquet_info = metadata.get("raquet_info", {})
-    geoparquet_info = metadata.get("geoparquet_info", {})
-    stac_info = metadata.get("stac_info", {})
-
-    # Use bounds from metadata if available
-    bounds = metadata.get("bounds", stac_info.get("bbox", []))
-    if bounds:
-        stac_info["bbox"] = bounds
-
-    collections_config = [{
-        "name": collection,
-        "title": title or f"{collection.title()} Collection",
-        "items": [{
-            "id": dataset_id,
-            "title": title or dataset_id,
-            "asset_path": str(file_path),
-            "stac_info": stac_info,
-            "iso_info": {
-                "abstract": description or f"Dataset: {dataset_id}",
-                "topic_category": topic,
-                "format_name": format_name,
-                "spatial_representation": spatial_representation,
-                "license": license_,
-            },
-            "raquet_info": raquet_info if file_type == "raquet" else {},
-            "geoparquet_info": geoparquet_info if file_type == "geoparquet" else {},
-        }]
-    }]
-
-    # Generate catalog in the local .portolan directory
-    output_dir = catalog.path / base_path
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    generate_sdi_catalog(
-        collections=collections_config,
-        output_dir=str(output_dir),
-        data_base_url=base_url,
+    # Delegate to the unified `add` command (register + snapshot + materialize)
+    ctx.invoke(
+        add_resource,
+        source=file,
+        name=dataset_id,
+        namespace=namespace,
+        title=title,
+        description=description,
+        public=is_public,
         verbose=verbose,
     )
-
-    # Create resource entry for manifest-based tracking
-    namespace = collection
-    resources_dir = catalog.path / "resources" / namespace
-    resources_dir.mkdir(parents=True, exist_ok=True)
-
-    # Build spatial extent from bounds
-    spatial_extent = None
-    if bounds and len(bounds) >= 4:
-        spatial_extent = {
-            "west": bounds[0],
-            "south": bounds[1],
-            "east": bounds[2],
-            "north": bounds[3],
-        }
-
-    resource = {
-        "name": dataset_id,
-        "type": "managed",
-        "format": file_type,
-        "title": title or dataset_id,
-        "abstract": description or f"Dataset: {dataset_id}",
-        "origin": "portolan",
-        "spatial_extent": spatial_extent,
-        "crs": "EPSG:4326",
-        "assets": {
-            "data": {
-                "href": f"data/{namespace}/{dataset_id}/{dataset_id}.parquet",
-                "type": "application/vnd.apache.parquet",
-                "title": f"{format_name} file",
-            }
-        },
-        "properties": metadata.get("properties", {}),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-    resource_path = resources_dir / f"{dataset_id}.json"
-    with open(resource_path, "w") as f:
-        json.dump(resource, f, indent=2)
-
-    if verbose:
-        click.echo(f"Created resource: {resource_path}")
-
-    # Update outputs if enabled
-    from output_generators import update_all_outputs
-    update_all_outputs(catalog, resource, namespace, verbose=verbose)
-
-    click.echo()
-    click.echo(click.style("Dataset added successfully!", fg="green"))
-    click.echo(f"  ID: {dataset_id}")
-    click.echo(f"  Type: {format_name}")
-    click.echo(f"  Visibility: {visibility}")
-    click.echo(f"  Location: {output_dir}")
-
-    if not is_public:
-        click.echo("\n  Note: Private datasets require authentication to access.")
-
-    click.echo("\nRun 'portolan sync' to push to remote storage.")
 
 
 @dataset.command("list")
@@ -2727,6 +2253,85 @@ def fetch_json(url: str) -> dict:
     return response.json()
 
 
+def _sanitize_resource_name(name: str) -> str:
+    """Sanitize a name for use as a resource identifier."""
+    name = name.lower().replace(" ", "_").replace("-", "_")
+    return "".join(c for c in name if c.isalnum() or c == "_")
+
+
+def discover_arcgis_services(
+    services_url: str, verbose: bool = False
+) -> tuple[list[dict], list[dict]]:
+    """Discover FeatureServers and ImageServers from an ArcGIS REST endpoint.
+
+    Args:
+        services_url: ArcGIS REST services URL (e.g. https://...arcgis.com/.../rest/services)
+        verbose: Print discovery progress
+
+    Returns:
+        (feature_servers, image_servers) where each is a list of dicts:
+          feature_server: {name, url, layers: [{id, name, geometryType}]}
+          image_server: {name, url, pixel_type, band_count, extent}
+    """
+    import httpx
+
+    services_url = services_url.rstrip("/")
+
+    if verbose:
+        click.echo(f"Discovering services from {services_url}")
+
+    try:
+        response = httpx.get(f"{services_url}?f=json", timeout=30)
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        raise click.ClickException(f"Failed to fetch services: {e}")
+
+    feature_servers = []
+    image_servers = []
+
+    for service in data.get("services", []):
+        service_type = service.get("type")
+        name = service.get("name", "unknown")
+
+        if service_type == "FeatureServer":
+            url = service.get("url") or f"{services_url}/{name}/FeatureServer"
+            try:
+                fs_response = httpx.get(f"{url}?f=json", timeout=30)
+                fs_response.raise_for_status()
+                fs_data = fs_response.json()
+                layers = fs_data.get("layers", [])
+                feature_servers.append({"name": name, "url": url, "layers": layers})
+                if verbose:
+                    click.echo(f"  FeatureServer: {name} ({len(layers)} layers)")
+            except Exception as e:
+                if verbose:
+                    click.echo(f"  Skipping FeatureServer {name}: {e}")
+
+        elif service_type == "ImageServer":
+            url = service.get("url") or f"{services_url}/{name}/ImageServer"
+            try:
+                is_response = httpx.get(f"{url}?f=json", timeout=30)
+                is_response.raise_for_status()
+                is_data = is_response.json()
+                image_servers.append({
+                    "name": name,
+                    "url": url,
+                    "pixel_type": is_data.get("pixelType"),
+                    "band_count": is_data.get("bandCount"),
+                    "extent": is_data.get("extent"),
+                })
+                if verbose:
+                    bands = is_data.get("bandCount", "?")
+                    pixel_type = is_data.get("pixelType", "?")
+                    click.echo(f"  ImageServer: {name} ({bands} bands, {pixel_type})")
+            except Exception as e:
+                if verbose:
+                    click.echo(f"  Skipping ImageServer {name}: {e}")
+
+    return feature_servers, image_servers
+
+
 def get_stac_links(stac_obj: dict, rel: str) -> list[dict]:
     """Get links with a specific rel from a STAC object."""
     return [link for link in stac_obj.get("links", []) if link.get("rel") == rel]
@@ -2887,7 +2492,9 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         click.echo("  portolan import stac <url>")
         return
 
-    # Collect all resources
+    # Collect all resources (normalize both old and new formats)
+    from output_generators import _normalize_resource
+
     resources = []
     for namespace_dir in resources_dir.iterdir():
         if not namespace_dir.is_dir():
@@ -2901,7 +2508,7 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
 
             try:
                 with open(resource_file) as f:
-                    resource = json.load(f)
+                    resource = _normalize_resource(json.load(f))
                 resource["namespace"] = namespace
                 resources.append(resource)
 
@@ -3337,6 +2944,173 @@ def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tupl
     if enabled:
         click.echo(f"  Also updated: {', '.join(enabled)}")
     click.echo("\nRun 'portolan sync' to push to remote storage.")
+
+
+@import_cmd.command("arcgis-server")
+@click.argument("url")
+@click.option("--namespace", "-n", default="arcgis", help="Namespace for imported resources")
+@click.option("--skip-rasters", is_flag=True, help="Skip ImageServers (only import FeatureServers)")
+@click.option("--skip-vectors", is_flag=True, help="Skip FeatureServers (only import ImageServers)")
+@click.option("--dry-run", is_flag=True, help="Show what would be imported without saving")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def import_arcgis_server(
+    ctx, url: str, namespace: str, skip_rasters: bool, skip_vectors: bool, dry_run: bool, verbose: bool
+):
+    """Import all services from an ArcGIS REST endpoint.
+
+    Discovers FeatureServers and ImageServers, then registers each
+    layer as an external resource. Use 'portolan snapshot --all' afterward
+    to download the data.
+
+    \b
+    Examples:
+        portolan import arcgis-server https://services6.arcgis.com/.../rest/services
+        portolan import arcgis-server https://server.com/rest/services --dry-run
+        portolan import arcgis-server https://server.com/rest/services --skip-rasters
+    """
+    catalog = get_catalog(ctx)
+
+    # Validate URL
+    if "/rest/services" not in url and not url.rstrip("/").endswith("/services"):
+        raise click.ClickException(
+            "URL should be an ArcGIS REST services endpoint "
+            "(e.g. https://services6.arcgis.com/.../ArcGIS/rest/services)"
+        )
+
+    click.echo(f"Discovering services from {url}...")
+    feature_servers, image_servers = discover_arcgis_services(url, verbose=verbose)
+
+    # Apply filters
+    if skip_vectors:
+        feature_servers = []
+    if skip_rasters:
+        image_servers = []
+
+    if not feature_servers and not image_servers:
+        click.echo("No services found.")
+        return
+
+    # Build list of resources to import
+    resources_to_import = []
+
+    for fs in feature_servers:
+        for layer in fs["layers"]:
+            layer_id = layer.get("id", 0)
+            layer_name = layer.get("name", f"layer_{layer_id}")
+            geom_type = layer.get("geometryType", "unknown")
+
+            # Combine service + layer name if multi-layer
+            if len(fs["layers"]) > 1:
+                name = _sanitize_resource_name(f"{fs['name']}_{layer_name}")
+            else:
+                name = _sanitize_resource_name(fs["name"])
+
+            layer_url = f"{fs['url']}/{layer_id}"
+
+            resources_to_import.append({
+                "name": name,
+                "kind": "vector",
+                "origin": {
+                    "type": "arcgis_featureserver",
+                    "url": layer_url,
+                },
+                "metadata": {
+                    "user": {
+                        "title": layer_name,
+                        "description": f"FeatureServer layer ({geom_type}) from {fs['name']}",
+                    },
+                    "derived": {},
+                },
+            })
+
+    for imgs in image_servers:
+        name = _sanitize_resource_name(imgs["name"])
+        bands = imgs.get("band_count", "?")
+        pixel_type = imgs.get("pixel_type", "unknown")
+
+        resources_to_import.append({
+            "name": name,
+            "kind": "raster",
+            "origin": {
+                "type": "arcgis_imageserver",
+                "url": imgs["url"],
+            },
+            "metadata": {
+                "user": {
+                    "title": imgs["name"],
+                    "description": f"ImageServer ({bands} bands, {pixel_type})",
+                },
+                "derived": {},
+            },
+        })
+
+    # Print summary
+    total_layers = sum(len(fs["layers"]) for fs in feature_servers)
+    click.echo(
+        f"\nFound {len(feature_servers)} FeatureServer(s) ({total_layers} layers), "
+        f"{len(image_servers)} ImageServer(s)"
+    )
+
+    # Type breakdown
+    vector_count = sum(1 for r in resources_to_import if r["kind"] == "vector")
+    raster_count = sum(1 for r in resources_to_import if r["kind"] == "raster")
+    click.echo(f"  Vector: {vector_count}, Raster: {raster_count}")
+
+    if dry_run:
+        click.echo("\nDry run — would import:")
+        for r in resources_to_import[:15]:
+            kind_label = "[vector]" if r["kind"] == "vector" else "[raster]"
+            click.echo(f"  {kind_label} {r['name']}: {r['origin']['url'][:70]}...")
+        if len(resources_to_import) > 15:
+            click.echo(f"  ... and {len(resources_to_import) - 15} more")
+        return
+
+    # Save resources to catalog
+    click.echo(f"\nSaving to namespace '{namespace}'...")
+
+    resources_dir = catalog.path / "resources" / namespace
+    resources_dir.mkdir(parents=True, exist_ok=True)
+
+    from output_generators import update_all_outputs
+
+    now = datetime.now(timezone.utc).isoformat()
+    saved = 0
+
+    for item in resources_to_import:
+        item["created_at"] = now
+        item["updated_at"] = now
+
+        resource_file = resources_dir / f"{item['name']}.json"
+        with open(resource_file, "w") as f:
+            json.dump(item, f, indent=2)
+
+        update_all_outputs(catalog, item, namespace, verbose=verbose)
+        saved += 1
+
+    # Save index file
+    index = {
+        "namespace": namespace,
+        "source": url,
+        "source_type": "arcgis_server",
+        "imported_at": now,
+        "total_items": len(resources_to_import),
+        "feature_servers": len(feature_servers),
+        "image_servers": len(image_servers),
+    }
+    with open(resources_dir / "_index.json", "w") as f:
+        json.dump(index, f, indent=2)
+
+    enabled = [k for k, v in catalog.outputs.items() if v and k != "iceberg"]
+
+    click.echo()
+    click.echo(click.style(f"Imported {saved} resources!", fg="green"))
+    click.echo(f"  Location: {resources_dir}")
+    if enabled:
+        click.echo(f"  Also updated: {', '.join(enabled)}")
+    click.echo("\nNext steps:")
+    click.echo(f"  portolan snapshot --all --namespace {namespace}    # Download data")
+    click.echo(f"  portolan materialize --all --namespace {namespace} # Create Iceberg tables")
 
 
 # ============== MAIN ==============

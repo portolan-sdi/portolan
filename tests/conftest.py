@@ -85,7 +85,7 @@ def initialized_catalog(temp_catalog_dir):
 
 @pytest.fixture
 def catalog_with_resource(initialized_catalog, sample_geoparquet):
-    """Create a catalog with a sample resource."""
+    """Create a catalog with a sample resource in the new Resource format."""
     import shutil
     from datetime import datetime, timezone
 
@@ -97,34 +97,42 @@ def catalog_with_resource(initialized_catalog, sample_geoparquet):
     resources_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy parquet to data directory
-    data_dir = catalog.data_dir / namespace / "sample"
+    data_dir = catalog.path / "data" / "raw" / namespace / "sample"
     data_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(sample_geoparquet, data_dir / "sample.parquet")
 
-    # Create resource JSON
+    # Create resource JSON in the new Resource format
+    now = datetime.now(timezone.utc).isoformat()
     resource = {
         "name": "sample",
-        "type": "managed",
-        "format": "geoparquet",
-        "title": "Sample Cities",
-        "abstract": "A sample dataset of European cities",
-        "origin": "portolan",
-        "spatial_extent": {
-            "west": 2.3522,
-            "south": 41.9028,
-            "east": 13.4050,
-            "north": 52.5200,
+        "kind": "vector",
+        "origin": {
+            "type": "file",
+            "url": str(sample_geoparquet),
         },
-        "crs": "EPSG:4326",
         "assets": {
-            "data": {
-                "href": f"data/{namespace}/sample/sample.parquet",
+            "snapshot": {
+                "href": f"data/raw/{namespace}/sample/sample.parquet",
                 "type": "application/vnd.apache.parquet",
-                "title": "GeoParquet file",
+                "taken_at": now,
+                "format": "geoparquet",
             }
         },
-        "properties": {"row_count": 3},
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "user": {
+                "title": "Sample Cities",
+                "description": "A sample dataset of European cities",
+            },
+            "derived": {
+                "row_count": 3,
+                "column_count": 4,
+                "schema_hash": None,
+                "bbox": [2.3522, 41.9028, 13.4050, 52.5200],
+                "crs": "EPSG:4326",
+            },
+        },
+        "created_at": now,
+        "updated_at": now,
     }
 
     resource_path = resources_dir / "sample.json"

@@ -3,7 +3,10 @@ Tests for Portolan CLI commands.
 """
 
 import json
+from pathlib import Path
 
+import click
+import pytest
 from click.testing import CliRunner
 
 from portolan import cli
@@ -100,7 +103,7 @@ class TestDatasetCommands:
             )
 
             assert result.exit_code == 0
-            assert "Dataset added successfully" in result.output
+            assert "Resource added successfully" in result.output
 
     def test_dataset_list_empty(self, initialized_catalog):
         """Test listing datasets when empty."""
@@ -371,3 +374,383 @@ class TestAddCommand:
             # Check resource is in public namespace
             resource_path = initialized_catalog.path / "resources" / "public" / "public_test.json"
             assert resource_path.exists()
+
+
+class TestParseRemoteUrl:
+    """Test suite for _parse_remote_url helper."""
+
+    def test_s3_url(self):
+        """Test parsing s3:// URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url("s3://my-bucket/data/file.parquet")
+        assert scheme == "s3"
+        assert path == "my-bucket/data/file.parquet"
+
+    def test_gs_url(self):
+        """Test parsing gs:// URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url("gs://my-bucket/data/file.parquet")
+        assert scheme == "gs"
+        assert path == "my-bucket/data/file.parquet"
+
+    def test_s3_https_url(self):
+        """Test parsing S3 public HTTPS URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url(
+            "https://my-bucket.s3.us-west-2.amazonaws.com/data/file.parquet"
+        )
+        assert scheme == "s3"
+        assert path == "my-bucket/data/file.parquet"
+
+    def test_gcs_https_url(self):
+        """Test parsing GCS public HTTPS URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url(
+            "https://storage.googleapis.com/my-bucket/data/file.parquet"
+        )
+        assert scheme == "gs"
+        assert path == "my-bucket/data/file.parquet"
+
+    def test_generic_https_url(self):
+        """Test parsing generic HTTPS URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url("https://example.com/data/file.parquet")
+        assert scheme == "https"
+        assert path == "https://example.com/data/file.parquet"
+
+    def test_local_file(self):
+        """Test parsing local file paths."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url("/path/to/file.parquet")
+        assert scheme == "file"
+        assert path == "/path/to/file.parquet"
+
+
+class TestTableNameValidation:
+    """Test suite for SQL injection prevention."""
+
+    def test_valid_simple_name(self):
+        """Test valid simple table name."""
+        from extractors import _validate_table_name
+
+        assert _validate_table_name("cities") == "cities"
+
+    def test_valid_schema_qualified(self):
+        """Test valid schema-qualified table name."""
+        from extractors import _validate_table_name
+
+        assert _validate_table_name("public.buildings") == "public.buildings"
+
+    def test_valid_underscore(self):
+        """Test valid name with underscores."""
+        from extractors import _validate_table_name
+
+        assert _validate_table_name("my_table_2024") == "my_table_2024"
+
+    def test_rejects_sql_injection(self):
+        """Test that SQL injection attempts are rejected."""
+        from extractors import _validate_table_name
+
+        with pytest.raises(click.ClickException):
+            _validate_table_name("'; DROP TABLE users; --")
+
+    def test_rejects_semicolon(self):
+        """Test that semicolons are rejected."""
+        from extractors import _validate_table_name
+
+        with pytest.raises(click.ClickException):
+            _validate_table_name("table; DELETE FROM x")
+
+    def test_rejects_spaces(self):
+        """Test that spaces are rejected."""
+        from extractors import _validate_table_name
+
+        with pytest.raises(click.ClickException):
+            _validate_table_name("table name")
+
+    def test_rejects_starting_number(self):
+        """Test that names starting with numbers are rejected."""
+        from extractors import _validate_table_name
+
+        with pytest.raises(click.ClickException):
+            _validate_table_name("123table")
+
+
+class TestSchemaDrift:
+    """Test suite for schema drift detection."""
+
+    def test_snapshot_force_detects_and_accepts_drift(self, initialized_catalog, temp_catalog_dir):
+        """Snapshot --force with changed schema should detect drift and accept it."""
+        import duckdb
+
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Create first parquet file
+            parquet_v1 = temp_catalog_dir / "data_v1.parquet"
+            conn = duckdb.connect()
+            conn.execute("INSTALL spatial; LOAD spatial")
+            conn.execute(f"""
+                COPY (
+                    SELECT 'Paris' as name, 1000 as population,
+                    ST_Point(2.35, 48.85) as geometry
+                ) TO '{parquet_v1}' (FORMAT PARQUET)
+            """)
+            conn.close()
+
+            # Register and snapshot
+            result = runner.invoke(
+                cli,
+                ["register", "file", str(parquet_v1), "--name", "drift_test"],
+            )
+            assert result.exit_code == 0
+
+            result = runner.invoke(cli, ["snapshot", "drift_test"])
+            assert result.exit_code == 0
+
+            # Verify schema_hash was stored
+            resource_path = initialized_catalog.path / "resources" / "default" / "drift_test.json"
+            with open(resource_path) as f:
+                resource_data = json.load(f)
+            assert resource_data["metadata"]["derived"]["schema_hash"] is not None
+            original_hash = resource_data["metadata"]["derived"]["schema_hash"]
+
+            # Create second parquet with different schema (extra column)
+            parquet_v2 = temp_catalog_dir / "data_v2.parquet"
+            conn = duckdb.connect()
+            conn.execute("INSTALL spatial; LOAD spatial")
+            conn.execute(f"""
+                COPY (
+                    SELECT 'Paris' as name, 1000 as population,
+                    'France' as country,
+                    ST_Point(2.35, 48.85) as geometry
+                ) TO '{parquet_v2}' (FORMAT PARQUET)
+            """)
+            conn.close()
+
+            # Update the resource origin to point to v2
+            resource_data["origin"]["url"] = str(parquet_v2)
+            with open(resource_path, "w") as f:
+                json.dump(resource_data, f, indent=2)
+
+            # Re-snapshot with --force should detect drift and accept it
+            result = runner.invoke(cli, ["snapshot", "drift_test", "--force"])
+            assert result.exit_code == 0
+            assert "Schema drift detected" in result.output
+            assert "Schema change accepted" in result.output
+
+            # Verify schema hash changed
+            with open(resource_path) as f:
+                resource_data = json.load(f)
+            new_hash = resource_data["metadata"]["derived"]["schema_hash"]
+            assert new_hash != original_hash
+
+            # Verify previous_schema_hash was tracked
+            assert resource_data["metadata"]["derived"]["previous_schema_hash"] == original_hash
+
+    def test_no_drift_same_schema(self, initialized_catalog, sample_geoparquet):
+        """Re-snapshot with same schema should not report drift."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Register and snapshot
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "no_drift"],
+            )
+            runner.invoke(cli, ["snapshot", "no_drift"])
+
+            # Re-snapshot with --force (same file, same schema)
+            result = runner.invoke(cli, ["snapshot", "no_drift", "--force"])
+            assert result.exit_code == 0
+            assert "Schema drift" not in result.output
+
+
+class TestExtractorDispatch:
+    """Test suite for extractor dispatch."""
+
+    def test_unsupported_type_raises(self):
+        """Test that unsupported origin type raises error."""
+        from extractors import run_extractor
+        from portolan_resource import Origin, Resource
+
+        resource = Resource(
+            name="test",
+            kind="vector",
+            origin=Origin(type="unsupported", url="http://example.com"),
+        )
+        with pytest.raises(click.ClickException, match="Unsupported origin type"):
+            run_extractor(resource, Path("/tmp/out.parquet"), catalog_path=Path("/tmp"))
+
+    def test_file_extractor(self, initialized_catalog, sample_geoparquet):
+        """Test file extractor via dispatch."""
+        from extractors import run_extractor
+        from portolan_resource import Origin, Resource
+
+        resource = Resource(
+            name="test_dispatch",
+            kind="vector",
+            origin=Origin(type="file", url=str(sample_geoparquet)),
+        )
+
+        output_path = initialized_catalog.path / "data" / "test_output.parquet"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+
+        run_extractor(resource, output_path, catalog_path=initialized_catalog.path)
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+
+
+class TestImportArcgisServer:
+    """Test suite for import arcgis-server command."""
+
+    def test_help_shows(self):
+        """Command shows up in help."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["import", "arcgis-server", "--help"])
+        assert result.exit_code == 0
+        assert "arcgis-server" in result.output.lower() or "ArcGIS" in result.output
+
+    def test_bad_url_rejected(self, initialized_catalog):
+        """Non-ArcGIS URL is rejected."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["import", "arcgis-server", "https://example.com/not-arcgis"],
+                catch_exceptions=False,
+            )
+            assert result.exit_code != 0
+            assert "REST services endpoint" in result.output
+
+    def test_dry_run_with_mocked_discovery(self, initialized_catalog, monkeypatch):
+        """Dry run prints discovered services without saving."""
+        fake_fs = [
+            {
+                "name": "Buildings",
+                "url": "https://example.com/arcgis/rest/services/Buildings/FeatureServer",
+                "layers": [
+                    {"id": 0, "name": "Footprints", "geometryType": "esriGeometryPolygon"},
+                    {"id": 1, "name": "Points", "geometryType": "esriGeometryPoint"},
+                ],
+            }
+        ]
+        fake_is = [
+            {
+                "name": "Elevation",
+                "url": "https://example.com/arcgis/rest/services/Elevation/ImageServer",
+                "pixel_type": "U8",
+                "band_count": 3,
+                "extent": {},
+            }
+        ]
+
+        monkeypatch.setattr(
+            "portolan.discover_arcgis_services",
+            lambda url, verbose=False: (fake_fs, fake_is),
+        )
+
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "import", "arcgis-server",
+                    "https://example.com/arcgis/rest/services",
+                    "--dry-run",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0
+            assert "Dry run" in result.output
+            assert "buildings_footprints" in result.output
+            assert "buildings_points" in result.output
+            assert "elevation" in result.output
+            assert "1 FeatureServer" in result.output
+            assert "1 ImageServer" in result.output
+
+    def test_import_saves_resources(self, initialized_catalog, monkeypatch):
+        """Import saves resource JSON files to catalog."""
+        fake_fs = [
+            {
+                "name": "Rivers",
+                "url": "https://example.com/arcgis/rest/services/Rivers/FeatureServer",
+                "layers": [
+                    {"id": 0, "name": "Main", "geometryType": "esriGeometryPolyline"},
+                ],
+            }
+        ]
+        fake_is = []
+
+        monkeypatch.setattr(
+            "portolan.discover_arcgis_services",
+            lambda url, verbose=False: (fake_fs, fake_is),
+        )
+
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "import", "arcgis-server",
+                    "https://example.com/arcgis/rest/services",
+                    "--namespace", "test_arcgis",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0
+            assert "Imported 1 resources" in result.output
+
+        # Check resource file was created
+        resource_file = initialized_catalog.path / "resources" / "test_arcgis" / "rivers.json"
+        assert resource_file.exists()
+
+        resource = json.loads(resource_file.read_text())
+        assert resource["name"] == "rivers"
+        assert resource["kind"] == "vector"
+        assert resource["origin"]["type"] == "arcgis_featureserver"
+        assert "FeatureServer/0" in resource["origin"]["url"]
+
+    def test_skip_rasters(self, initialized_catalog, monkeypatch):
+        """--skip-rasters filters out ImageServers."""
+        fake_fs = [
+            {
+                "name": "Data",
+                "url": "https://example.com/rest/services/Data/FeatureServer",
+                "layers": [{"id": 0, "name": "Layer", "geometryType": "esriGeometryPoint"}],
+            }
+        ]
+        fake_is = [
+            {
+                "name": "Raster",
+                "url": "https://example.com/rest/services/Raster/ImageServer",
+                "pixel_type": "U8",
+                "band_count": 1,
+                "extent": {},
+            }
+        ]
+
+        monkeypatch.setattr(
+            "portolan.discover_arcgis_services",
+            lambda url, verbose=False: (fake_fs, fake_is),
+        )
+
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "import", "arcgis-server",
+                    "https://example.com/rest/services",
+                    "--skip-rasters",
+                    "--dry-run",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0
+            assert "0 ImageServer" in result.output
+            assert "raster" not in result.output.lower().split("dry run")[1]
