@@ -191,6 +191,28 @@ RESOURCE_SCHEMA = {
     },
 }
 
+SYNC_POLICY_SCHEMA = {
+    "type": "object",
+    "description": "Control plane policy for sync operations",
+    "properties": {
+        "max_retries": {"type": "integer", "minimum": 0, "default": 3},
+        "retry_backoff": {
+            "type": "string",
+            "enum": ["exponential", "linear", "fixed"],
+            "default": "exponential",
+        },
+        "retry_delay_seconds": {"type": "number", "minimum": 0, "default": 2.0},
+        "timeout_seconds": {"type": "number", "minimum": 0, "default": 300.0},
+        "on_failure": {
+            "type": "string",
+            "enum": ["log", "webhook"],
+            "default": "log",
+        },
+        "webhook_url": {"type": "string", "format": "uri"},
+    },
+    "additionalProperties": False,
+}
+
 CONFIG_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://portolan.dev/schemas/config.schema.json",
@@ -210,6 +232,7 @@ CONFIG_SCHEMA = {
             },
             "additionalProperties": False,
         },
+        "sync_policy": SYNC_POLICY_SCHEMA,
     },
     "additionalProperties": False,
 }

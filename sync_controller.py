@@ -117,8 +117,8 @@ class ControlStore:
         target          VARCHAR NOT NULL,
         status          VARCHAR NOT NULL,
         attempt         INTEGER DEFAULT 1,
-        started_at      TIMESTAMP WITH TIME ZONE NOT NULL,
-        completed_at    TIMESTAMP WITH TIME ZONE,
+        started_at      TIMESTAMP NOT NULL,
+        completed_at    TIMESTAMP,
         duration_ms     INTEGER,
         changes_added   INTEGER DEFAULT 0,
         changes_modified INTEGER DEFAULT 0,
@@ -176,6 +176,11 @@ class ControlStore:
 
     # -- Event logging --
 
+    @staticmethod
+    def _utcnow() -> str:
+        """UTC timestamp as ISO string (portable, DuckDB-WASM compatible)."""
+        return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+
     def record_start(
         self,
         event_id: str,
@@ -187,9 +192,9 @@ class ControlStore:
         conn.execute(
             """
             INSERT INTO sync_events (id, type, target, status, attempt, started_at)
-            VALUES (?, ?, ?, 'started', ?, ?)
+            VALUES (?, ?, ?, 'started', ?, CAST(? AS TIMESTAMP))
             """,
-            [event_id, sync_type, target, attempt, datetime.now(timezone.utc)],
+            [event_id, sync_type, target, attempt, self._utcnow()],
         )
 
     def record_complete(
@@ -198,13 +203,13 @@ class ControlStore:
         result: SyncResult,
     ) -> None:
         conn = self._get_conn()
-        now = datetime.now(timezone.utc)
+        now = self._utcnow()
         conn.execute(
             """
             UPDATE sync_events
             SET status = ?,
-                completed_at = ?,
-                duration_ms = EXTRACT(EPOCH FROM (? - started_at)) * 1000,
+                completed_at = CAST(? AS TIMESTAMP),
+                duration_ms = EXTRACT(EPOCH FROM (CAST(? AS TIMESTAMP) - started_at)) * 1000,
                 changes_added = ?,
                 changes_modified = ?,
                 changes_deleted = ?,
@@ -255,8 +260,13 @@ class ControlStore:
         """Get health summary for the last N hours."""
         conn = self._get_conn()
 
+        # DuckDB doesn't support parameterized INTERVAL, so we validate and interpolate
+        hours = int(hours)
+        if hours < 0:
+            hours = 24
+
         summary = conn.execute(
-            """
+            f"""
             SELECT
                 type,
                 COUNT(*) as total_runs,
@@ -266,11 +276,10 @@ class ControlStore:
                 MAX(completed_at) FILTER (WHERE status = 'completed') as last_success,
                 MAX(completed_at) FILTER (WHERE status = 'failed') as last_failure
             FROM sync_events
-            WHERE started_at > NOW() - INTERVAL ? HOUR
+            WHERE started_at > NOW() - INTERVAL '{hours} hours'
             GROUP BY type
             ORDER BY type
             """,
-            [hours],
         ).fetchall()
 
         columns = [desc[0] for desc in conn.description]

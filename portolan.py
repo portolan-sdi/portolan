@@ -608,7 +608,24 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
     # Extract data using the appropriate extractor
     from extractors import run_extractor
 
-    run_extractor(resource, output_path, catalog_path=catalog.path, bbox=bbox, verbose=verbose)
+    # Record the snapshot in the control plane
+    controller = _get_controller(catalog)
+    if controller:
+        from sync_controller import SyncResult
+
+        def _do_snapshot():
+            run_extractor(resource, output_path, catalog_path=catalog.path, bbox=bbox, verbose=verbose)
+            return SyncResult(
+                success=True,
+                metadata={"origin_type": resource.origin.type, "namespace": namespace},
+            )
+
+        result = controller.execute("snapshot", f"{namespace}/{resource_name}", _do_snapshot)
+        controller.close()
+        if not result.success:
+            raise click.ClickException(f"Snapshot failed: {result.error_message}")
+    else:
+        run_extractor(resource, output_path, catalog_path=catalog.path, bbox=bbox, verbose=verbose)
 
     # Compute derived metadata
     if verbose:
@@ -1308,6 +1325,182 @@ def connection_remove(ctx, name: str, force: bool):
         raise click.ClickException(f"Connection not found: {name}")
 
 
+# ============== CONTROL PLANE ==============
+
+
+def _get_controller(catalog):
+    """Get a SyncController for the given catalog, or None if DuckDB unavailable."""
+    try:
+        from sync_controller import SyncController
+        return SyncController(catalog.path)
+    except ImportError:
+        return None
+
+
+@cli.group("control")
+def control_cmd():
+    """Sync control plane — history, health, and export."""
+    pass
+
+
+@control_cmd.command("history")
+@click.option("--type", "sync_type", help="Filter by type: remote_push, remote_pull, catalog_sync, snapshot")
+@click.option("--target", help="Filter by target name or URL")
+@click.option("--limit", "-n", default=20, help="Number of events to show")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def control_history(ctx, sync_type: str | None, target: str | None, limit: int, as_json: bool):
+    """Show sync event history.
+
+    \b
+    Examples:
+        portolan control history
+        portolan control history --type catalog_sync
+        portolan control history --target earth-search --limit 5
+        portolan control history --json
+    """
+    catalog = get_catalog(ctx)
+    controller = _get_controller(catalog)
+    if controller is None:
+        raise click.ClickException("sync_controller not available (is duckdb installed?)")
+
+    try:
+        events = controller.history(sync_type=sync_type, target=target, limit=limit)
+    finally:
+        controller.close()
+
+    if not events:
+        click.echo("No sync events recorded yet.")
+        return
+
+    if as_json:
+        click.echo(json.dumps(events, indent=2, default=str))
+        return
+
+    click.echo(click.style("Sync History", bold=True))
+    click.echo("=" * 80)
+
+    for event in events:
+        status = event["status"]
+        if status == "completed":
+            status_str = click.style("OK", fg="green")
+        elif status == "failed":
+            status_str = click.style("FAIL", fg="red")
+        else:
+            status_str = click.style(status.upper(), fg="yellow")
+
+        started = event["started_at"]
+        if hasattr(started, "strftime"):
+            started = started.strftime("%Y-%m-%d %H:%M:%S")
+
+        duration = event.get("duration_ms")
+        duration_str = f" ({duration}ms)" if duration else ""
+
+        changes_parts = []
+        if event.get("changes_added"):
+            changes_parts.append(f"+{event['changes_added']}")
+        if event.get("changes_modified"):
+            changes_parts.append(f"~{event['changes_modified']}")
+        if event.get("changes_deleted"):
+            changes_parts.append(f"-{event['changes_deleted']}")
+        changes_str = f" [{', '.join(changes_parts)}]" if changes_parts else ""
+
+        click.echo(f"  {started}  {status_str}  {event['type']:15s}  {event['target']}{duration_str}{changes_str}")
+
+        if event.get("error_message") and status == "failed":
+            click.echo(click.style(f"    Error: {event['error_message'][:120]}", fg="red"))
+
+
+@control_cmd.command("health")
+@click.option("--hours", default=24, help="Look back period in hours")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
+@click.pass_context
+def control_health(ctx, hours: int, as_json: bool):
+    """Show sync health summary.
+
+    \b
+    Examples:
+        portolan control health
+        portolan control health --hours 72
+        portolan control health --json
+    """
+    catalog = get_catalog(ctx)
+    controller = _get_controller(catalog)
+    if controller is None:
+        raise click.ClickException("sync_controller not available (is duckdb installed?)")
+
+    try:
+        summary = controller.health(hours=hours)
+    finally:
+        controller.close()
+
+    if as_json:
+        click.echo(json.dumps(summary, indent=2, default=str))
+        return
+
+    click.echo(click.style(f"Sync Health (last {hours}h)", bold=True))
+    click.echo("=" * 70)
+
+    if not summary["by_type"]:
+        click.echo("No sync activity in this period.")
+        return
+
+    for row in summary["by_type"]:
+        total = row["total_runs"]
+        succeeded = row["succeeded"]
+        failed = row["failed"]
+        avg_ms = row.get("avg_duration_ms")
+
+        if failed == 0:
+            health = click.style("HEALTHY", fg="green")
+        elif failed < succeeded:
+            health = click.style("DEGRADED", fg="yellow")
+        else:
+            health = click.style("FAILING", fg="red")
+
+        avg_str = f"  avg {avg_ms:.0f}ms" if avg_ms else ""
+        click.echo(f"  {row['type']:15s}  {health}  {succeeded}/{total} succeeded  {failed} failed{avg_str}")
+
+        if row.get("last_failure"):
+            last_fail = row["last_failure"]
+            if hasattr(last_fail, "strftime"):
+                last_fail = last_fail.strftime("%Y-%m-%d %H:%M:%S")
+            click.echo(click.style(f"    Last failure: {last_fail}", dim=True))
+
+
+@control_cmd.command("export")
+@click.option("--output", "-o", default="control.duckdb", help="Output file path")
+@click.pass_context
+def control_export(ctx, output: str):
+    """Export control plane DuckDB for use with DuckDB-WASM dashboard.
+
+    Copies the control.duckdb file so it can be uploaded alongside the catalog
+    for browser-based visualization with DuckDB-WASM.
+
+    \b
+    Examples:
+        portolan control export
+        portolan control export -o /tmp/status.duckdb
+    """
+    catalog = get_catalog(ctx)
+    db_path = catalog.path / "control.duckdb"
+
+    if not db_path.exists():
+        raise click.ClickException("No control.duckdb found. Run some sync operations first.")
+
+    output_path = Path(output)
+    if output_path.resolve() == db_path.resolve():
+        click.echo(f"Control DB is at: {db_path}")
+        click.echo(f"  Size: {db_path.stat().st_size / 1024:.1f} KB")
+        return
+
+    shutil.copy2(db_path, output_path)
+    click.echo(f"Exported control DB to: {output_path}")
+    click.echo(f"  Size: {output_path.stat().st_size / 1024:.1f} KB")
+    click.echo()
+    click.echo("Use with DuckDB-WASM to query sync history in the browser.")
+
+
 # ============== CATALOG SOURCE FEDERATION ==============
 
 
@@ -1467,18 +1660,40 @@ def catalog_sync(ctx, name: str | None, max_items: int, dry_run: bool, verbose: 
             click.echo("Add one with: portolan catalog add <url> --name <name>")
             return
 
+    controller = _get_controller(catalog)
+
     for source in sources:
         click.echo(f"Syncing {source.name} ({source.type})...")
 
-        if source.type == "stac":
-            results = sync_stac_catalog(
-                source=source,
-                resources_dir=resources_dir,
-                max_items=max_items,
-                verbose=verbose,
-                dry_run=dry_run,
-            )
+        def _do_catalog_sync_for(src):
+            """Run the actual catalog sync for a single source, return SyncResult."""
+            from sync_controller import SyncResult
 
+            if src.type == "stac":
+                results = sync_stac_catalog(
+                    source=src,
+                    resources_dir=resources_dir,
+                    max_items=max_items,
+                    verbose=verbose,
+                    dry_run=dry_run,
+                )
+            elif src.type == "arcgis":
+                from catalog_sources import sync_arcgis_server
+
+                results = sync_arcgis_server(
+                    source=src,
+                    resources_dir=resources_dir,
+                    verbose=verbose,
+                    dry_run=dry_run,
+                )
+            elif src.type == "wfs":
+                click.echo("  WFS catalog sync not yet implemented")
+                return SyncResult(success=True)
+            else:
+                click.echo(f"  Unknown catalog type: {src.type}")
+                return SyncResult(success=True)
+
+            # Display results
             if results["errors"]:
                 click.echo(click.style(f"  Errors: {len(results['errors'])}", fg="yellow"))
                 if verbose:
@@ -1496,46 +1711,35 @@ def catalog_sync(ctx, name: str | None, max_items: int, dry_run: bool, verbose: 
                 if results["unchanged"] and not results["added"] and not results["updated"]:
                     click.echo(f"  No changes ({len(results['unchanged'])} items unchanged)")
                 else:
-                    click.echo(f"  Added: {len(results['added'])}")
-                    click.echo(f"  Updated: {len(results['updated'])}")
+                    if results["added"]:
+                        click.echo(f"  Added: {len(results['added'])}")
+                    if results["updated"]:
+                        click.echo(f"  Updated: {len(results['updated'])}")
 
                 # Update sync state
                 if results["new_hash"]:
-                    store.update_sync_state(source.name, results["new_hash"])
+                    store.update_sync_state(src.name, results["new_hash"])
 
-        elif source.type == "arcgis":
-            from catalog_sources import sync_arcgis_server
-
-            results = sync_arcgis_server(
-                source=source,
-                resources_dir=resources_dir,
-                verbose=verbose,
-                dry_run=dry_run,
+            has_errors = bool(results["errors"])
+            return SyncResult(
+                success=not has_errors or bool(results["added"] or results["updated"]),
+                changes_added=len(results.get("added", [])),
+                changes_modified=len(results.get("updated", [])),
+                error_message="; ".join(results["errors"][:3]) if has_errors else None,
+                metadata={"source_type": src.type, "new_hash": results.get("new_hash")},
             )
 
-            if results["added"]:
-                click.echo(f"  Added: {len(results['added'])} resources")
-                if verbose:
-                    for name in results["added"]:
-                        click.echo(f"    + {name}")
-            if results["updated"]:
-                click.echo(f"  Updated: {len(results['updated'])} resources")
-            if results["unchanged"]:
-                click.echo(f"  Unchanged: {len(results['unchanged'])} resources")
-            if results["errors"]:
-                click.echo(click.style(f"  Errors: {len(results['errors'])}", fg="yellow"))
-                for error in results["errors"]:
-                    click.echo(f"    - {error}")
+        if controller and not dry_run:
+            from sync_controller import SyncPolicy
 
-            if not dry_run and results["new_hash"]:
-                if results["added"] or results["updated"]:
-                    store.update_sync_state(source.name, results["new_hash"])
-
-        elif source.type == "wfs":
-            click.echo("  WFS catalog sync not yet implemented")
-
+            # Use a no-retry policy for catalog sync (the sync functions handle their own errors)
+            no_retry = SyncPolicy(max_retries=0)
+            result = controller.execute("catalog_sync", source.name, lambda s=source: _do_catalog_sync_for(s), policy=no_retry)
         else:
-            click.echo(f"  Unknown catalog type: {source.type}")
+            _do_catalog_sync_for(source)
+
+    if controller:
+        controller.close()
 
     if not dry_run:
         click.echo()
@@ -1722,92 +1926,115 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
             click.echo(f"  ... and {total - shown} more")
         return
 
-    # Upload changes
-    uploaded = 0
-    errors = 0
-    resources_dir = catalog.path / "resources"
+    # Wrap the sync operation with the control plane
+    controller = _get_controller(catalog)
 
-    # Upload added and modified files
-    for path in status.diff.added + status.diff.modified:
-        local_path = catalog.path / path
-        if not local_path.exists():
-            if verbose:
-                click.echo(f"  Warning: File not found: {path}")
-            errors += 1
-            continue
+    def _do_sync():
+        from sync_controller import SyncResult
 
-        try:
-            data = local_path.read_bytes()
-            store.put_resource(path, data)
-            uploaded += 1
+        uploaded = 0
+        errors = 0
+        resources_dir = catalog.path / "resources"
 
-            if verbose:
-                action = "Added" if path in status.diff.added else "Updated"
-                click.echo(f"  {action}: {path}")
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Error uploading {path}: {e}")
-            errors += 1
+        # Upload added and modified files
+        for path in status.diff.added + status.diff.modified:
+            local_path = catalog.path / path
+            if not local_path.exists():
+                if verbose:
+                    click.echo(f"  Warning: File not found: {path}")
+                errors += 1
+                continue
 
-    # Delete removed files
-    deleted = 0
-    for path in status.diff.deleted:
-        try:
-            store.delete_resource(path)
-            deleted += 1
-            if verbose:
-                click.echo(f"  Deleted: {path}")
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Error deleting {path}: {e}")
+            try:
+                data = local_path.read_bytes()
+                store.put_resource(path, data)
+                uploaded += 1
 
-    # Create new manifest
-    local_resources = scan_local_resources(resources_dir)
-    new_manifest = Manifest(
-        resources=[
-            ResourceEntry(path=p, sha256=h)
-            for p, h in sorted(local_resources.items())
-        ]
-    )
+                if verbose:
+                    action = "Added" if path in status.diff.added else "Updated"
+                    click.echo(f"  {action}: {path}")
+            except Exception as e:
+                if verbose:
+                    click.echo(f"  Error uploading {path}: {e}")
+                errors += 1
 
-    # Force-with-lease check: verify remote hasn't changed during upload
-    current_remote_manifest, current_remote_hash = store.get_manifest()
-    expected_hash = status.remote_manifest_hash
+        # Delete removed files
+        deleted = 0
+        for path in status.diff.deleted:
+            try:
+                store.delete_resource(path)
+                deleted += 1
+                if verbose:
+                    click.echo(f"  Deleted: {path}")
+            except Exception as e:
+                if verbose:
+                    click.echo(f"  Error deleting {path}: {e}")
 
-    if current_remote_hash != expected_hash:
-        click.echo()
-        click.echo(click.style("Error: Remote changed during sync!", fg="red"))
-        click.echo("Another process modified the catalog while we were uploading.")
-        click.echo("Run 'portolan pull' to get latest changes, then try again.")
-        raise click.ClickException("Sync aborted. Concurrent modification detected.")
+        # Create new manifest
+        local_resources = scan_local_resources(resources_dir)
+        new_manifest = Manifest(
+            resources=[
+                ResourceEntry(path=p, sha256=h)
+                for p, h in sorted(local_resources.items())
+            ]
+        )
 
-    # Upload new manifest
-    try:
+        # Force-with-lease check: verify remote hasn't changed during upload
+        current_remote_manifest, current_remote_hash = store.get_manifest()
+        expected_hash = status.remote_manifest_hash
+
+        if current_remote_hash != expected_hash:
+            return SyncResult(
+                success=False,
+                error_message="Concurrent modification detected. Run 'portolan pull' first.",
+                changes_added=len(status.diff.added),
+                changes_modified=len(status.diff.modified),
+                changes_deleted=len(status.diff.deleted),
+            )
+
+        # Upload new manifest
         new_hash = store.put_manifest(new_manifest)
-    except Exception as e:
-        raise click.ClickException(f"Failed to upload manifest: {e}")
 
-    # Update local state
-    state.base_manifest_hash = new_hash
-    state.save(catalog.path / "state.json")
+        # Update local state
+        state.base_manifest_hash = new_hash
+        state.save(catalog.path / "state.json")
 
-    # Save new base manifest locally
-    base_manifest_path = catalog.path / "base_manifest.json"
-    base_manifest_path.write_text(new_manifest.to_json())
+        # Save new base manifest locally
+        base_manifest_path = catalog.path / "base_manifest.json"
+        base_manifest_path.write_text(new_manifest.to_json())
 
-    # Setup CORS automatically for cloud storage
-    if state.remote_url and (state.remote_url.startswith("gs://") or state.remote_url.startswith("s3://")):
-        try:
-            setup_cors_for_url(state.remote_url)
-        except Exception:
-            pass  # CORS setup is best-effort, don't fail sync
+        # Setup CORS automatically for cloud storage
+        if state.remote_url and (state.remote_url.startswith("gs://") or state.remote_url.startswith("s3://")):
+            try:
+                setup_cors_for_url(state.remote_url)
+            except Exception:
+                pass  # CORS setup is best-effort
+
+        return SyncResult(
+            success=True,
+            changes_added=len(status.diff.added),
+            changes_modified=len(status.diff.modified),
+            changes_deleted=deleted,
+            metadata={"uploaded": uploaded, "errors": errors},
+        )
+
+    if controller:
+        result = controller.execute("remote_push", state.remote_url, _do_sync)
+        controller.close()
+    else:
+        result = _do_sync()
+
+    if not result.success:
+        click.echo()
+        click.echo(click.style(f"Error: {result.error_message}", fg="red"))
+        raise click.ClickException("Sync failed.")
 
     click.echo()
     click.echo(click.style("Sync complete!", fg="green"))
-    click.echo(f"  Uploaded: {uploaded}")
-    click.echo(f"  Deleted: {deleted}")
-    if errors:
-        click.echo(click.style(f"  Errors: {errors}", fg="yellow"))
+    click.echo(f"  Uploaded: {result.metadata.get('uploaded', 0)}")
+    click.echo(f"  Deleted: {result.changes_deleted}")
+    if result.metadata.get("errors"):
+        click.echo(click.style(f"  Errors: {result.metadata['errors']}", fg="yellow"))
     click.echo(f"\nRemote: {state.remote_url}")
 
 
@@ -2170,70 +2397,91 @@ def pull(ctx, force: bool, verbose: bool):
 
     click.echo(f"Pulling from {state.remote_url}...")
 
-    # Fetch new manifest
-    remote_manifest, remote_hash = store.get_manifest()
-    if remote_manifest is None:
-        raise click.ClickException("Could not fetch remote manifest")
+    controller = _get_controller(catalog)
 
-    # Load base manifest for comparison
-    base_manifest_path = catalog.path / "base_manifest.json"
-    if base_manifest_path.exists():
-        base_manifest = Manifest.from_json(base_manifest_path.read_text())
-        base_resources = base_manifest.get_resource_map()
-    else:
-        base_resources = {}
+    def _do_pull():
+        from sync_controller import SyncResult
 
-    remote_resources = remote_manifest.get_resource_map()
+        # Fetch new manifest
+        remote_manifest, remote_hash = store.get_manifest()
+        if remote_manifest is None:
+            return SyncResult(success=False, error_message="Could not fetch remote manifest")
 
-    # Compute what changed on remote
-    remote_diff = compute_diff(base_resources, remote_resources)
+        # Load base manifest for comparison
+        base_manifest_path = catalog.path / "base_manifest.json"
+        if base_manifest_path.exists():
+            base_manifest = Manifest.from_json(base_manifest_path.read_text())
+            base_resources = base_manifest.get_resource_map()
+        else:
+            base_resources = {}
 
-    added = 0
-    updated = 0
-    deleted = 0
+        remote_resources = remote_manifest.get_resource_map()
 
-    # Download new and modified files
-    for path in remote_diff.added + remote_diff.modified:
-        try:
-            data = store.get_resource(path)
-            if data:
-                local_path = catalog.path / path
-                local_path.parent.mkdir(parents=True, exist_ok=True)
-                local_path.write_bytes(data)
+        # Compute what changed on remote
+        remote_diff = compute_diff(base_resources, remote_resources)
 
-                if path in remote_diff.added:
-                    added += 1
-                else:
-                    updated += 1
+        added = 0
+        updated = 0
+        deleted = 0
 
+        # Download new and modified files
+        for path in remote_diff.added + remote_diff.modified:
+            try:
+                data = store.get_resource(path)
+                if data:
+                    local_path = catalog.path / path
+                    local_path.parent.mkdir(parents=True, exist_ok=True)
+                    local_path.write_bytes(data)
+
+                    if path in remote_diff.added:
+                        added += 1
+                    else:
+                        updated += 1
+
+                    if verbose:
+                        action = "Added" if path in remote_diff.added else "Updated"
+                        click.echo(f"  {action}: {path}")
+            except Exception as e:
                 if verbose:
-                    action = "Added" if path in remote_diff.added else "Updated"
-                    click.echo(f"  {action}: {path}")
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Error: {path}: {e}")
+                    click.echo(f"  Error: {path}: {e}")
 
-    # Delete removed files
-    for path in remote_diff.deleted:
-        local_path = catalog.path / path
-        if local_path.exists():
-            local_path.unlink()
-            deleted += 1
-            if verbose:
-                click.echo(f"  Deleted: {path}")
+        # Delete removed files
+        for path in remote_diff.deleted:
+            local_path = catalog.path / path
+            if local_path.exists():
+                local_path.unlink()
+                deleted += 1
+                if verbose:
+                    click.echo(f"  Deleted: {path}")
 
-    # Update state
-    state.base_manifest_hash = remote_hash
-    state.save(catalog.path / "state.json")
+        # Update state
+        state.base_manifest_hash = remote_hash
+        state.save(catalog.path / "state.json")
 
-    # Save new base manifest
-    base_manifest_path.write_text(remote_manifest.to_json())
+        # Save new base manifest
+        base_manifest_path.write_text(remote_manifest.to_json())
+
+        return SyncResult(
+            success=True,
+            changes_added=added,
+            changes_modified=updated,
+            changes_deleted=deleted,
+        )
+
+    if controller:
+        result = controller.execute("remote_pull", state.remote_url, _do_pull)
+        controller.close()
+    else:
+        result = _do_pull()
+
+    if not result.success:
+        raise click.ClickException(result.error_message)
 
     click.echo()
     click.echo(click.style("Pull complete!", fg="green"))
-    click.echo(f"  Added: {added}")
-    click.echo(f"  Updated: {updated}")
-    click.echo(f"  Deleted: {deleted}")
+    click.echo(f"  Added: {result.changes_added}")
+    click.echo(f"  Updated: {result.changes_modified}")
+    click.echo(f"  Deleted: {result.changes_deleted}")
 
 
 # ============== IMPORT ==============
