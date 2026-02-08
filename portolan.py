@@ -379,7 +379,7 @@ def delete_connection(catalog_path: Path, name: str) -> bool:
 # ============== RESOURCE LIFECYCLE ==============
 
 
-@cli.command()
+@cli.command(hidden=True)
 @click.argument("origin_type", type=click.Choice([
     "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle"
 ]))
@@ -497,7 +497,7 @@ def register(ctx, origin_type: str, url: str, name: str | None, namespace: str,
     click.echo(f"Next: portolan snapshot {name} --namespace {namespace}")
 
 
-@cli.command()
+@cli.command(hidden=True)
 @click.argument("resource_name", required=False)
 @click.option("--namespace", "-ns", default="default", help="Namespace")
 @click.option("--all", "all_resources", is_flag=True, help="Snapshot all EXTERNAL resources in namespace")
@@ -745,7 +745,7 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
         click.echo(f"Next: portolan materialize {resource_name} --namespace {namespace}")
 
 
-@cli.command()
+@cli.command(hidden=True)
 @click.argument("resource_name", required=False)
 @click.option("--namespace", "-ns", default="default", help="Namespace")
 @click.option("--all", "all_resources", is_flag=True, help="Materialize all CACHED resources in namespace")
@@ -1031,54 +1031,201 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
 
 
 @cli.command("add")
-@click.argument("source", type=click.Path(exists=True))
-@click.option("--name", "-n", help="Resource name (default: filename)")
+@click.argument("source")
+@click.option("--type", "origin_type", type=click.Choice([
+    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle",
+    "geoparquet",
+]), help="Source type (auto-detected if omitted)")
+@click.option("--name", "-n", help="Resource name (default: derived from source)")
 @click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--layer", "-l", help="Layer name (for multi-layer sources or database tables)")
+@click.option("--connection-ref", help="Connection reference for database sources")
 @click.option("--title", help="Human-readable title")
 @click.option("--description", help="Description")
 @click.option("--public", is_flag=True, help="Make public (sets namespace to 'public')")
+@click.option("--register-only", is_flag=True, help="Only register, don't download or materialize")
+@click.option("--no-snapshot", is_flag=True, help="Register + materialize via range request (no download)")
+@click.option("--bbox", help="Bounding box filter: xmin,ymin,xmax,ymax (WGS84)")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose output")
 @click.pass_context
-def add_resource(ctx, source: str, name: str | None, namespace: str,
+def add_resource(ctx, source: str, origin_type: str | None, name: str | None,
+                 namespace: str, layer: str | None, connection_ref: str | None,
                  title: str | None, description: str | None, public: bool,
+                 register_only: bool, no_snapshot: bool, bbox: str | None,
                  verbose: bool):
     """
-    Add a resource (convenience: register + snapshot + materialize).
+    Add a resource to the catalog.
 
-    This is the quickest way to add a local file to the catalog.
+    Automatically detects the source type and runs the appropriate steps
+    (register, download, materialize) with sensible defaults.
 
     \b
-    Examples:
-        portolan add /path/to/data.parquet --public
-        portolan add countries.geojson --name world-countries --title "World Countries"
+    Local files:
+        portolan add ./cities.shp
+        portolan add /data/parcels.parquet --public
+
+    Remote APIs:
+        portolan add https://services.arcgis.com/.../FeatureServer/0
+        portolan add https://example.com/wfs --type wfs --layer boundaries
+
+    Remote files (no download, range-request only):
+        portolan add https://data.source.coop/file.parquet
+        portolan add s3://bucket/data.parquet
+
+    STAC items:
+        portolan add https://earth-search.aws.element84.com/v1/items/xyz
+
+    Databases:
+        portolan add public.buildings --type postgres --connection-ref mydb
+
+    \b
+    Control what happens:
+        --register-only    Just create the resource entry, don't fetch data
+        --no-snapshot      Materialize via range request without downloading
     """
     if public:
         namespace = "public"
 
-    source_path = Path(source).resolve()
+    # -- Step 1: Auto-detect source type if not provided --
+    if origin_type is None:
+        origin_type = _detect_source_type(source)
 
-    # Derive name
-    if not name:
-        name = source_path.stem
+    if verbose:
+        click.echo(f"  Detected type: {origin_type}")
 
-    click.echo(f"Adding resource: {name}")
+    # -- Step 2: Determine strategy --
+    strategy = _plan_strategy(origin_type, source, register_only, no_snapshot)
+
+    if verbose:
+        click.echo(f"  Strategy: {' -> '.join(strategy)}")
+
+    # -- Step 3: Execute --
+    click.echo(f"Adding resource from {origin_type} source...")
     click.echo()
 
-    # Step 1: Register
-    ctx.invoke(register, origin_type="file", url=str(source_path), name=name,
-               namespace=namespace, title=title, description=description,
-               verbose=verbose)
+    # Register
+    ctx.invoke(register, origin_type=_normalize_origin_type(origin_type), url=source, name=name,
+               namespace=namespace, layer=layer, connection_ref=connection_ref,
+               title=title, description=description, verbose=verbose)
 
-    # Step 2: Snapshot
-    ctx.invoke(snapshot, resource_name=name, namespace=namespace, verbose=verbose)
+    # Resolve the name that register derived (in case --name wasn't provided)
+    resolved_name = _resolve_name(name, origin_type, source, layer)
 
-    # Step 3: Materialize (will be no-op for vectors since snapshot already did it)
-    ctx.invoke(materialize, resource_name=name, namespace=namespace, remote=False, verbose=verbose)
+    if "snapshot" in strategy:
+        click.echo()
+        ctx.invoke(snapshot, resource_name=resolved_name, namespace=namespace,
+                   force=False, bbox=bbox, verbose=verbose)
+
+    if "materialize_remote" in strategy:
+        click.echo()
+        ctx.invoke(materialize, resource_name=resolved_name, namespace=namespace,
+                   remote=True, force=False, verbose=verbose)
+    elif "materialize" in strategy:
+        click.echo()
+        ctx.invoke(materialize, resource_name=resolved_name, namespace=namespace,
+                   remote=False, force=False, verbose=verbose)
 
     click.echo()
     click.echo(click.style("Resource added successfully!", fg="green"))
-    click.echo()
-    click.echo("Run 'portolan sync' to push to remote storage.")
+
+    if strategy == ["register"]:
+        click.echo(f"\nTo download the data: portolan snapshot {resolved_name} --namespace {namespace}")
+    else:
+        click.echo("\nRun 'portolan sync' to push to remote storage.")
+
+
+def _detect_source_type(source: str) -> str:
+    """Auto-detect source type from the source string."""
+    source_lower = source.lower()
+
+    # Local file
+    if Path(source).exists():
+        return "file"
+
+    # Remote GeoParquet / Parquet
+    if source_lower.endswith((".parquet", ".geoparquet")):
+        return "geoparquet"
+    if source_lower.startswith(("s3://", "gs://")) and "parquet" not in source_lower:
+        # Cloud path without parquet extension — could be anything, default to geoparquet
+        return "geoparquet"
+
+    # ArcGIS FeatureServer
+    if "featureserver" in source_lower or "/rest/services/" in source_lower:
+        if "imageserver" in source_lower:
+            return "arcgis_imageserver"
+        return "arcgis_featureserver"
+
+    # WFS
+    if "wfs" in source_lower and ("service=" in source_lower or "request=" in source_lower):
+        return "wfs"
+
+    # STAC
+    if "stac" in source_lower or "/items/" in source_lower or "/collections/" in source_lower:
+        return "stac"
+
+    # Remote parquet-like URLs
+    if source_lower.startswith(("https://", "http://")):
+        if source_lower.endswith((".parquet", ".geoparquet")):
+            return "geoparquet"
+        if source_lower.endswith((".tif", ".tiff")):
+            return "stac"  # Treat remote rasters as STAC-like
+        # Default: treat remote URLs as file type (portolan will try to fetch)
+        return "file"
+
+    # Database table name pattern (schema.table or just table_name)
+    if "." in source and not source.startswith(("http", "s3://", "gs://", "/")):
+        return "postgres"
+
+    return "file"
+
+
+def _normalize_origin_type(origin_type: str) -> str:
+    """Map unified type names to the register command's origin types."""
+    if origin_type == "geoparquet":
+        return "file"
+    return origin_type
+
+
+def _plan_strategy(origin_type: str, source: str, register_only: bool, no_snapshot: bool) -> list[str]:
+    """Determine what steps to execute based on source type and flags."""
+    if register_only:
+        return ["register"]
+
+    if no_snapshot:
+        return ["register", "materialize_remote"]
+
+    # Smart defaults per source type
+    if origin_type == "geoparquet":
+        # Remote parquet: register + materialize via range request (no download needed)
+        return ["register", "materialize_remote"]
+
+    if origin_type == "arcgis_imageserver":
+        # Large raster: just register, user decides when to snapshot
+        return ["register"]
+
+    # Everything else: full pipeline
+    # file, arcgis_featureserver, wfs, stac, postgres, oracle
+    return ["register", "snapshot", "materialize"]
+
+
+def _resolve_name(name: str | None, origin_type: str, source: str, layer: str | None) -> str:
+    """Resolve the resource name using the same logic as register."""
+    if name:
+        resolved = name
+    elif origin_type == "file" or origin_type == "geoparquet":
+        resolved = Path(source).stem
+    elif origin_type in ("postgres", "oracle"):
+        resolved = layer or source
+    else:
+        from urllib.parse import urlparse
+        parsed = urlparse(source)
+        path_parts = [p for p in parsed.path.split("/") if p]
+        resolved = path_parts[-1] if path_parts else f"resource_{hash(source) % 10000}"
+
+    # Same sanitization as register
+    resolved = resolved.lower().replace(" ", "_").replace("-", "_")
+    resolved = "".join(c for c in resolved if c.isalnum() or c == "_")
+    return resolved
 
 
 
