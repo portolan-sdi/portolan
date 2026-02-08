@@ -939,8 +939,18 @@ def generate_web_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[
 
                 try:
                     with open(resource_file) as f:
-                        resource = _normalize_resource(json.load(f))
+                        raw = json.load(f)
+                    resource = _normalize_resource(raw)
                     resource["_namespace"] = namespace
+                    resource["_kind"] = raw.get("kind", "vector")
+                    # Derive state from raw assets
+                    raw_assets = raw.get("assets", {})
+                    if raw_assets.get("iceberg"):
+                        resource["_state"] = "materialized"
+                    elif raw_assets.get("snapshot"):
+                        resource["_state"] = "cached"
+                    else:
+                        resource["_state"] = "external"
                     all_resources.append(resource)
                     namespaces[namespace].append(resource)
                 except Exception as e:
@@ -963,39 +973,57 @@ def generate_web_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[
 
 
 def _generate_web_html(resources: list[dict], namespaces: dict, catalog: CatalogConfig) -> str:
-    """Generate the HTML content for the web UI."""
+    """Generate the HTML content for the web UI with hierarchical namespace tree."""
+    from namespace_utils import build_namespace_tree
 
-    # Build resource rows
-    resource_rows = []
-    for r in sorted(resources, key=lambda x: x.get("name", "")):
-        name = r.get("name", "unknown")
-        title = r.get("title", name)
-        namespace = r.get("_namespace", "default")
-        format_type = r.get("format", "unknown")
-        abstract = r.get("abstract", "")[:100]
-        if len(r.get("abstract", "")) > 100:
-            abstract += "..."
+    # Build the namespace tree and attach resources at leaf nodes
+    ns_tree = build_namespace_tree(list(namespaces.keys()))
 
-        # Build links to assets
-        asset_links = []
-        for asset_key, asset_info in r.get("assets", {}).items():
-            if isinstance(asset_info, dict) and asset_info.get("href"):
-                href = asset_info["href"]
-                asset_links.append(f'<a href="{href}" class="asset-link">{asset_key}</a>')
+    # Build tree HTML recursively
+    def render_tree(tree: dict, resources_by_ns: dict, prefix: str = "", depth: int = 0) -> str:
+        html_parts = []
+        for folder_name in sorted(tree.keys()):
+            children = tree[folder_name]
+            full_ns = f"{prefix}.{folder_name}" if prefix else folder_name
+            # Get resources at this exact namespace
+            ns_resources = resources_by_ns.get(full_ns, [])
+            has_children = bool(children)
+            has_resources = bool(ns_resources)
 
-        assets_html = " ".join(asset_links) if asset_links else "-"
+            if not has_children and not has_resources:
+                continue
 
-        resource_rows.append(f"""
-            <tr>
-                <td><strong>{_html_escape(title)}</strong><br><small class="text-muted">{_html_escape(name)}</small></td>
-                <td><span class="badge">{_html_escape(namespace)}</span></td>
-                <td>{_html_escape(format_type)}</td>
-                <td>{_html_escape(abstract)}</td>
-                <td>{assets_html}</td>
-            </tr>
-        """)
+            html_parts.append(f'<details class="ns-folder" open data-ns="{_html_escape(full_ns)}">')
+            html_parts.append(f'<summary class="ns-header depth-{min(depth, 3)}">')
+            html_parts.append(f'<span class="folder-icon"></span> {_html_escape(folder_name)}/')
+            count = len(ns_resources)
+            if has_children:
+                # Count all descendant resources
+                count = _count_descendants(full_ns, resources_by_ns)
+            if count:
+                html_parts.append(f' <span class="ns-count">{count}</span>')
+            html_parts.append('</summary>')
+            html_parts.append('<div class="ns-content">')
 
-    resources_html = "\n".join(resource_rows)
+            # Render resources at this node
+            for r in sorted(ns_resources, key=lambda x: x.get("name", "")):
+                html_parts.append(_render_resource_row(r))
+
+            # Recurse into children
+            if has_children:
+                html_parts.append(render_tree(children, resources_by_ns, full_ns, depth + 1))
+
+            html_parts.append('</div></details>')
+
+        return "\n".join(html_parts)
+
+    # Build namespace→resources lookup
+    resources_by_ns = {}
+    for r in resources:
+        ns = r.get("_namespace", "default")
+        resources_by_ns.setdefault(ns, []).append(r)
+
+    tree_html = render_tree(ns_tree, resources_by_ns)
 
     # Build namespace stats
     namespace_stats = []
@@ -1027,6 +1055,8 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             --text: #1e293b;
             --muted: #64748b;
             --border: #e2e8f0;
+            --green: #16a34a;
+            --amber: #d97706;
         }}
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{
@@ -1054,7 +1084,6 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             gap: 2rem;
             flex-wrap: wrap;
         }}
-        .stat-item {{ }}
         .stat-label {{ font-size: 0.875rem; color: var(--muted); }}
         .stat-value {{ font-size: 1.25rem; font-weight: 600; }}
         .badge {{
@@ -1065,44 +1094,6 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             border-radius: 4px;
             font-size: 0.75rem;
         }}
-        table {{
-            width: 100%;
-            background: var(--card);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            border-collapse: collapse;
-            overflow: hidden;
-        }}
-        th, td {{
-            padding: 0.75rem 1rem;
-            text-align: left;
-            border-bottom: 1px solid var(--border);
-        }}
-        th {{
-            background: var(--bg);
-            font-weight: 600;
-            font-size: 0.875rem;
-            color: var(--muted);
-        }}
-        tr:last-child td {{ border-bottom: none; }}
-        tr:hover {{ background: var(--bg); }}
-        .text-muted {{ color: var(--muted); }}
-        .asset-link {{
-            display: inline-block;
-            background: #e2e8f0;
-            color: var(--text);
-            padding: 0.125rem 0.375rem;
-            border-radius: 3px;
-            font-size: 0.75rem;
-            text-decoration: none;
-            margin-right: 0.25rem;
-        }}
-        .asset-link:hover {{ background: #cbd5e1; }}
-        .output-link {{
-            color: var(--primary);
-            text-decoration: none;
-        }}
-        .output-link:hover {{ text-decoration: underline; }}
         .search-box {{
             width: 100%;
             padding: 0.75rem 1rem;
@@ -1111,10 +1102,98 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             font-size: 1rem;
             margin-bottom: 1rem;
         }}
-        .search-box:focus {{
-            outline: none;
-            border-color: var(--primary);
+        .search-box:focus {{ outline: none; border-color: var(--primary); }}
+        .output-link {{ color: var(--primary); text-decoration: none; }}
+        .output-link:hover {{ text-decoration: underline; }}
+
+        /* Tree */
+        .ns-tree {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 1rem 1.5rem;
         }}
+        .ns-folder {{ margin: 0; }}
+        .ns-folder > .ns-content {{ padding-left: 1.25rem; }}
+        .ns-header {{
+            cursor: pointer;
+            padding: 0.375rem 0.5rem;
+            border-radius: 4px;
+            font-weight: 600;
+            font-size: 0.9375rem;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }}
+        .ns-header::-webkit-details-marker {{ display: none; }}
+        .ns-header:hover {{ background: var(--bg); }}
+        .ns-header .folder-icon::before {{ content: "\\25BE"; font-size: 0.75rem; color: var(--muted); }}
+        details:not([open]) > .ns-header .folder-icon::before {{ content: "\\25B8"; }}
+        .ns-count {{
+            background: var(--bg);
+            color: var(--muted);
+            font-size: 0.75rem;
+            font-weight: 400;
+            padding: 0.125rem 0.375rem;
+            border-radius: 10px;
+            margin-left: 0.25rem;
+        }}
+
+        /* Resource rows */
+        .resource-row {{
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 0.75rem;
+            align-items: baseline;
+            padding: 0.5rem 0.5rem 0.5rem 1.5rem;
+            border-radius: 4px;
+        }}
+        .resource-row:hover {{ background: var(--bg); }}
+        .resource-name {{
+            font-weight: 500;
+            white-space: nowrap;
+        }}
+        .resource-desc {{
+            color: var(--muted);
+            font-size: 0.875rem;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }}
+        .resource-meta {{
+            display: flex;
+            gap: 0.375rem;
+            align-items: center;
+            white-space: nowrap;
+        }}
+        .kind-badge {{
+            display: inline-block;
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            font-size: 0.6875rem;
+            font-weight: 500;
+            background: #e2e8f0;
+            color: var(--text);
+        }}
+        .kind-badge.vector {{ background: #dbeafe; color: #1e40af; }}
+        .kind-badge.raster {{ background: #fef3c7; color: #92400e; }}
+        .kind-badge.collection {{ background: #f3e8ff; color: #6b21a8; }}
+        .state-icon {{ font-size: 0.75rem; }}
+        .state-icon.materialized {{ color: var(--green); }}
+        .state-icon.cached {{ color: var(--amber); }}
+        .state-icon.external {{ color: var(--muted); }}
+        .asset-link {{
+            display: inline-block;
+            background: #e2e8f0;
+            color: var(--text);
+            padding: 0.125rem 0.375rem;
+            border-radius: 3px;
+            font-size: 0.6875rem;
+            text-decoration: none;
+        }}
+        .asset-link:hover {{ background: #cbd5e1; }}
+
         footer {{
             margin-top: 2rem;
             padding: 1rem;
@@ -1127,7 +1206,7 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
 <body>
     <header>
         <div class="container">
-            <h1>🧭 Portolan Catalog</h1>
+            <h1>Portolan Catalog</h1>
             <p>Geospatial data infrastructure</p>
         </div>
     </header>
@@ -1152,36 +1231,67 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             </div>
         </div>
 
-        <input type="text" class="search-box" placeholder="Search resources..." id="search" onkeyup="filterTable()">
+        <input type="text" class="search-box" placeholder="Search resources..." id="search" oninput="filterTree()">
 
-        <table id="resources-table">
-            <thead>
-                <tr>
-                    <th>Name</th>
-                    <th>Namespace</th>
-                    <th>Format</th>
-                    <th>Description</th>
-                    <th>Assets</th>
-                </tr>
-            </thead>
-            <tbody>
-                {resources_html}
-            </tbody>
-        </table>
+        <div class="ns-tree" id="ns-tree">
+            {tree_html}
+        </div>
     </div>
 
     <footer>
-        Generated by <a href="https://github.com/cartodb/portolan">Portolan</a> &bull;
+        Generated by <a href="https://github.com/portolan-sdi/portolan">Portolan</a> &bull;
         {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
     </footer>
 
     <script>
-        function filterTable() {{
+        function filterTree() {{
             const query = document.getElementById('search').value.toLowerCase();
-            const rows = document.querySelectorAll('#resources-table tbody tr');
+            const rows = document.querySelectorAll('.resource-row');
+            const folders = document.querySelectorAll('.ns-folder');
+
+            if (!query) {{
+                rows.forEach(r => r.style.display = '');
+                folders.forEach(f => {{ f.style.display = ''; f.open = true; }});
+                return;
+            }}
+
+            // Hide all first
+            rows.forEach(r => r.style.display = 'none');
+            folders.forEach(f => f.style.display = 'none');
+
+            // Show matching rows and their ancestor folders
             rows.forEach(row => {{
                 const text = row.textContent.toLowerCase();
-                row.style.display = text.includes(query) ? '' : 'none';
+                if (text.includes(query)) {{
+                    row.style.display = '';
+                    let el = row.parentElement;
+                    while (el) {{
+                        if (el.classList && el.classList.contains('ns-folder')) {{
+                            el.style.display = '';
+                            el.open = true;
+                        }}
+                        el = el.parentElement;
+                    }}
+                }}
+            }});
+
+            // Also match folder names
+            folders.forEach(f => {{
+                const summary = f.querySelector(':scope > summary');
+                if (summary && summary.textContent.toLowerCase().includes(query)) {{
+                    f.style.display = '';
+                    f.open = true;
+                    f.querySelectorAll('.resource-row').forEach(r => r.style.display = '');
+                    f.querySelectorAll('.ns-folder').forEach(sf => {{ sf.style.display = ''; sf.open = true; }});
+                    let el = f.parentElement;
+                    while (el) {{
+                        if (el.classList && el.classList.contains('ns-folder')) {{
+                            el.style.display = '';
+                            el.open = true;
+                        }}
+                        el = el.parentElement;
+                    }}
+                }}
             }});
         }}
     </script>
@@ -1189,6 +1299,45 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
 </html>'''
 
     return html
+
+
+def _count_descendants(prefix: str, resources_by_ns: dict) -> int:
+    """Count all resources in a namespace and its descendants."""
+    count = 0
+    for ns, items in resources_by_ns.items():
+        if ns == prefix or ns.startswith(prefix + "."):
+            count += len(items)
+    return count
+
+
+def _render_resource_row(r: dict) -> str:
+    """Render a single resource as an HTML row in the tree."""
+    name = r.get("name", "unknown")
+    title = r.get("title", name)
+    kind = r.get("_kind", "vector")
+    state = r.get("_state", "external")
+    abstract = r.get("abstract", "")[:120]
+    if len(r.get("abstract", "")) > 120:
+        abstract += "..."
+
+    # State indicator
+    state_icons = {"materialized": "&#9679;", "cached": "&#9681;", "external": "&#9675;"}
+    state_titles = {"materialized": "Materialized", "cached": "Cached", "external": "External"}
+    state_icon = f'<span class="state-icon {state}" title="{state_titles.get(state, state)}">{state_icons.get(state, "&#9675;")}</span>'
+
+    # Asset links
+    asset_links = []
+    for asset_key, asset_info in r.get("assets", {}).items():
+        if isinstance(asset_info, dict) and asset_info.get("href"):
+            href = asset_info["href"]
+            asset_links.append(f'<a href="{href}" class="asset-link">{asset_key}</a>')
+    assets_html = " ".join(asset_links)
+
+    return f'''<div class="resource-row" data-name="{_html_escape(name)}">
+        <div class="resource-name">{state_icon} {_html_escape(title)}<br><small style="color:var(--muted);font-weight:400">{_html_escape(name)}</small></div>
+        <div class="resource-desc">{_html_escape(abstract)}</div>
+        <div class="resource-meta"><span class="kind-badge {kind}">{kind}</span> {assets_html}</div>
+    </div>'''
 
 
 def _html_escape(text: str) -> str:
