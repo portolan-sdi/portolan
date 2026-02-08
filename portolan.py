@@ -1229,6 +1229,141 @@ def _resolve_name(name: str | None, origin_type: str, source: str, layer: str | 
 
 
 
+# ============== UPDATE ==============
+
+
+@cli.command("update")
+@click.argument("resource_name", required=False)
+@click.option("--namespace", "-ns", default="default", help="Namespace")
+@click.option("--all", "all_resources", is_flag=True, help="Update all resources in namespace")
+@click.option("--bbox", help="Bounding box filter: xmin,ymin,xmax,ymax (WGS84)")
+@click.option("--verbose", "-v", is_flag=True, help="Verbose output")
+@click.pass_context
+def update_resource(ctx, resource_name: str | None, namespace: str,
+                    all_resources: bool, bbox: str | None, verbose: bool):
+    """
+    Re-fetch and update resources from their origins.
+
+    Downloads fresh data from the original source, detects schema drift,
+    and re-materializes. Equivalent to snapshot --force + materialize --force,
+    but designed for ongoing maintenance.
+
+    \b
+    Examples:
+        portolan update cities                           # Update one resource
+        portolan update --all                            # Update all in default namespace
+        portolan update --all --namespace federated_gis  # Update a whole federation
+    """
+    from portolan_resource import load_resource
+
+    catalog = get_catalog(ctx)
+    controller = _get_controller(catalog)
+
+    if all_resources:
+        namespace_dir = catalog.path / "resources" / namespace
+        if not namespace_dir.exists():
+            raise click.ClickException(f"Namespace not found: {namespace}")
+
+        resource_files = list(namespace_dir.glob("*.json"))
+        if not resource_files:
+            click.echo(f"No resources found in namespace: {namespace}")
+            return
+
+        # Find resources that have an origin (something to update from)
+        updatable = []
+        for rf in resource_files:
+            res = load_resource(rf)
+            if res.origin:
+                updatable.append(rf.stem)
+
+        if not updatable:
+            click.echo(f"No updatable resources in namespace: {namespace}")
+            return
+
+        click.echo(f"Updating {len(updatable)} resources in {namespace}...")
+        click.echo()
+
+        succeeded = 0
+        failed = 0
+        for res_name in updatable:
+            try:
+                ctx.invoke(update_resource, resource_name=res_name,
+                           namespace=namespace, all_resources=False,
+                           bbox=bbox, verbose=verbose)
+                succeeded += 1
+            except click.ClickException as e:
+                click.echo(click.style(f"  Failed: {res_name} - {e.message}", fg="red"))
+                failed += 1
+            click.echo()
+
+        click.echo(f"Update complete: {succeeded} succeeded, {failed} failed")
+
+        if controller:
+            controller.close()
+        return
+
+    # Single resource mode
+    if not resource_name:
+        raise click.ClickException("Resource name required (or use --all)")
+
+    resource_path = catalog.path / "resources" / namespace / f"{resource_name}.json"
+    if not resource_path.exists():
+        raise click.ClickException(f"Resource not found: {resource_name} in namespace {namespace}")
+
+    resource = load_resource(resource_path)
+
+    if not resource.origin:
+        raise click.ClickException(f"Resource '{resource_name}' has no origin — nothing to update from.")
+
+    click.echo(f"Updating {resource_name} from {resource.origin.type}...")
+
+    # Use the control plane to track the update
+    def _do_update():
+        from sync_controller import SyncResult
+
+        # Re-snapshot (force=True to overwrite existing data)
+        try:
+            ctx.invoke(snapshot, resource_name=resource_name, namespace=namespace,
+                       force=True, bbox=bbox, verbose=verbose, all_resources=False)
+        except click.ClickException as e:
+            return SyncResult(
+                success=False,
+                error_message=f"Snapshot failed: {e.message}",
+                metadata={"origin_type": resource.origin.type, "phase": "snapshot"},
+            )
+
+        # Re-materialize if needed (vectors are auto-materialized in snapshot,
+        # but rasters need explicit materialization)
+        updated = load_resource(resource_path)
+        if updated.state == "cached" and updated.kind == "raster":
+            try:
+                ctx.invoke(materialize, resource_name=resource_name, namespace=namespace,
+                           force=True, remote=False, verbose=verbose, all_resources=False)
+            except click.ClickException as e:
+                return SyncResult(
+                    success=False,
+                    error_message=f"Materialize failed: {e.message}",
+                    metadata={"origin_type": resource.origin.type, "phase": "materialize"},
+                )
+
+        return SyncResult(
+            success=True,
+            changes_modified=1,
+            metadata={"origin_type": resource.origin.type, "namespace": namespace},
+        )
+
+    if controller:
+        result = controller.execute("update", f"{namespace}/{resource_name}", _do_update)
+        controller.close()
+    else:
+        result = _do_update()
+
+    if not result.success:
+        raise click.ClickException(result.error_message)
+
+    click.echo()
+    click.echo(click.style(f"Updated {resource_name}", fg="green"))
+
 
 # ============== DATASET ==============
 
