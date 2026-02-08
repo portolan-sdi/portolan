@@ -403,6 +403,27 @@ def validate_manifest(data: dict[str, Any]) -> list[str]:
 
 
 # =============================================================================
+# Namespace Validation
+# =============================================================================
+
+
+def validate_namespace_name(namespace: str) -> list[str]:
+    """
+    Validate a namespace string.
+
+    Args:
+        namespace: Namespace identifier (e.g., "default", "europe.spain.madrid")
+
+    Returns:
+        List of error messages (empty if valid)
+    """
+    from namespace_utils import validate_namespace
+
+    error = validate_namespace(namespace)
+    return [error] if error else []
+
+
+# =============================================================================
 # File Validation Functions
 # =============================================================================
 

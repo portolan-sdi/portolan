@@ -47,7 +47,9 @@ from pyiceberg.types import (
     DoubleType,
     FloatType,
     IntegerType,
+    ListType,
     LongType,
+    MapType,
     NestedField,
     StringType,
     StructType,
@@ -74,13 +76,19 @@ class IcebergTable:
 
 def _arrow_to_iceberg_schema(arrow_schema: pa.Schema) -> Schema:
     """Convert PyArrow schema to pyiceberg Schema."""
+    counter = [0]  # mutable counter for unique field IDs
+
+    def next_id():
+        counter[0] += 1
+        return counter[0]
+
     fields = []
-    for i, field in enumerate(arrow_schema):
-        iceberg_type = _arrow_type_to_pyiceberg(field.type)
+    for field in arrow_schema:
+        iceberg_type = _arrow_type_to_pyiceberg(field.type, next_id)
         if iceberg_type is not None:
             fields.append(
                 NestedField(
-                    field_id=i + 1,
+                    field_id=next_id(),
                     name=field.name,
                     field_type=iceberg_type,
                     required=not field.nullable,
@@ -89,7 +97,7 @@ def _arrow_to_iceberg_schema(arrow_schema: pa.Schema) -> Schema:
     return Schema(*fields)
 
 
-def _arrow_type_to_pyiceberg(arrow_type):
+def _arrow_type_to_pyiceberg(arrow_type, next_id):
     """Convert PyArrow type to pyiceberg type."""
     if pa.types.is_boolean(arrow_type):
         return BooleanType()
@@ -115,20 +123,45 @@ def _arrow_type_to_pyiceberg(arrow_type):
         return TimestampType()
     if pa.types.is_struct(arrow_type):
         nested_fields = []
-        for j, subfield in enumerate(arrow_type):
-            subtype = _arrow_type_to_pyiceberg(subfield.type)
+        for subfield in arrow_type:
+            subtype = _arrow_type_to_pyiceberg(subfield.type, next_id)
             if subtype is not None:
                 nested_fields.append(
                     NestedField(
-                        field_id=1000 + j,
+                        field_id=next_id(),
                         name=subfield.name,
                         field_type=subtype,
                         required=not subfield.nullable,
                     )
                 )
         return StructType(*nested_fields) if nested_fields else None
-    # Skip unsupported types
-    return None
+    if pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type):
+        element_type = _arrow_type_to_pyiceberg(arrow_type.value_type, next_id)
+        if element_type is None:
+            element_type = StringType()
+        return ListType(
+            element_id=next_id(),
+            element_type=element_type,
+            element_required=False,
+        )
+    if pa.types.is_map(arrow_type):
+        key_type = _arrow_type_to_pyiceberg(arrow_type.key_type, next_id)
+        key_id = next_id()
+        value_type = _arrow_type_to_pyiceberg(arrow_type.item_type, next_id)
+        value_id = next_id()
+        if key_type is None:
+            key_type = StringType()
+        if value_type is None:
+            value_type = StringType()
+        return MapType(
+            key_id=key_id,
+            key_type=key_type,
+            value_id=value_id,
+            value_type=value_type,
+            value_required=False,
+        )
+    # Default fallback for unknown types
+    return StringType()
 
 
 # =============================================================================
@@ -136,92 +169,95 @@ def _arrow_type_to_pyiceberg(arrow_type):
 # =============================================================================
 
 
-def _arrow_type_to_iceberg(arrow_type) -> dict:
-    """Convert PyArrow type to Iceberg type representation (JSON-serializable dict)."""
-    # Handle primitive types
-    if pa.types.is_boolean(arrow_type):
-        return {"type": "boolean"}
-    if pa.types.is_int8(arrow_type) or pa.types.is_int16(arrow_type):
-        return {"type": "int"}
-    if pa.types.is_int32(arrow_type):
-        return {"type": "int"}
-    if pa.types.is_int64(arrow_type):
-        return {"type": "long"}
-    if pa.types.is_uint8(arrow_type) or pa.types.is_uint16(arrow_type):
-        return {"type": "int"}
-    if pa.types.is_uint32(arrow_type):
-        return {"type": "long"}
-    if pa.types.is_uint64(arrow_type):
-        return {"type": "long"}
-    if pa.types.is_float16(arrow_type) or pa.types.is_float32(arrow_type):
-        return {"type": "float"}
-    if pa.types.is_float64(arrow_type):
-        return {"type": "double"}
-    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
-        return {"type": "string"}
-    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
-        return {"type": "binary"}
-    if pa.types.is_date(arrow_type):
-        return {"type": "date"}
-    if pa.types.is_timestamp(arrow_type):
-        return {"type": "timestamp"}
-    if pa.types.is_time(arrow_type):
-        return {"type": "time"}
+def _arrow_type_to_iceberg(arrow_type, next_id) -> dict | str:
+    """Convert PyArrow type to Iceberg type representation (JSON-serializable).
 
-    # Handle nested types
-    if pa.types.is_list(arrow_type):
-        element_type = _arrow_type_to_iceberg(arrow_type.value_type)
+    Returns a string for primitive types (e.g., "string", "int") or a dict
+    for complex types (struct, list, map).
+    """
+    if pa.types.is_boolean(arrow_type):
+        return "boolean"
+    if pa.types.is_int8(arrow_type) or pa.types.is_int16(arrow_type):
+        return "int"
+    if pa.types.is_int32(arrow_type):
+        return "int"
+    if pa.types.is_int64(arrow_type):
+        return "long"
+    if pa.types.is_uint8(arrow_type) or pa.types.is_uint16(arrow_type):
+        return "int"
+    if pa.types.is_uint32(arrow_type):
+        return "long"
+    if pa.types.is_uint64(arrow_type):
+        return "long"
+    if pa.types.is_float16(arrow_type) or pa.types.is_float32(arrow_type):
+        return "float"
+    if pa.types.is_float64(arrow_type):
+        return "double"
+    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+        return "string"
+    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
+        return "binary"
+    if pa.types.is_date(arrow_type):
+        return "date"
+    if pa.types.is_timestamp(arrow_type):
+        return "timestamp"
+    if pa.types.is_time(arrow_type):
+        return "time"
+
+    if pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type):
+        element_type = _arrow_type_to_iceberg(arrow_type.value_type, next_id)
         return {
             "type": "list",
-            "element-id": 100,
-            "element": element_type.get("type", "string"),
+            "element-id": next_id(),
+            "element": element_type,
             "element-required": False,
         }
 
     if pa.types.is_struct(arrow_type):
         fields = []
-        for i, field in enumerate(arrow_type):
-            field_type = _arrow_type_to_iceberg(field.type)
+        for field in arrow_type:
+            field_type = _arrow_type_to_iceberg(field.type, next_id)
             fields.append({
-                "id": 200 + i,
+                "id": next_id(),
                 "name": field.name,
                 "required": not field.nullable,
-                "type": field_type.get("type", "string"),
+                "type": field_type,
             })
         return {"type": "struct", "fields": fields}
 
     if pa.types.is_map(arrow_type):
+        key_type = _arrow_type_to_iceberg(arrow_type.key_type, next_id)
+        key_id = next_id()
+        value_type = _arrow_type_to_iceberg(arrow_type.item_type, next_id)
+        value_id = next_id()
         return {
             "type": "map",
-            "key-id": 300,
-            "key": "string",
-            "value-id": 301,
-            "value": "string",
+            "key-id": key_id,
+            "key": key_type,
+            "value-id": value_id,
+            "value": value_type,
             "value-required": False,
         }
 
-    # Default fallback
-    return {"type": "string"}
+    return "string"
 
 
 def _arrow_schema_to_iceberg(schema) -> dict:
     """Convert PyArrow schema to Iceberg schema format."""
+    counter = [0]
+
+    def next_id():
+        counter[0] += 1
+        return counter[0]
+
     fields = []
-    for i, field in enumerate(schema):
-        iceberg_type = _arrow_type_to_iceberg(field.type)
-        # For complex types (struct, list, map), use the full type dict
-        # For primitives, just use the type string
-        if isinstance(iceberg_type.get("type"), str) and iceberg_type.get("type") in (
-            "struct", "list", "map"
-        ):
-            type_value = iceberg_type
-        else:
-            type_value = iceberg_type.get("type", "string")
+    for field in schema:
+        iceberg_type = _arrow_type_to_iceberg(field.type, next_id)
         fields.append({
-            "id": i + 1,
+            "id": next_id(),
             "name": field.name,
             "required": not field.nullable,
-            "type": type_value,
+            "type": iceberg_type,
         })
 
     return {
@@ -245,6 +281,7 @@ def generate_manifest_files(
     sequence_number: int = 1,
     table_path: str | None = None,
     data_file_path: str | None = None,
+    data_files: list[dict] | None = None,
 ) -> str:
     """
     Generate Iceberg manifest and manifest-list Avro files using pyiceberg.
@@ -258,6 +295,8 @@ def generate_manifest_files(
         sequence_number: Sequence number for the snapshot
         table_path: Optional path to table (e.g., "namespace/tablename"). If not provided, uses table.name
         data_file_path: Optional full path to the data file. If not provided, constructs from table_path.
+        data_files: Optional list of dicts with {path, size, record_count} for multi-file datasets.
+                    When provided, overrides data_file_path and table's file info.
 
     Returns:
         Path to the manifest-list file (relative to data_base_url)
@@ -275,27 +314,47 @@ def generate_manifest_files(
     # Use table_path if provided, otherwise just table.name
     path_prefix = table_path if table_path else table.name
 
-    # Create data file entry - use provided path or construct default
-    if data_file_path is None:
-        data_file_path = f"{data_base_url.rstrip('/')}/data/{path_prefix}/{table.name}.parquet"
+    # Build manifest entries
+    manifest_entries = []
 
-    data_file = DataFile.from_args(
-        content=DataFileContent.DATA,
-        file_path=data_file_path,
-        file_format=FileFormat.PARQUET,
-        partition=Record(),
-        record_count=table.num_rows,
-        file_size_in_bytes=table.file_size_bytes,
-    )
+    if data_files:
+        # Multi-file dataset (e.g., remote partitioned Parquet)
+        for df in data_files:
+            data_file = DataFile.from_args(
+                content=DataFileContent.DATA,
+                file_path=df["path"],
+                file_format=FileFormat.PARQUET,
+                partition=Record(),
+                record_count=df.get("record_count", 0),
+                file_size_in_bytes=df.get("size", 0),
+            )
+            manifest_entries.append(ManifestEntry.from_args(
+                status=ManifestEntryStatus.ADDED,
+                snapshot_id=snapshot_id,
+                sequence_number=sequence_number,
+                file_sequence_number=sequence_number,
+                data_file=data_file,
+            ))
+    else:
+        # Single-file dataset
+        if data_file_path is None:
+            data_file_path = f"{data_base_url.rstrip('/')}/data/{path_prefix}/{table.name}.parquet"
 
-    # Create manifest entry
-    manifest_entry = ManifestEntry.from_args(
-        status=ManifestEntryStatus.ADDED,
-        snapshot_id=snapshot_id,
-        sequence_number=sequence_number,
-        file_sequence_number=sequence_number,
-        data_file=data_file,
-    )
+        data_file = DataFile.from_args(
+            content=DataFileContent.DATA,
+            file_path=data_file_path,
+            file_format=FileFormat.PARQUET,
+            partition=Record(),
+            record_count=table.num_rows,
+            file_size_in_bytes=table.file_size_bytes,
+        )
+        manifest_entries.append(ManifestEntry.from_args(
+            status=ManifestEntryStatus.ADDED,
+            snapshot_id=snapshot_id,
+            sequence_number=sequence_number,
+            file_sequence_number=sequence_number,
+            data_file=data_file,
+        ))
 
     # Write manifest file
     manifest_path = str(metadata_dir / f"snap-{snapshot_id}-manifest.avro")
@@ -313,7 +372,8 @@ def generate_manifest_files(
         snapshot_id=snapshot_id,
         avro_compression="null",
     ) as manifest_writer:
-        manifest_writer.add_entry(manifest_entry)
+        for entry in manifest_entries:
+            manifest_writer.add_entry(entry)
         manifest_file = manifest_writer.to_manifest_file()
 
     # Get the actual file size (pyiceberg sometimes returns 0 for manifest_length)
@@ -364,6 +424,38 @@ def generate_manifest_files(
 # =============================================================================
 
 
+def _max_field_id(schema: dict) -> int:
+    """Find the maximum field ID in an Iceberg schema (including nested fields)."""
+    max_id = 0
+    for field in schema.get("fields", []):
+        max_id = max(max_id, field.get("id", 0))
+        field_type = field.get("type")
+        if isinstance(field_type, dict):
+            max_id = max(max_id, _max_field_id_from_type(field_type))
+    return max_id
+
+
+def _max_field_id_from_type(type_def: dict) -> int:
+    """Recursively find max field ID in a type definition."""
+    max_id = 0
+    if type_def.get("type") == "struct":
+        for f in type_def.get("fields", []):
+            max_id = max(max_id, f.get("id", 0))
+            if isinstance(f.get("type"), dict):
+                max_id = max(max_id, _max_field_id_from_type(f["type"]))
+    elif type_def.get("type") == "list":
+        max_id = max(max_id, type_def.get("element-id", 0))
+        if isinstance(type_def.get("element"), dict):
+            max_id = max(max_id, _max_field_id_from_type(type_def["element"]))
+    elif type_def.get("type") == "map":
+        max_id = max(max_id, type_def.get("key-id", 0), type_def.get("value-id", 0))
+        if isinstance(type_def.get("key"), dict):
+            max_id = max(max_id, _max_field_id_from_type(type_def["key"]))
+        if isinstance(type_def.get("value"), dict):
+            max_id = max(max_id, _max_field_id_from_type(type_def["value"]))
+    return max_id
+
+
 def create_name_mapping(schema: dict) -> str:
     """
     Create Iceberg name-mapping JSON from schema.
@@ -379,12 +471,62 @@ def create_name_mapping(schema: dict) -> str:
         JSON string of name mapping: [{"field-id": 1, "names": ["col1"]}, ...]
     """
     mapping = []
-    for field in schema.get("fields", []):
-        mapping.append({
-            "field-id": field["id"],
-            "names": [field["name"]],
-        })
+    _collect_name_mappings(schema.get("fields", []), mapping)
     return json.dumps(mapping)
+
+
+def _collect_name_mappings(fields: list[dict], mapping: list[dict]):
+    """Recursively collect name mappings for all fields including nested ones."""
+    for field in fields:
+        entry = {"field-id": field["id"], "names": [field["name"]]}
+        field_type = field.get("type")
+        if isinstance(field_type, dict):
+            nested = []
+            _collect_type_mappings(field_type, nested)
+            if nested:
+                entry["fields"] = nested
+        mapping.append(entry)
+
+
+def _collect_type_mappings(type_def: dict, mapping: list[dict]):
+    """Recursively collect name mappings from a type definition."""
+    type_name = type_def.get("type")
+    if type_name == "struct":
+        for f in type_def.get("fields", []):
+            entry = {"field-id": f["id"], "names": [f["name"]]}
+            ft = f.get("type")
+            if isinstance(ft, dict):
+                nested = []
+                _collect_type_mappings(ft, nested)
+                if nested:
+                    entry["fields"] = nested
+            mapping.append(entry)
+    elif type_name == "list":
+        elem = type_def.get("element")
+        entry = {"field-id": type_def["element-id"], "names": ["element"]}
+        if isinstance(elem, dict):
+            nested = []
+            _collect_type_mappings(elem, nested)
+            if nested:
+                entry["fields"] = nested
+        mapping.append(entry)
+    elif type_name == "map":
+        key = type_def.get("key")
+        key_entry = {"field-id": type_def["key-id"], "names": ["key"]}
+        if isinstance(key, dict):
+            nested = []
+            _collect_type_mappings(key, nested)
+            if nested:
+                key_entry["fields"] = nested
+        mapping.append(key_entry)
+        value = type_def.get("value")
+        value_entry = {"field-id": type_def["value-id"], "names": ["value"]}
+        if isinstance(value, dict):
+            nested = []
+            _collect_type_mappings(value, nested)
+            if nested:
+                value_entry["fields"] = nested
+        mapping.append(value_entry)
 
 
 def create_table_metadata(
@@ -417,7 +559,7 @@ def create_table_metadata(
         "location": f"{data_base_url.rstrip('/')}/data/{path_prefix}",
         "last-sequence-number": 1,
         "last-updated-ms": current_time_ms,
-        "last-column-id": len(table.schema.get("fields", [])),
+        "last-column-id": _max_field_id(table.schema),
         "current-schema-id": 0,
         "schemas": [table.schema],
         "default-spec-id": 0,

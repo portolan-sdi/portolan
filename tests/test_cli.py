@@ -754,3 +754,91 @@ class TestImportArcgisServer:
             assert result.exit_code == 0
             assert "0 ImageServer" in result.output
             assert "raster" not in result.output.lower().split("dry run")[1]
+
+
+class TestDottedNamespaces:
+    """Tests for hierarchical dotted namespace support."""
+
+    def test_register_with_dotted_namespace(self, initialized_catalog, sample_geoparquet):
+        """Register a resource using a dotted namespace."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register", "file",
+                    str(sample_geoparquet),
+                    "--name", "fires",
+                    "--namespace", "europe.spain",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0
+
+        resource_file = initialized_catalog.path / "resources" / "europe.spain" / "fires.json"
+        assert resource_file.exists()
+
+        resource = json.loads(resource_file.read_text())
+        assert resource["name"] == "fires"
+
+    def test_invalid_namespace_rejected(self, initialized_catalog, sample_geoparquet):
+        """Invalid namespaces are rejected with a clear error."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register", "file",
+                    str(sample_geoparquet),
+                    "--name", "test",
+                    "--namespace", "Europe.Spain",
+                ],
+            )
+            assert result.exit_code != 0
+            assert "Invalid namespace" in result.output
+
+    def test_dataset_list_tree_display(self, initialized_catalog, sample_geoparquet):
+        """dataset list renders dotted namespaces as a tree."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Register resources in dotted namespaces
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "fires",
+                 "--namespace", "europe.spain"],
+                catch_exceptions=False,
+            )
+            runner.invoke(
+                cli,
+                ["register", "file", str(sample_geoparquet), "--name", "cities",
+                 "--namespace", "europe.france"],
+                catch_exceptions=False,
+            )
+
+            result = runner.invoke(
+                cli,
+                ["dataset", "list"],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0
+            assert "europe/" in result.output
+            assert "spain/" in result.output
+            assert "france/" in result.output
+            assert "fires" in result.output
+            assert "cities" in result.output
+
+    def test_namespace_underscore_allowed(self, initialized_catalog, sample_geoparquet):
+        """Underscores are valid in namespace segments."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "register", "file",
+                    str(sample_geoparquet),
+                    "--name", "test",
+                    "--namespace", "my_server.data_folder",
+                ],
+                catch_exceptions=False,
+            )
+            assert result.exit_code == 0

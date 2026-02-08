@@ -139,6 +139,15 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
             print("No resources found in any namespace")
         return {}
 
+    from namespace_utils import namespace_parts
+
+    # Build a tree of namespace parts to determine hierarchy
+    # Each dotted namespace becomes a nested path: europe.spain.madrid → europe/spain/madrid
+    # Intermediate nodes are STAC Catalogs, leaf nodes with resources are STAC Collections
+
+    # Determine top-level children for root catalog
+    top_level_parts = sorted({namespace_parts(ns)[0] for ns in namespaces})
+
     # Create root catalog
     root_catalog = {
         "type": "Catalog",
@@ -152,14 +161,22 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
         ]
     }
 
-    # Add collection links
-    for namespace in namespaces:
-        root_catalog["links"].append({
-            "rel": "child",
-            "href": f"./collections/{namespace}/collection.json",
-            "type": "application/json",
-            "title": namespace.replace("_", " ").title(),
-        })
+    for top in top_level_parts:
+        # Check if this top-level is a leaf namespace (has resources directly)
+        if top in namespaces:
+            root_catalog["links"].append({
+                "rel": "child",
+                "href": f"./collections/{top}/collection.json",
+                "type": "application/json",
+                "title": top.replace("_", " ").title(),
+            })
+        else:
+            root_catalog["links"].append({
+                "rel": "child",
+                "href": f"./collections/{top}/catalog.json",
+                "type": "application/json",
+                "title": top.replace("_", " ").title(),
+            })
 
     # Write root catalog
     catalog_path = stac_dir / "catalog.json"
@@ -170,23 +187,96 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
     if verbose:
         print(f"Created STAC catalog: {catalog_path}")
 
-    # Create collections and items
-    for namespace, resources in namespaces.items():
-        collection_dir = stac_dir / "collections" / namespace
+    # Create intermediate catalogs and leaf collections
+    # First, collect all intermediate paths that need catalog.json files
+    intermediate_paths: set[tuple[str, ...]] = set()
+    for ns in namespaces:
+        parts = namespace_parts(ns)
+        # All prefixes except the full namespace are intermediate
+        for i in range(1, len(parts)):
+            prefix = tuple(parts[:i])
+            # Only add as intermediate if this prefix isn't itself a leaf namespace
+            if ".".join(prefix) not in namespaces:
+                intermediate_paths.add(prefix)
+
+    # Write intermediate catalog files
+    for parts_tuple in sorted(intermediate_paths):
+        inter_dir = stac_dir / "collections" / "/".join(parts_tuple)
+        inter_dir.mkdir(parents=True, exist_ok=True)
+
+        depth = len(parts_tuple)
+        root_rel = "../" * (depth + 1) + "catalog.json"
+        parent_rel = "../catalog.json" if depth > 1 else "../../catalog.json"
+
+        inter_catalog = {
+            "type": "Catalog",
+            "stac_version": "1.0.0",
+            "id": ".".join(parts_tuple),
+            "title": parts_tuple[-1].replace("_", " ").title(),
+            "description": f"Catalog for {'.'.join(parts_tuple)}",
+            "links": [
+                {"rel": "self", "href": "./catalog.json", "type": "application/json"},
+                {"rel": "root", "href": root_rel, "type": "application/json"},
+                {"rel": "parent", "href": parent_rel, "type": "application/json"},
+            ],
+        }
+
+        # Find children of this intermediate node
+        prefix_str = ".".join(parts_tuple) + "."
+        child_names = set()
+        for ns in namespaces:
+            if ns.startswith(prefix_str):
+                remainder = ns[len(prefix_str):]
+                child_name = remainder.split(".")[0]
+                child_names.add(child_name)
+
+        for child_name in sorted(child_names):
+            child_ns = f"{'.'.join(parts_tuple)}.{child_name}"
+            if child_ns in namespaces:
+                inter_catalog["links"].append({
+                    "rel": "child",
+                    "href": f"./{child_name}/collection.json",
+                    "type": "application/json",
+                    "title": child_name.replace("_", " ").title(),
+                })
+            else:
+                inter_catalog["links"].append({
+                    "rel": "child",
+                    "href": f"./{child_name}/catalog.json",
+                    "type": "application/json",
+                    "title": child_name.replace("_", " ").title(),
+                })
+
+        inter_path = inter_dir / "catalog.json"
+        with open(inter_path, "w") as f:
+            json.dump(inter_catalog, f, indent=2)
+        files_created[f"collections/{'/'.join(parts_tuple)}/catalog.json"] = inter_path
+
+        if verbose:
+            print(f"Created STAC intermediate catalog: {'.'.join(parts_tuple)}")
+
+    # Create leaf collections and items
+    for namespace, ns_resources in namespaces.items():
+        parts = namespace_parts(namespace)
+        collection_dir = stac_dir / "collections" / "/".join(parts)
         items_dir = collection_dir / "items"
         items_dir.mkdir(parents=True, exist_ok=True)
 
+        depth = len(parts)
+        root_rel = "../" * (depth + 1) + "catalog.json"
+        parent_rel = "../catalog.json" if depth > 1 else "../../catalog.json"
+
         # Calculate collection extent from resources
-        bbox = _calculate_collection_bbox(resources)
-        temporal = _calculate_collection_temporal(resources)
+        bbox = _calculate_collection_bbox(ns_resources)
+        temporal = _calculate_collection_temporal(ns_resources)
 
         # Create collection
         collection = {
             "type": "Collection",
             "stac_version": "1.0.0",
             "id": namespace,
-            "title": namespace.replace("_", " ").title(),
-            "description": f"Collection of {len(resources)} resources",
+            "title": parts[-1].replace("_", " ").title(),
+            "description": f"Collection of {len(ns_resources)} resources in {namespace}",
             "license": "various",
             "extent": {
                 "spatial": {"bbox": [bbox] if bbox else [[]]},
@@ -194,13 +284,13 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
             },
             "links": [
                 {"rel": "self", "href": "./collection.json", "type": "application/json"},
-                {"rel": "root", "href": "../../catalog.json", "type": "application/json"},
-                {"rel": "parent", "href": "../../catalog.json", "type": "application/json"},
+                {"rel": "root", "href": root_rel, "type": "application/json"},
+                {"rel": "parent", "href": parent_rel, "type": "application/json"},
             ],
         }
 
         # Add item links
-        for resource in resources:
+        for resource in ns_resources:
             name = resource.get("name", "unknown")
             collection["links"].append({
                 "rel": "item",
@@ -213,18 +303,19 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
         collection_path = collection_dir / "collection.json"
         with open(collection_path, "w") as f:
             json.dump(collection, f, indent=2)
-        files_created[f"collections/{namespace}/collection.json"] = collection_path
+        col_rel_path = "/".join(parts)
+        files_created[f"collections/{col_rel_path}/collection.json"] = collection_path
 
         if verbose:
-            print(f"Created STAC collection: {namespace} ({len(resources)} items)")
+            print(f"Created STAC collection: {namespace} ({len(ns_resources)} items)")
 
         # Create items
-        for resource in resources:
-            item = _resource_to_stac_item(resource, namespace)
+        for resource in ns_resources:
+            item = _resource_to_stac_item(resource, namespace, depth)
             item_path = items_dir / f"{resource.get('name', 'unknown')}.json"
             with open(item_path, "w") as f:
                 json.dump(item, f, indent=2)
-            files_created[f"collections/{namespace}/items/{resource.get('name')}.json"] = item_path
+            files_created[f"collections/{col_rel_path}/items/{resource.get('name')}.json"] = item_path
 
     if verbose:
         print(f"Generated STAC catalog with {len(files_created)} files")
@@ -232,8 +323,14 @@ def generate_stac_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict
     return files_created
 
 
-def _resource_to_stac_item(resource: dict, collection: str) -> dict:
-    """Convert a Portolan resource to a STAC Item."""
+def _resource_to_stac_item(resource: dict, collection: str, depth: int = 1) -> dict:
+    """Convert a Portolan resource to a STAC Item.
+
+    Args:
+        resource: Normalized resource dict
+        collection: Collection ID (dotted namespace)
+        depth: Namespace depth (number of segments), used for relative root link
+    """
     name = resource.get("name", "unknown")
     spatial = resource.get("spatial_extent", {}) or {}
 
@@ -283,6 +380,9 @@ def _resource_to_stac_item(resource: dict, collection: str) -> dict:
                 "title": asset_info.get("title", asset_key),
             }
 
+    # items/ is one level below collection, then depth levels to collections/, then root
+    root_rel = "../" * (depth + 2) + "catalog.json"
+
     item = {
         "type": "Feature",
         "stac_version": "1.0.0",
@@ -295,7 +395,7 @@ def _resource_to_stac_item(resource: dict, collection: str) -> dict:
         "links": [
             {"rel": "self", "href": f"./{name}.json", "type": "application/geo+json"},
             {"rel": "collection", "href": "../collection.json", "type": "application/json"},
-            {"rel": "root", "href": "../../../catalog.json", "type": "application/json"},
+            {"rel": "root", "href": root_rel, "type": "application/json"},
         ],
     }
 
@@ -344,21 +444,24 @@ def update_stac_for_resource(catalog: CatalogConfig, resource: dict, namespace: 
     Update STAC catalog with a single resource (incremental update).
 
     This is called when a new resource is added, avoiding full regeneration.
+    For dotted namespaces, this triggers a full regeneration to ensure the
+    intermediate catalog hierarchy is correctly built.
     """
-    resource = _normalize_resource(resource)
     stac_dir = catalog.stac_dir
-
-    # Ensure directory structure exists
-    collection_dir = stac_dir / "collections" / namespace
-    items_dir = collection_dir / "items"
-    items_dir.mkdir(parents=True, exist_ok=True)
 
     # Check if root catalog exists, create if not
     catalog_path = stac_dir / "catalog.json"
-    if not catalog_path.exists():
-        # Full generation needed
+    if not catalog_path.exists() or "." in namespace:
+        # Full generation needed for nested namespaces or first-time setup
         generate_stac_catalog(catalog, verbose=verbose)
         return
+
+    resource = _normalize_resource(resource)
+
+    # Simple (flat) namespace — incremental update
+    collection_dir = stac_dir / "collections" / namespace
+    items_dir = collection_dir / "items"
+    items_dir.mkdir(parents=True, exist_ok=True)
 
     # Update/create item
     item = _resource_to_stac_item(resource, namespace)
@@ -388,8 +491,9 @@ def update_stac_for_resource(catalog: CatalogConfig, resource: dict, namespace: 
             with open(collection_path, "w") as f:
                 json.dump(collection, f, indent=2)
     else:
-        # Need to create collection - do full regeneration for this namespace
+        # Need to create collection - do full regeneration
         generate_stac_catalog(catalog, verbose=verbose)
+        return
 
     # Update root catalog to include collection if new
     with open(catalog_path) as f:
@@ -437,12 +541,18 @@ def generate_iso19139_catalog(catalog: CatalogConfig, verbose: bool = False) -> 
 
     files_created = {}
 
+    from namespace_utils import namespace_parts as ns_parts
+
     for namespace_dir in resources_dir.iterdir():
         if not namespace_dir.is_dir():
             continue
 
         namespace = namespace_dir.name
-        ns_dir = iso_dir / namespace
+        # Split dotted namespace into nested directory path
+        parts = ns_parts(namespace)
+        ns_dir = iso_dir
+        for part in parts:
+            ns_dir = ns_dir / part
         ns_dir.mkdir(parents=True, exist_ok=True)
 
         for resource_file in namespace_dir.glob("*.json"):
@@ -459,7 +569,8 @@ def generate_iso19139_catalog(catalog: CatalogConfig, verbose: bool = False) -> 
                 with open(xml_path, "w", encoding="utf-8") as f:
                     f.write(xml_content)
 
-                files_created[f"{namespace}/{resource.get('name')}.xml"] = xml_path
+                rel_path = "/".join(parts) + f"/{resource.get('name')}.xml"
+                files_created[rel_path] = xml_path
 
                 if verbose:
                     print(f"Created ISO 19139: {xml_path}")
@@ -654,9 +765,14 @@ def update_iso19139_for_resource(catalog: CatalogConfig, resource: dict, namespa
     """
     Update ISO 19139 catalog with a single resource (incremental update).
     """
+    from namespace_utils import namespace_parts
+
     resource = _normalize_resource(resource)
     iso_dir = catalog.iso_dir
-    ns_dir = iso_dir / namespace
+    # Split dotted namespace into nested directory path
+    ns_dir = iso_dir
+    for part in namespace_parts(namespace):
+        ns_dir = ns_dir / part
     ns_dir.mkdir(parents=True, exist_ok=True)
 
     xml_content = _resource_to_iso19139(resource)

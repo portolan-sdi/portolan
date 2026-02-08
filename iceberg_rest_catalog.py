@@ -71,7 +71,7 @@ def create_load_table_response(
 
 
 def generate_static_catalog(
-    tables: list[IcebergTable],
+    tables: list[IcebergTable] | dict[str, list[IcebergTable]],
     output_dir: str,
     namespace: str = "default",
     prefix: str = "catalog",
@@ -91,9 +91,12 @@ def generate_static_catalog(
     static catalog endpoint.
 
     Args:
-        tables: List of IcebergTable objects to include
+        tables: Either a list of IcebergTable objects (all in one namespace) or
+                a dict mapping namespace names to lists of IcebergTable objects.
+                Dotted namespaces (e.g., "europe.spain") are converted to underscores
+                for Iceberg REST compatibility (e.g., "europe_spain").
         output_dir: Directory to write the catalog files
-        namespace: Namespace name for all tables
+        namespace: Namespace name (used when tables is a flat list)
         prefix: URL prefix for the catalog (default: "catalog")
         data_base_url: Base URL where data files will be served from
         verbose: Whether to print debug output
@@ -101,10 +104,26 @@ def generate_static_catalog(
     Returns:
         Dict mapping endpoint paths to file paths
     """
+    from namespace_utils import namespace_to_iceberg
+
     output_path = Path(output_dir)
 
     if data_base_url is None:
         data_base_url = str(output_path.absolute())
+
+    # Normalize input: wrap flat list into single-namespace dict
+    if isinstance(tables, list):
+        tables_by_ns: dict[str, list[IcebergTable]] = {namespace: tables}
+    else:
+        tables_by_ns = tables
+
+    # Convert dotted namespaces to Iceberg-safe underscored names
+    iceberg_ns_map: dict[str, str] = {}  # original → iceberg-safe
+    for ns in tables_by_ns:
+        iceberg_ns_map[ns] = namespace_to_iceberg(ns)
+
+    all_iceberg_namespaces = sorted(set(iceberg_ns_map.values()))
+    total_tables = sum(len(ts) for ts in tables_by_ns.values())
 
     files_created = {}
 
@@ -112,10 +131,8 @@ def generate_static_catalog(
     v1_dir = output_path / "v1"
     catalog_dir = v1_dir / prefix
     ns_dir = catalog_dir / "namespaces"
-    ns_detail_dir = ns_dir / namespace
-    tables_dir = ns_detail_dir / "tables"
 
-    for d in [v1_dir, catalog_dir, ns_dir, ns_detail_dir, tables_dir]:
+    for d in [v1_dir, catalog_dir, ns_dir]:
         d.mkdir(parents=True, exist_ok=True)
 
     # Create GCS-ready flat directory (with __ separators)
@@ -130,6 +147,7 @@ def generate_static_catalog(
 
     def write_endpoint(url_path: str, data: dict, local_path: Path):
         """Write endpoint to local dir and track for static hosting upload."""
+        local_path.parent.mkdir(parents=True, exist_ok=True)
         with open(local_path, "w") as f:
             json.dump(data, f, indent=2)
 
@@ -144,74 +162,86 @@ def generate_static_catalog(
     write_endpoint("/v1/config", config_data, v1_dir / "config")
 
     # 2. /v1/{prefix}/namespaces
-    namespaces_data = create_namespaces_list([namespace])
+    namespaces_data = create_namespaces_list(all_iceberg_namespaces)
     write_endpoint(f"/v1/{prefix}/namespaces", namespaces_data, ns_dir / "__list__")
 
-    # 3. /v1/{prefix}/namespaces/{namespace}
-    ns_detail_data = create_namespace_detail(namespace)
-    write_endpoint(
-        f"/v1/{prefix}/namespaces/{namespace}", ns_detail_data, ns_detail_dir / "__detail__"
-    )
+    # 3-5. Per-namespace endpoints
+    for orig_ns, ns_tables in tables_by_ns.items():
+        iceberg_ns = iceberg_ns_map[orig_ns]
+        ns_detail_dir = ns_dir / iceberg_ns
+        tables_dir = ns_detail_dir / "tables"
 
-    # 4. /v1/{prefix}/namespaces/{namespace}/tables
-    table_names = [t.name for t in tables]
-    tables_list_data = create_tables_list(table_names, namespace)
-    write_endpoint(
-        f"/v1/{prefix}/namespaces/{namespace}/tables",
-        tables_list_data,
-        ns_detail_dir / "tables__list__",
-    )
+        for d in [ns_detail_dir, tables_dir]:
+            d.mkdir(parents=True, exist_ok=True)
 
-    # 5. For each table
-    for table in tables:
-        if verbose:
-            print(f"Creating catalog entry for {table.name}...")
-
-        table_uuid = str(uuid.uuid4())
-        metadata = create_table_metadata(table, data_base_url, table_uuid)
-        metadata_location = f"{data_base_url.rstrip('/')}/data/{table.name}/metadata/v1.metadata.json"
-        load_response = create_load_table_response(table, metadata, metadata_location)
-
+        # 3. /v1/{prefix}/namespaces/{namespace}
+        ns_detail_data = create_namespace_detail(iceberg_ns)
         write_endpoint(
-            f"/v1/{prefix}/namespaces/{namespace}/tables/{table.name}",
-            load_response,
-            tables_dir / table.name,
+            f"/v1/{prefix}/namespaces/{iceberg_ns}",
+            ns_detail_data,
+            ns_detail_dir / "__detail__",
         )
 
-        # Write standalone metadata file
-        metadata_dir = output_path / "data" / table.name / "metadata"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-        metadata_file = metadata_dir / "v1.metadata.json"
-        with open(metadata_file, "w") as f:
-            json.dump(metadata, f, indent=2)
+        # 4. /v1/{prefix}/namespaces/{namespace}/tables
+        table_names = [t.name for t in ns_tables]
+        tables_list_data = create_tables_list(table_names, iceberg_ns)
+        write_endpoint(
+            f"/v1/{prefix}/namespaces/{iceberg_ns}/tables",
+            tables_list_data,
+            ns_detail_dir / "tables__list__",
+        )
 
-        # Track metadata for static upload
-        static_upload_map[f"/data/{table.name}/metadata/v1.metadata.json"] = str(metadata_file)
-
-        # Generate manifest files (required by Iceberg readers like DuckDB)
-        generate_manifest_files(table, data_base_url, metadata_dir, table.arrow_schema)
-        if verbose:
-            print(f"Created manifest files in {metadata_dir}")
-
-        # Track manifest files for static upload
-        manifest_path = metadata_dir / "snap-1-manifest.avro"
-        manifest_list_path = metadata_dir / "snap-1-manifest-list.avro"
-        if manifest_path.exists():
-            static_upload_map[f"/data/{table.name}/metadata/snap-1-manifest.avro"] = str(manifest_path)
-        if manifest_list_path.exists():
-            static_upload_map[f"/data/{table.name}/metadata/snap-1-manifest-list.avro"] = str(manifest_list_path)
-
-        # Track the data parquet file for upload
-        data_parquet_path = output_path / "data" / table.name / f"{table.name}.parquet"
-        if data_parquet_path.exists():
-            static_upload_map[f"/data/{table.name}/{table.name}.parquet"] = str(data_parquet_path)
+        # 5. For each table
+        for table in ns_tables:
             if verbose:
-                print(f"Tracking data file: {data_parquet_path}")
+                print(f"Creating catalog entry for {iceberg_ns}.{table.name}...")
 
-        gcs_objects[f"/data/{table.name}/metadata/v1.metadata.json"] = metadata
+            table_uuid = str(uuid.uuid4())
+            data_path = f"{iceberg_ns}/{table.name}" if len(tables_by_ns) > 1 else table.name
+            metadata = create_table_metadata(table, data_base_url, table_uuid)
+            metadata_location = f"{data_base_url.rstrip('/')}/data/{data_path}/metadata/v1.metadata.json"
+            load_response = create_load_table_response(table, metadata, metadata_location)
 
-        if verbose:
-            print(f"Created {metadata_file}")
+            write_endpoint(
+                f"/v1/{prefix}/namespaces/{iceberg_ns}/tables/{table.name}",
+                load_response,
+                tables_dir / table.name,
+            )
+
+            # Write standalone metadata file
+            metadata_dir = output_path / "data" / data_path / "metadata"
+            metadata_dir.mkdir(parents=True, exist_ok=True)
+            metadata_file = metadata_dir / "v1.metadata.json"
+            with open(metadata_file, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            # Track metadata for static upload
+            static_upload_map[f"/data/{data_path}/metadata/v1.metadata.json"] = str(metadata_file)
+
+            # Generate manifest files (required by Iceberg readers like DuckDB)
+            generate_manifest_files(table, data_base_url, metadata_dir, table.arrow_schema)
+            if verbose:
+                print(f"Created manifest files in {metadata_dir}")
+
+            # Track manifest files for static upload
+            manifest_path = metadata_dir / "snap-1-manifest.avro"
+            manifest_list_path = metadata_dir / "snap-1-manifest-list.avro"
+            if manifest_path.exists():
+                static_upload_map[f"/data/{data_path}/metadata/snap-1-manifest.avro"] = str(manifest_path)
+            if manifest_list_path.exists():
+                static_upload_map[f"/data/{data_path}/metadata/snap-1-manifest-list.avro"] = str(manifest_list_path)
+
+            # Track the data parquet file for upload
+            data_parquet_path = output_path / "data" / data_path / f"{table.name}.parquet"
+            if data_parquet_path.exists():
+                static_upload_map[f"/data/{data_path}/{table.name}.parquet"] = str(data_parquet_path)
+                if verbose:
+                    print(f"Tracking data file: {data_parquet_path}")
+
+            gcs_objects[f"/data/{data_path}/metadata/v1.metadata.json"] = metadata
+
+            if verbose:
+                print(f"Created {metadata_file}")
 
     # Write GCS manifest and individual files (flat structure with __ separators)
     manifest_path = gcs_dir / "manifest.json"
@@ -230,6 +260,8 @@ def generate_static_catalog(
             print(f"Created GCS file: {file_path}")
 
     # Generate upload script for static hosting
+    # Use the first namespace for the example in the script
+    example_ns = all_iceberg_namespaces[0] if all_iceberg_namespaces else "default"
     upload_script_path = output_path / "upload_static_catalog.sh"
     with open(upload_script_path, "w") as f:
         f.write("#!/bin/bash\n")
@@ -243,7 +275,7 @@ def generate_static_catalog(
         f.write("#       ENDPOINT 'https://storage.googleapis.com/YOUR-BUCKET',\n")
         f.write("#       AUTHORIZATION_TYPE 'none'\n")
         f.write("#   );\n")
-        f.write(f"#   SELECT * FROM catalog.{namespace}.TABLE_NAME;\n\n")
+        f.write(f"#   SELECT * FROM catalog.{example_ns}.TABLE_NAME;\n\n")
         f.write("BUCKET=${1:?\"Usage: $0 gs://bucket-name\"}\n\n")
         f.write("echo \"Uploading static catalog to $BUCKET...\"\n\n")
 
@@ -293,7 +325,7 @@ def generate_static_catalog(
         f.write("echo \"      ENDPOINT 'https://storage.googleapis.com/${BUCKET#gs://}',\"\n")
         f.write("echo \"      AUTHORIZATION_TYPE 'none'\"\n")
         f.write("echo \"  );\"\n")
-        f.write(f"echo \"  SELECT * FROM catalog.{namespace}.TABLE_NAME;\"\n")
+        f.write(f"echo \"  SELECT * FROM catalog.{example_ns}.TABLE_NAME;\"\n")
 
     # Make script executable
     upload_script_path.chmod(0o755)
@@ -303,7 +335,7 @@ def generate_static_catalog(
     with open(upload_map_path, "w") as f:
         json.dump(static_upload_map, f, indent=2)
 
-    print(f"Generated static catalog with {len(tables)} tables")
+    print(f"Generated static catalog with {total_tables} tables across {len(all_iceberg_namespaces)} namespaces")
     print("  - v1/: Local dev structure (with __list__ files)")
     print("  - gcs/: Flat files with __ separators")
     print("\nTo serve as REST catalog with static hosting:")

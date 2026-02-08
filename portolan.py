@@ -200,7 +200,8 @@ def _open_remote_parquet(url: str, region: str | None = None):
 
     if scheme == "s3":
         from pyarrow.fs import S3FileSystem
-        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        # Try to infer region from bucket name or use provided/env value
+        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
         s3fs = S3FileSystem(anonymous=True, region=s3_region)
         return pq.ParquetFile(path, filesystem=s3fs)
 
@@ -216,6 +217,74 @@ def _open_remote_parquet(url: str, region: str | None = None):
 
     # Local file fallback
     return pq.ParquetFile(path)
+
+
+def _list_remote_files(glob_url: str, region: str | None = None, verbose: bool = False) -> list[dict]:
+    """List remote files matching a glob pattern (e.g., s3://bucket/path/*).
+
+    Returns list of dicts with {path, size, record_count} for each Parquet file.
+    Only reads file metadata (HEAD requests), not file contents.
+    """
+    import os
+
+    import pyarrow.parquet as pq
+
+    scheme, path = _parse_remote_url(glob_url)
+
+    # Strip the glob suffix to get the directory prefix
+    if path.endswith("/*"):
+        prefix = path[:-2]
+    elif "*" in path:
+        prefix = path[:path.index("*")]
+    else:
+        prefix = path
+
+    files = []
+
+    if scheme == "s3":
+        from pyarrow.fs import S3FileSystem, FileSelector
+        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+        s3fs = S3FileSystem(anonymous=True, region=s3_region)
+        selector = FileSelector(prefix, recursive=False)
+        file_infos = s3fs.get_file_info(selector)
+
+        for fi in file_infos:
+            if fi.is_file and fi.path.endswith(".parquet"):
+                entry = {
+                    "path": f"s3://{fi.path}",
+                    "size": fi.size,
+                }
+                # Read row count from Parquet footer (range request only)
+                try:
+                    pf = pq.ParquetFile(fi.path, filesystem=s3fs)
+                    entry["record_count"] = pf.metadata.num_rows
+                except Exception:
+                    entry["record_count"] = 0
+                files.append(entry)
+                if verbose:
+                    name = fi.path.split("/")[-1]
+                    print(f"    {name}: {fi.size / 1024 / 1024:.0f} MB, {entry['record_count']:,} rows")
+
+    elif scheme == "gs":
+        from pyarrow.fs import GcsFileSystem, FileSelector
+        gcsfs = GcsFileSystem(anonymous=True)
+        selector = FileSelector(prefix, recursive=False)
+        file_infos = gcsfs.get_file_info(selector)
+
+        for fi in file_infos:
+            if fi.is_file and fi.path.endswith(".parquet"):
+                entry = {
+                    "path": f"gs://{fi.path}",
+                    "size": fi.size,
+                }
+                try:
+                    pf = pq.ParquetFile(fi.path, filesystem=gcsfs)
+                    entry["record_count"] = pf.metadata.num_rows
+                except Exception:
+                    entry["record_count"] = 0
+                files.append(entry)
+
+    return files
 
 
 def _get_remote_file_size(url: str, region: str | None = None) -> int:
@@ -247,17 +316,31 @@ def _get_remote_file_size(url: str, region: str | None = None) -> int:
     return Path(path).stat().st_size
 
 
+# ============== NAMESPACE VALIDATION ==============
+
+
+def _validate_namespace_or_raise(namespace: str):
+    """Validate namespace and raise ClickException if invalid."""
+    from namespace_utils import validate_namespace
+
+    error = validate_namespace(namespace)
+    if error:
+        raise click.ClickException(f"Invalid namespace '{namespace}': {error}")
+
+
 # ============== ICEBERG METADATA HELPER ==============
 
 
 def _create_iceberg_metadata(resource, resource_name, catalog, namespace,
                               parquet_path=None, table=None,
-                              data_file_url=None, verbose=False):
+                              data_file_url=None, data_files=None,
+                              verbose=False):
     """Create Iceberg metadata for a resource.
 
     Either parquet_path (reads schema from local file) or table (pre-built
     IcebergTable) must be provided.  data_file_url overrides the URL stored
     in the manifest (e.g., for remote data that stays at source).
+    data_files is a list of {path, size, record_count} for multi-file datasets.
 
     Returns the Path to the written v1.metadata.json.
     """
@@ -279,13 +362,16 @@ def _create_iceberg_metadata(resource, resource_name, catalog, namespace,
             raise ValueError("Either parquet_path or table must be provided")
         table = parquet_to_iceberg_table(str(parquet_path), table_name=resource_name)
 
-    metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
+    from namespace_utils import namespace_to_iceberg
+
+    iceberg_ns = namespace_to_iceberg(namespace)
+    metadata_dir = catalog.path / "data" / iceberg_ns / resource_name / "metadata"
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
     table_uuid = str(uuid.uuid4())
     data_base_url = f"file://{catalog.path.absolute()}"
-    table_path = f"{namespace}/{resource_name}"
-    file_url = data_file_url or f"file://{Path(parquet_path).absolute()}"
+    table_path = f"{iceberg_ns}/{resource_name}"
+    file_url = data_file_url or (f"file://{Path(parquet_path).absolute()}" if parquet_path else None)
 
     generate_manifest_files(
         table=table,
@@ -296,6 +382,7 @@ def _create_iceberg_metadata(resource, resource_name, catalog, namespace,
         sequence_number=1,
         table_path=table_path,
         data_file_path=file_url,
+        data_files=data_files,
     )
 
     metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
@@ -483,6 +570,7 @@ def register(ctx, origin_type: str, url: str, name: str | None, namespace: str,
     from schemas import validate_resource
 
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
 
     # Derive name from URL if not provided
     if not name:
@@ -597,6 +685,7 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
     from schemas import validate_resource
 
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
 
     # Handle --all flag for batch operations
     if all_resources:
@@ -818,6 +907,7 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
     from schemas import validate_resource
 
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
 
     # Handle --all flag for batch operations
     if all_resources:
@@ -894,30 +984,57 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
         click.echo(f"Creating remote Iceberg metadata for {resource_name}...")
         click.echo(f"  Remote URL: {remote_url}")
 
-        if verbose:
-            click.echo("  Reading Parquet schema from remote (range request only)...")
-
-        # Read schema from remote Parquet file without downloading
         import pyarrow.parquet as pq
 
-        try:
-            remote_pf = _open_remote_parquet(remote_url)
-        except Exception as e:
-            raise click.ClickException(f"Failed to read remote Parquet schema: {e}")
+        # Check if URL is a glob pattern (multi-file dataset)
+        is_glob = remote_url.rstrip("/").endswith("/*") or "*" in remote_url
+        data_files_list = None
 
-        arrow_schema = remote_pf.schema_arrow
-        num_rows = remote_pf.metadata.num_rows
+        if is_glob:
+            # List all files matching the glob pattern
+            click.echo("  Listing remote files...")
+            remote_files = _list_remote_files(remote_url, verbose=verbose)
 
-        # Get file size from remote
-        try:
-            file_size = _get_remote_file_size(remote_url)
-        except Exception:
-            file_size = 0  # Fallback if we can't determine size
+            if not remote_files:
+                raise click.ClickException(f"No files found matching: {remote_url}")
+
+            click.echo(f"  Found {len(remote_files)} files")
+
+            # Read schema from first file
+            first_file = remote_files[0]
+            if verbose:
+                click.echo(f"  Reading schema from {first_file['path'].split('/')[-1]}...")
+
+            try:
+                remote_pf = _open_remote_parquet(first_file["path"])
+            except Exception as e:
+                raise click.ClickException(f"Failed to read remote Parquet schema: {e}")
+
+            arrow_schema = remote_pf.schema_arrow
+            num_rows = sum(f.get("record_count", 0) for f in remote_files)
+            file_size = sum(f.get("size", 0) for f in remote_files)
+            data_files_list = remote_files
+        else:
+            if verbose:
+                click.echo("  Reading Parquet schema from remote (range request only)...")
+
+            try:
+                remote_pf = _open_remote_parquet(remote_url)
+            except Exception as e:
+                raise click.ClickException(f"Failed to read remote Parquet schema: {e}")
+
+            arrow_schema = remote_pf.schema_arrow
+            num_rows = remote_pf.metadata.num_rows
+
+            try:
+                file_size = _get_remote_file_size(remote_url)
+            except Exception:
+                file_size = 0
 
         if verbose:
             click.echo(f"  Schema: {len(arrow_schema)} fields")
-            click.echo(f"  Rows: {num_rows}")
-            click.echo(f"  Size: {file_size / 1024 / 1024:.1f} MB")
+            click.echo(f"  Rows: {num_rows:,}" if num_rows else "  Rows: unknown")
+            click.echo(f"  Size: {file_size / 1024 / 1024 / 1024:.1f} GB" if file_size > 1024**3 else f"  Size: {file_size / 1024 / 1024:.1f} MB")
 
         # Create Iceberg table from remote schema
         from iceberg_catalog import IcebergTable, _arrow_schema_to_iceberg
@@ -934,7 +1051,9 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
 
         metadata_path = _create_iceberg_metadata(
             resource, resource_name, catalog, namespace,
-            table=table, data_file_url=remote_url, verbose=verbose,
+            table=table, data_file_url=remote_url if not is_glob else None,
+            data_files=data_files_list,
+            verbose=verbose,
         )
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
@@ -948,9 +1067,11 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
 
         save_resource(resource, resource_path)
 
+        n_files = len(data_files_list) if data_files_list else 1
         click.echo(f"Remote Iceberg metadata created: {metadata_path}")
         click.echo(f"  State: {resource.state.upper()}")
-        click.echo(f"  Data: stays at {remote_url} (not downloaded)")
+        click.echo(f"  Files: {n_files}")
+        click.echo(f"  Data: stays remote (not downloaded)")
         click.echo()
         click.echo("Query with DuckDB:")
         click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
@@ -1053,6 +1174,7 @@ def add_resource(ctx, source: str, origin_type: str | None, name: str | None,
     """
     if public:
         namespace = "public"
+    _validate_namespace_or_raise(namespace)
 
     # -- Step 1: Auto-detect source type if not provided --
     if origin_type is None:
@@ -1225,6 +1347,7 @@ def update_resource(ctx, resource_name: str | None, namespace: str,
     from portolan_resource import load_resource
 
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
     controller = _get_controller(catalog)
 
     if all_resources:
@@ -1395,56 +1518,181 @@ def dataset_add(ctx, file: str, dataset_id: str | None, title: str | None,
 
 
 @dataset.command("list")
+@click.option("--namespace", "-ns", default=None, help="Filter by namespace")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed information")
+@click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @click.pass_context
-def dataset_list(ctx, verbose: bool):
-    """List datasets in the local catalog."""
+def dataset_list(ctx, namespace: str | None, verbose: bool, as_json: bool):
+    """List all resources with their state and sync status."""
+    from portolan_resource import load_resource
+
     catalog = get_catalog(ctx)
+    resources_dir = catalog.path / "resources"
 
-    # Find all metadata files
-    found_any = False
+    if not resources_dir.exists():
+        click.echo("No resources found. Add one with:")
+        click.echo("  portolan add <file.parquet> --public")
+        return
 
-    for visibility in ["public", "private"]:
-        vis_dir = catalog.path / visibility
-        if not vis_dir.exists():
+    # Collect all resources grouped by namespace
+    namespaces: dict[str, list] = {}
+    target_namespaces = [namespace] if namespace else sorted(
+        d.name for d in resources_dir.iterdir() if d.is_dir()
+    )
+
+    for ns in target_namespaces:
+        ns_dir = resources_dir / ns
+        if not ns_dir.exists():
+            if namespace:
+                raise click.ClickException(f"Namespace not found: {namespace}")
             continue
 
-        datasets = []
-        for metadata_file in vis_dir.rglob("v1.metadata.json"):
-            # Extract collection and dataset info from path
-            rel_path = metadata_file.relative_to(vis_dir)
-            parts = list(rel_path.parts)
+        resources = []
+        for rf in sorted(ns_dir.glob("*.json")):
+            if rf.name.startswith("_"):
+                continue
+            res = load_resource(rf)
+            resources.append(res)
 
-            # Try to find collection name
-            if "data" in parts:
-                idx = parts.index("data")
-                collection = parts[idx + 1] if idx + 1 < len(parts) else "unknown"
-                dataset_name = parts[idx + 2] if idx + 2 < len(parts) else "unknown"
+        if resources:
+            namespaces[ns] = resources
+
+    if not namespaces:
+        click.echo("No resources found. Add one with:")
+        click.echo("  portolan add <file.parquet> --public")
+        return
+
+    # Try to get last sync events from control plane
+    last_events: dict[str, dict] = {}
+    controller = _get_controller(catalog)
+    if controller:
+        try:
+            for ns, resources in namespaces.items():
+                for res in resources:
+                    event = controller.store.get_last_event("snapshot", f"{ns}/{res.name}")
+                    if event:
+                        last_events[f"{ns}/{res.name}"] = event
+        except Exception:
+            pass  # Control plane is optional
+        finally:
+            controller.close()
+
+    # JSON output
+    if as_json:
+        import json as json_mod
+        output = []
+        for ns, resources in namespaces.items():
+            for res in resources:
+                key = f"{ns}/{res.name}"
+                entry = {
+                    "namespace": ns,
+                    "name": res.name,
+                    "kind": res.kind,
+                    "state": res.state,
+                    "origin_type": res.origin.type if res.origin else None,
+                    "updated_at": res.updated_at,
+                }
+                if key in last_events:
+                    evt = last_events[key]
+                    entry["last_sync"] = {
+                        "status": evt.get("status"),
+                        "at": str(evt.get("started_at", "")),
+                    }
+                output.append(entry)
+        click.echo(json_mod.dumps(output, indent=2, default=str))
+        return
+
+    # State indicators
+    state_icons = {
+        "materialized": click.style("●", fg="green"),
+        "cached":       click.style("◐", fg="yellow"),
+        "external":     click.style("○", fg="white"),
+        "unknown":      click.style("?", fg="red"),
+    }
+    state_labels = {
+        "materialized": click.style("materialized", fg="green"),
+        "cached":       click.style("cached", fg="yellow"),
+        "external":     click.style("external", dim=True),
+        "unknown":      click.style("unknown", fg="red"),
+    }
+
+    total = sum(len(r) for r in namespaces.values())
+    click.echo(click.style(f"Resources ({total})", bold=True))
+    click.echo()
+
+    # Build tree from namespace names and render recursively
+    from namespace_utils import build_namespace_tree
+
+    tree = build_namespace_tree(list(namespaces.keys()))
+
+    def _render_resource(res, ns, depth):
+        key = f"{ns}/{res.name}"
+        icon = state_icons.get(res.state, "?")
+        state_label = state_labels.get(res.state, res.state)
+        indent = "  " * (depth + 1)
+
+        line = f"{indent}{icon} {res.name}"
+        line += f"  {click.style(f'[{res.kind}]', dim=True)}"
+        line += f"  {state_label}"
+
+        event = last_events.get(key)
+        if event:
+            sync_status = event.get("status", "")
+            started = event.get("started_at", "")
+            if hasattr(started, "strftime"):
+                time_str = started.strftime("%Y-%m-%d %H:%M")
             else:
-                collection = parts[0] if parts else "unknown"
-                dataset_name = parts[1] if len(parts) > 1 else "unknown"
+                time_str = str(started)[:16]
 
-            datasets.append({
-                "collection": collection,
-                "name": dataset_name,
-                "path": str(rel_path),
-            })
+            if sync_status == "completed":
+                sync_icon = click.style("✓", fg="green")
+            elif sync_status == "failed":
+                sync_icon = click.style("✗", fg="red")
+            else:
+                sync_icon = click.style("…", fg="yellow")
 
-        if datasets:
-            found_any = True
-            click.echo(click.style(f"\n{visibility.title()} datasets:", bold=True))
-            click.echo("-" * 40)
+            line += f"  {sync_icon} {time_str}"
 
-            for ds in datasets:
-                if verbose:
-                    click.echo(f"  {ds['collection']}/{ds['name']}")
-                    click.echo(f"    Path: {ds['path']}")
-                else:
-                    click.echo(f"  {ds['collection']}/{ds['name']}")
+        click.echo(line)
 
-    if not found_any:
-        click.echo("No datasets found. Add one with:")
-        click.echo("  portolan dataset add <file.parquet> --public")
+        if verbose:
+            v_indent = indent + "  "
+            if res.origin:
+                origin_str = res.origin.type
+                if res.origin.url:
+                    url = res.origin.url
+                    if len(url) > 60:
+                        url = url[:57] + "..."
+                    origin_str += f" ({url})"
+                click.echo(click.style(f"{v_indent}origin: {origin_str}", dim=True))
+
+            if res.assets.snapshot:
+                snap = res.assets.snapshot
+                click.echo(click.style(f"{v_indent}snapshot: {snap.format}  taken {snap.taken_at[:10]}", dim=True))
+
+            if res.updated_at:
+                click.echo(click.style(f"{v_indent}updated: {res.updated_at[:10]}", dim=True))
+
+            if event and event.get("status") == "failed" and event.get("error_message"):
+                click.echo(click.style(f"{v_indent}error: {event['error_message'][:80]}", fg="red"))
+
+    def _render_tree(node, depth, accumulated_ns):
+        for name, children in sorted(node.items()):
+            current_ns = f"{accumulated_ns}.{name}" if accumulated_ns else name
+            indent = "  " * (depth + 1)
+            click.echo(click.style(f"{indent}{name}/", bold=True))
+
+            # Render resources at this namespace level
+            if current_ns in namespaces:
+                for res in namespaces[current_ns]:
+                    _render_resource(res, current_ns, depth + 1)
+
+            # Recurse into children
+            if children:
+                _render_tree(children, depth + 1, current_ns)
+
+    _render_tree(tree, 0, "")
+    click.echo()
 
 
 @dataset.command("remove")
@@ -2762,70 +3010,89 @@ def discover_arcgis_services(
 ) -> tuple[list[dict], list[dict]]:
     """Discover FeatureServers and ImageServers from an ArcGIS REST endpoint.
 
+    Recursively crawls folders to find services in subdirectories.
+
     Args:
         services_url: ArcGIS REST services URL (e.g. https://...arcgis.com/.../rest/services)
         verbose: Print discovery progress
 
     Returns:
         (feature_servers, image_servers) where each is a list of dicts:
-          feature_server: {name, url, layers: [{id, name, geometryType}]}
-          image_server: {name, url, pixel_type, band_count, extent}
+          feature_server: {name, url, layers: [{id, name, geometryType}], _folder_path}
+          image_server: {name, url, pixel_type, band_count, extent, _folder_path}
     """
     import httpx
 
     services_url = services_url.rstrip("/")
 
-    if verbose:
-        click.echo(f"Discovering services from {services_url}")
-
-    try:
-        response = httpx.get(f"{services_url}?f=json", timeout=30)
-        response.raise_for_status()
-        data = response.json()
-    except Exception as e:
-        raise click.ClickException(f"Failed to fetch services: {e}")
-
     feature_servers = []
     image_servers = []
 
-    for service in data.get("services", []):
-        service_type = service.get("type")
-        name = service.get("name", "unknown")
+    def _crawl_folder(folder_url: str, folder_path: str):
+        if verbose:
+            label = folder_path or "(root)"
+            click.echo(f"Discovering services in {label}...")
 
-        if service_type == "FeatureServer":
-            url = service.get("url") or f"{services_url}/{name}/FeatureServer"
-            try:
-                fs_response = httpx.get(f"{url}?f=json", timeout=30)
-                fs_response.raise_for_status()
-                fs_data = fs_response.json()
-                layers = fs_data.get("layers", [])
-                feature_servers.append({"name": name, "url": url, "layers": layers})
-                if verbose:
-                    click.echo(f"  FeatureServer: {name} ({len(layers)} layers)")
-            except Exception as e:
-                if verbose:
-                    click.echo(f"  Skipping FeatureServer {name}: {e}")
+        try:
+            response = httpx.get(f"{folder_url}?f=json", timeout=30)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            if verbose:
+                click.echo(f"  Failed to fetch {folder_url}: {e}")
+            return
 
-        elif service_type == "ImageServer":
-            url = service.get("url") or f"{services_url}/{name}/ImageServer"
-            try:
-                is_response = httpx.get(f"{url}?f=json", timeout=30)
-                is_response.raise_for_status()
-                is_data = is_response.json()
-                image_servers.append({
-                    "name": name,
-                    "url": url,
-                    "pixel_type": is_data.get("pixelType"),
-                    "band_count": is_data.get("bandCount"),
-                    "extent": is_data.get("extent"),
-                })
-                if verbose:
-                    bands = is_data.get("bandCount", "?")
-                    pixel_type = is_data.get("pixelType", "?")
-                    click.echo(f"  ImageServer: {name} ({bands} bands, {pixel_type})")
-            except Exception as e:
-                if verbose:
-                    click.echo(f"  Skipping ImageServer {name}: {e}")
+        for service in data.get("services", []):
+            service_type = service.get("type")
+            name = service.get("name", "unknown")
+            # ArcGIS returns names like "FolderA/ServiceName" — strip the folder prefix
+            short_name = name.split("/")[-1] if "/" in name else name
+
+            if service_type == "FeatureServer":
+                url = service.get("url") or f"{services_url}/{name}/FeatureServer"
+                try:
+                    fs_response = httpx.get(f"{url}?f=json", timeout=30)
+                    fs_response.raise_for_status()
+                    fs_data = fs_response.json()
+                    layers = fs_data.get("layers", [])
+                    feature_servers.append({
+                        "name": short_name, "url": url, "layers": layers,
+                        "_folder_path": folder_path,
+                    })
+                    if verbose:
+                        click.echo(f"  FeatureServer: {name} ({len(layers)} layers)")
+                except Exception as e:
+                    if verbose:
+                        click.echo(f"  Skipping FeatureServer {name}: {e}")
+
+            elif service_type == "ImageServer":
+                url = service.get("url") or f"{services_url}/{name}/ImageServer"
+                try:
+                    is_response = httpx.get(f"{url}?f=json", timeout=30)
+                    is_response.raise_for_status()
+                    is_data = is_response.json()
+                    image_servers.append({
+                        "name": short_name,
+                        "url": url,
+                        "pixel_type": is_data.get("pixelType"),
+                        "band_count": is_data.get("bandCount"),
+                        "extent": is_data.get("extent"),
+                        "_folder_path": folder_path,
+                    })
+                    if verbose:
+                        bands = is_data.get("bandCount", "?")
+                        pixel_type = is_data.get("pixelType", "?")
+                        click.echo(f"  ImageServer: {name} ({bands} bands, {pixel_type})")
+                except Exception as e:
+                    if verbose:
+                        click.echo(f"  Skipping ImageServer {name}: {e}")
+
+        # Recursively crawl subfolders
+        for folder_name in data.get("folders", []):
+            sub_path = f"{folder_path}/{folder_name}" if folder_path else folder_name
+            _crawl_folder(f"{services_url}/{folder_name}", sub_path)
+
+    _crawl_folder(services_url, "")
 
     return feature_servers, image_servers
 
@@ -3079,8 +3346,11 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         file_size_bytes=parquet_path.stat().st_size,
     )
 
-    # Collect all tables to register (resources + direct data tables)
-    all_tables = [iceberg_table]
+    # Collect tables grouped by namespace
+    from namespace_utils import namespace_to_iceberg
+
+    tables_by_ns: dict[str, list] = {"_meta": [iceberg_table]}
+    direct_count = 0
 
     # Register GeoParquet and Raquet files as direct Iceberg tables
     click.echo("Registering direct data tables...")
@@ -3090,6 +3360,7 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         fmt = r.get("format", "")
         rtype = r.get("type", "external")
         name = r.get("name", "")
+        ns = r.get("namespace", "default")
         assets = r.get("assets", {})
 
         if fmt not in direct_table_formats:
@@ -3107,7 +3378,8 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         # For managed/cached data, copy to the catalog
         # For external with HTTP/GCS URLs, download
         try:
-            table_data_dir = catalog.path / "data" / name
+            iceberg_ns = namespace_to_iceberg(ns)
+            table_data_dir = catalog.path / "data" / iceberg_ns / name
             table_data_dir.mkdir(parents=True, exist_ok=True)
             table_parquet_path = table_data_dir / f"{name}.parquet"
 
@@ -3151,16 +3423,17 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
             # Create IcebergTable
             direct_table = IcebergTable(
                 name=name,
-                parquet_path=f"{name}/{name}.parquet",
+                parquet_path=f"{iceberg_ns}/{name}/{name}.parquet",
                 schema=_arrow_schema_to_iceberg(table_pa.schema),
                 arrow_schema=table_pa.schema,
                 num_rows=table_pa.num_rows,
                 file_size_bytes=table_parquet_path.stat().st_size,
             )
-            all_tables.append(direct_table)
+            tables_by_ns.setdefault(ns, []).append(direct_table)
+            direct_count += 1
 
             if verbose:
-                click.echo(f"  Registered {name} ({fmt}, {table_pa.num_rows} rows)")
+                click.echo(f"  Registered {iceberg_ns}.{name} ({fmt}, {table_pa.num_rows} rows)")
 
         except Exception as e:
             if verbose:
@@ -3174,12 +3447,12 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         # Default to local path for testing
         data_base_url = f"file://{catalog.path.absolute()}"
 
-    # Generate full Iceberg catalog
-    click.echo(f"Generating Iceberg catalog with {len(all_tables)} tables...")
+    # Generate full Iceberg catalog with multi-namespace support
+    total_tables = sum(len(ts) for ts in tables_by_ns.values())
+    click.echo(f"Generating Iceberg catalog with {total_tables} tables across {len(tables_by_ns)} namespaces...")
     generate_static_catalog(
-        tables=all_tables,
+        tables=tables_by_ns,
         output_dir=str(catalog.path),
-        namespace="portolan",
         prefix="catalog",
         data_base_url=data_base_url,
         verbose=verbose,
@@ -3192,7 +3465,7 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
     click.echo()
     click.echo(click.style("Built Iceberg catalog!", fg="green"))
     click.echo(f"  Resources: {len(resources)}")
-    click.echo(f"  Direct tables: {len(all_tables) - 1}")  # Minus the resources table
+    click.echo(f"  Direct tables: {direct_count}")
     click.echo(f"  Location: {catalog.path}")
 
     # Regenerate all enabled outputs (STAC, ISO, etc.)
@@ -3209,11 +3482,14 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         click.echo(f"  {fmt}: {count}")
 
     # Show registered direct tables
-    if len(all_tables) > 1:
-        click.echo("\nDirect tables (queryable as catalog.portolan.<name>):")
-        for t in all_tables:
-            if t.name != "resources":
-                click.echo(f"  - {t.name}")
+    if direct_count > 0:
+        click.echo("\nDirect tables:")
+        for ns, ts in tables_by_ns.items():
+            if ns == "_meta":
+                continue
+            iceberg_ns = namespace_to_iceberg(ns)
+            for t in ts:
+                click.echo(f"  - catalog.{iceberg_ns}.{t.name}")
 
     click.echo("\nQuery with DuckDB (simple Parquet):")
     click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{simple_parquet}'\"")
@@ -3237,11 +3513,18 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         click.echo("  );")
         click.echo("  -- Discovery table:")
         click.echo("  SELECT * FROM catalog.portolan.resources;")
-        if len(all_tables) > 1:
-            direct_names = [t.name for t in all_tables if t.name != "resources"]
+        if direct_count > 0:
             click.echo("  -- Direct data tables:")
-            for tname in direct_names[:3]:  # Show first 3
-                click.echo(f"  SELECT * FROM catalog.portolan.{tname} LIMIT 10;")
+            shown = 0
+            for ns, ts in tables_by_ns.items():
+                if ns == "_meta":
+                    continue
+                iceberg_ns = namespace_to_iceberg(ns)
+                for t in ts:
+                    if shown >= 3:
+                        break
+                    click.echo(f"  SELECT * FROM catalog.{iceberg_ns}.{t.name} LIMIT 10;")
+                    shown += 1
         click.echo("\nBigQuery (BigLake Iceberg table):")
         click.echo(f"  bq mk --table --external_table_definition=ICEBERG={base_url}/data/resources/metadata/v1.metadata.json dataset.resources")
 
@@ -3267,6 +3550,7 @@ def import_stac(ctx, url: str, namespace: str, max_items: int, collections: tupl
         portolan import stac https://example.com/stac/catalog.json -c sentinel-2
     """
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
 
     click.echo(f"Fetching STAC catalog from {url}...")
 
@@ -3468,6 +3752,7 @@ def import_arcgis_server(
         portolan import arcgis-server https://server.com/rest/services --skip-rasters
     """
     catalog = get_catalog(ctx)
+    _validate_namespace_or_raise(namespace)
 
     # Validate URL
     if "/rest/services" not in url and not url.rstrip("/").endswith("/services"):
@@ -3489,10 +3774,15 @@ def import_arcgis_server(
         click.echo("No services found.")
         return
 
-    # Build list of resources to import
+    from namespace_utils import arcgis_folder_to_namespace
+
+    # Build list of resources to import, mapping folder paths to namespaces
     resources_to_import = []
 
     for fs in feature_servers:
+        folder_path = fs.get("_folder_path", "")
+        ns = arcgis_folder_to_namespace(namespace, folder_path)
+
         for layer in fs["layers"]:
             layer_id = layer.get("id", 0)
             layer_name = layer.get("name", f"layer_{layer_id}")
@@ -3509,6 +3799,7 @@ def import_arcgis_server(
             resources_to_import.append({
                 "name": name,
                 "kind": "vector",
+                "_namespace": ns,
                 "origin": {
                     "type": "arcgis_featureserver",
                     "url": layer_url,
@@ -3523,6 +3814,8 @@ def import_arcgis_server(
             })
 
     for imgs in image_servers:
+        folder_path = imgs.get("_folder_path", "")
+        ns = arcgis_folder_to_namespace(namespace, folder_path)
         name = _sanitize_resource_name(imgs["name"])
         bands = imgs.get("band_count", "?")
         pixel_type = imgs.get("pixel_type", "unknown")
@@ -3530,6 +3823,7 @@ def import_arcgis_server(
         resources_to_import.append({
             "name": name,
             "kind": "raster",
+            "_namespace": ns,
             "origin": {
                 "type": "arcgis_imageserver",
                 "url": imgs["url"],
@@ -3564,11 +3858,9 @@ def import_arcgis_server(
             click.echo(f"  ... and {len(resources_to_import) - 15} more")
         return
 
-    # Save resources to catalog
-    click.echo(f"\nSaving to namespace '{namespace}'...")
-
-    resources_dir = catalog.path / "resources" / namespace
-    resources_dir.mkdir(parents=True, exist_ok=True)
+    # Save resources to catalog (grouped by namespace from folder paths)
+    namespaces_used = sorted({r["_namespace"] for r in resources_to_import})
+    click.echo(f"\nSaving to {len(namespaces_used)} namespace(s)...")
 
     from output_generators import update_all_outputs
 
@@ -3576,17 +3868,23 @@ def import_arcgis_server(
     saved = 0
 
     for item in resources_to_import:
+        item_ns = item.pop("_namespace")
         item["created_at"] = now
         item["updated_at"] = now
 
-        resource_file = resources_dir / f"{item['name']}.json"
+        ns_dir = catalog.path / "resources" / item_ns
+        ns_dir.mkdir(parents=True, exist_ok=True)
+
+        resource_file = ns_dir / f"{item['name']}.json"
         with open(resource_file, "w") as f:
             json.dump(item, f, indent=2)
 
-        update_all_outputs(catalog, item, namespace, verbose=verbose)
+        update_all_outputs(catalog, item, item_ns, verbose=verbose)
         saved += 1
 
-    # Save index file
+    # Save index file in base namespace
+    base_resources_dir = catalog.path / "resources" / namespace
+    base_resources_dir.mkdir(parents=True, exist_ok=True)
     index = {
         "namespace": namespace,
         "source": url,
@@ -3595,15 +3893,19 @@ def import_arcgis_server(
         "total_items": len(resources_to_import),
         "feature_servers": len(feature_servers),
         "image_servers": len(image_servers),
+        "namespaces": namespaces_used,
     }
-    with open(resources_dir / "_index.json", "w") as f:
+    with open(base_resources_dir / "_index.json", "w") as f:
         json.dump(index, f, indent=2)
 
     enabled = [k for k, v in catalog.outputs.items() if v and k != "iceberg"]
 
     click.echo()
     click.echo(click.style(f"Imported {saved} resources!", fg="green"))
-    click.echo(f"  Location: {resources_dir}")
+    if len(namespaces_used) > 1:
+        click.echo(f"  Namespaces: {', '.join(namespaces_used)}")
+    else:
+        click.echo(f"  Namespace: {namespaces_used[0]}")
     if enabled:
         click.echo(f"  Also updated: {', '.join(enabled)}")
     click.echo("\nNext steps:")

@@ -217,6 +217,17 @@ Optional dependencies:
 - [STAC](https://stacspec.org/) - SpatioTemporal Asset Catalog
 - [DuckDB](https://duckdb.org/) - Analytical database with Iceberg support
 
+## Known Limitations
+
+### Iceberg metadata and data must be co-located for BigQuery
+
+BigQuery requires that Iceberg metadata files (metadata JSON, manifest-list, manifest Avro) and the underlying Parquet data files reside in the same GCS bucket. You cannot have metadata on GCS pointing to data on S3. This means `materialize --remote` with cross-cloud data (e.g., S3 Parquet + GCS metadata) will create a valid Iceberg table that DuckDB can query but BigQuery cannot.
+
+Workarounds:
+- Mirror the data files to the same GCS bucket as the metadata
+- Use BigQuery Omni to run queries in the same cloud region as the data
+- Use DuckDB or other engines that support cross-location Iceberg tables
+
 ## Contributing
 
 Contributions are welcome! Please:
