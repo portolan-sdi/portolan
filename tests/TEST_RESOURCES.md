@@ -30,7 +30,6 @@ portolan register wfs "https://wmts.mapama.gob.es/sig/wfs_agua/demarcaciones_et/
   --title "Demarcaciones Hidrográficas España"
 
 portolan snapshot demarcaciones_agua --namespace test
-portolan materialize demarcaciones_agua --namespace test
 
 # Verify
 duckdb -c "SELECT gml_id, nom_demar FROM iceberg_scan('.portolan/data/test/demarcaciones_agua/metadata/v1.metadata.json') LIMIT 5"
@@ -69,7 +68,6 @@ portolan register arcgis_featureserver \
   --name wildfire_points --namespace test --title "Wildfire Response Points"
 
 portolan snapshot wildfire_points --namespace test
-portolan materialize wildfire_points --namespace test
 
 # Verify
 duckdb -c "SELECT objectid, eventtype FROM iceberg_scan('.portolan/data/test/wildfire_points/metadata/v1.metadata.json') LIMIT 5"
@@ -119,8 +117,6 @@ portolan register arcgis_imageserver \
 # Snapshot with bounding box (required for large services)
 portolan snapshot noaa_satellite_24hr --namespace test --bbox "-10,35,5,45"
 
-portolan materialize noaa_satellite_24hr --namespace test
-
 # Verify (Raquet format - QUADBIN indexed raster)
 duckdb -c "SELECT block, band_1[1:5] FROM iceberg_scan('.portolan/data/test/noaa_satellite_24hr/metadata/v1.metadata.json') LIMIT 5"
 ```
@@ -167,7 +163,6 @@ portolan register stac \
   --title "Copernicus DEM Test Tile"
 
 portolan snapshot copernicus_dem_test --namespace test
-portolan materialize copernicus_dem_test --namespace test
 
 # Verify (Raquet format for raster STAC items)
 duckdb -c "SELECT block, band_1[1:5] FROM iceberg_scan('.portolan/data/test/copernicus_dem_test/metadata/v1.metadata.json')"
@@ -227,15 +222,11 @@ portolan catalog sync wildfire
 portolan catalog list
 # wildfire (arcgis) - https://sampleserver6.arcgisonline.com/... - last sync: 2025-02-05
 
-# 4. Batch snapshot all resources in federated namespace
+# 4. Batch snapshot all resources in federated namespace (also creates Iceberg metadata)
 portolan snapshot --all --namespace federated_wildfire --verbose
 # Output: Batch snapshot complete: 3 succeeded, 0 failed
 
-# 5. Batch materialize all resources
-portolan materialize --all --namespace federated_wildfire --verbose
-# Output: Batch materialize complete: 3 succeeded, 0 failed
-
-# 6. Verify
+# 5. Verify
 duckdb -c "SELECT COUNT(*) FROM iceberg_scan('.portolan/data/federated_wildfire/wildfire_response_points/metadata/v1.metadata.json')"
 ```
 
@@ -293,20 +284,16 @@ duckdb -c "SELECT COUNT(*) FROM iceberg_scan('.portolan/data/federated_wildfire/
 
 ## Batch Operations
 
-Both `snapshot` and `materialize` commands support `--all` flag for batch processing:
+The `snapshot` command supports `--all` flag for batch processing:
 
 ```bash
-# Snapshot all EXTERNAL resources in a namespace
+# Snapshot all EXTERNAL resources in a namespace (also creates Iceberg metadata)
 portolan snapshot --all --namespace <namespace> [--force] [--verbose]
-
-# Materialize all CACHED resources in a namespace
-portolan materialize --all --namespace <namespace> [--force] [--verbose]
 ```
 
 **Behavior:**
-- `snapshot --all`: Processes all EXTERNAL resources (or CACHED with `--force`)
-- `materialize --all`: Processes all CACHED resources (or MATERIALIZED with `--force`)
-- Reports: "Batch <operation> complete: X succeeded, Y failed"
+- `snapshot --all`: Processes all EXTERNAL resources (or CACHED with `--force`), creating Iceberg metadata automatically
+- Reports: "Batch snapshot complete: X succeeded, Y failed"
 
 ---
 
@@ -316,13 +303,11 @@ portolan materialize --all --namespace <namespace> [--force] [--verbose]
 # Full extractor test suite
 uv run pytest tests/test_extractors.py -v
 
-# Manual verification
+# Manual verification (snapshot creates Iceberg metadata automatically)
 portolan snapshot <resource> --namespace test --verbose
-portolan materialize <resource> --namespace test --verbose
 
 # Batch workflow test
 portolan catalog add <url> --name test_catalog --type arcgis
 portolan catalog sync test_catalog
 portolan snapshot --all --namespace federated_test_catalog
-portolan materialize --all --namespace federated_test_catalog
 ```

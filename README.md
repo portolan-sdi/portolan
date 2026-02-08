@@ -28,7 +28,7 @@ uv sync
 # Initialize a catalog
 uv run portolan init
 
-# Add a dataset (register + snapshot + materialize)
+# Add a dataset (register + snapshot)
 uv run portolan add data.parquet --public --title "My Dataset"
 
 # Query with DuckDB

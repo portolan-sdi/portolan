@@ -21,19 +21,16 @@ Both tables and resources can be:
 Resources progress through a **type-aware** lifecycle where the path depends on the data kind:
 
 ```
-VECTOR:  EXTERNAL ──snapshot──▶ MATERIALIZED  (1 step, Iceberg is free)
-         (origin)               (GeoParquet + Iceberg metadata)
-
-RASTER:  EXTERNAL ──snapshot──▶ CACHED ──materialize──▶ MATERIALIZED
-         (origin)               (COG/Zarr)               (Raquet + Iceberg)
+ALL KINDS:  EXTERNAL ──snapshot──▶ MATERIALIZED  (1 step)
+            (origin)               (Parquet + Iceberg metadata)
 ```
 
-| Kind | Origin (various) | snapshot produces | materialize produces |
-|------|------------------|-------------------|----------------------|
-| **Vector** | Shapefile, GeoJSON, WFS, ArcGIS FeatureServer, PostGIS, etc. | GeoParquet + Iceberg metadata (done!) | No-op (already materialized) |
-| **Raster** | GeoTIFF, JPEG2000, ArcGIS ImageServer, STAC assets, etc. | COG or Zarr (cache only) | Raquet (QUADBIN indexed) + Iceberg |
-| **Point Cloud** | LAS, LAZ, E57, etc. | COPC (cache only) | Pointquet + Iceberg |
-| **Tileset** | MBTiles, PMTiles, 3D Tiles, etc. | Tilesets (cache only) | Tilequet + Iceberg |
+| Kind | Origin (various) | snapshot produces |
+|------|------------------|-------------------|
+| **Vector** | Shapefile, GeoJSON, WFS, ArcGIS FeatureServer, PostGIS, etc. | GeoParquet + Iceberg metadata |
+| **Raster** | GeoTIFF, JPEG2000, ArcGIS ImageServer, STAC assets, etc. | Raquet (QUADBIN indexed) + Iceberg |
+| **Point Cloud** | LAS, LAZ, E57, etc. | COPC + Iceberg |
+| **Tileset** | MBTiles, PMTiles, 3D Tiles, etc. | Tilesets + Iceberg |
 
 ### Why Type-Aware?
 

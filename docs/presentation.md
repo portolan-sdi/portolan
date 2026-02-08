@@ -1,693 +1,202 @@
-# Portolan: Geospatial Data Infrastructure for the Modern Stack
+# Portal.line Vision Deck
 
-A presentation on architecture, design decisions, and implementation.
-
----
-
-## The Problem
-
-### Traditional SDI Pain Points
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           Current Reality                                │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐ │
-│   │ Shapefile│  │ GeoJSON  │  │ PostGIS  │  │  ArcGIS  │  │ WFS/WMS  │ │
-│   └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬─────┘ │
-│        │             │             │             │             │        │
-│        └─────────────┴──────┬──────┴─────────────┴─────────────┘        │
-│                             ▼                                           │
-│                    ┌────────────────┐                                   │
-│                    │ Different APIs │                                   │
-│                    │ for each source│                                   │
-│                    └────────┬───────┘                                   │
-│                             │                                           │
-│        ┌────────────────────┼────────────────────┐                      │
-│        ▼                    ▼                    ▼                      │
-│  ┌───────────┐      ┌───────────────┐    ┌─────────────┐               │
-│  │ No unified│      │    Format     │    │     No      │               │
-│  │   query   │      │  conversions  │    │ versioning  │               │
-│  └───────────┘      └───────────────┘    └─────────────┘               │
-│                                                                         │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
-**Pain Points:**
-- Fragmented data sources with incompatible APIs
-- No standard way to discover and query geospatial metadata
-- Format proliferation (Shapefile, GeoJSON, GeoPackage, etc.)
-- Difficult for AI/LLMs to understand and query
-- No cloud-native workflow
+A proposed presentation script for explaining Portal.line as a SQL-first, Iceberg-native catalog for analytics and geospatial metadata.
 
 ---
 
-## The Solution: Portolan
+## 1. Opening: Why This, Why Now
 
-### Core Value Proposition
+- Geospatial infrastructure is still fragmented across many APIs and metadata standards.
+- Analytics platforms have converged around open table standards and SQL.
+- AI agents need one canonical, machine-readable interface, not five different catalog dialects.
 
-```
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│       WFS       │  │     ArcGIS      │  │      STAC       │
-└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
-         │                    │                    │
-         └────────────────────┼────────────────────┘
-                              ▼
-         ┌────────────────────────────────────────────┐
-         │              PORTOLAN CATALOG              │
-         │                                            │
-         │  ┌──────────────┐  ┌───────────────────┐  │
-         │  │  GeoParquet  │  │  Iceberg Tables   │  │
-         │  └──────────────┘  └───────────────────┘  │
-         │                                            │
-         │  ┌──────────────────────────────────────┐ │
-         │  │         Cloud Storage (S3/GCS)       │ │
-         │  └──────────────────────────────────────┘ │
-         └────────────────────┬───────────────────────┘
-                              │
-         ┌────────────────────┼────────────────────┐
-         ▼                    ▼                    ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│    SQL Query    │  │    STAC API     │  │   ISO 19139     │
-│ DuckDB/Snowflake│  │                 │  │    OGC API      │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
-```
-
-**Portolan provides:**
-1. **Unified ingestion** from any geospatial source
-2. **Cloud-native formats** (GeoParquet, COG, Iceberg)
-3. **SQL-queryable metadata** via Iceberg tables
-4. **Multi-standard outputs** (STAC, ISO 19139, OGC)
-5. **AI-ready** with Open Semantic Interchange (OSI)
+**Core message:** Portal.line connects modern analytics architecture with the geospatial metadata world.
 
 ---
 
-## Architecture Overview
+## 2. Vision in One Sentence
 
-### Local-First Design
+**Portal.line is a canonical metadata system where resources are defined once, enriched with semantics, and published to multiple standards.**
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                        LOCAL (.portolan/)                            │
-│                                                                      │
-│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │
-│   │ config.json │  │ resources/  │  │    data/    │  │ state.json│  │
-│   └─────────────┘  └─────────────┘  └─────────────┘  └───────────┘  │
-│                                                                      │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │
-                               │ portolan sync
-                               ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                        REMOTE (GCS/S3)                               │
-│                                                                      │
-│   ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌───────────┐  │
-│   │   Iceberg   │  │ Data Files  │  │    STAC     │  │ ISO 19139 │  │
-│   │   Catalog   │  │  (Parquet)  │  │   Catalog   │  │    XML    │  │
-│   └─────────────┘  └─────────────┘  └─────────────┘  └───────────┘  │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
-
-**Design Decision:** Local-first workflow allows offline work, version control of metadata, and batch operations before syncing to cloud storage.
+- One place to create and govern resources.
+- One canonical metadata model.
+- Many output formats for compatibility.
 
 ---
 
-## Resource Lifecycle
+## 3. Design Principles
 
-### Type-Aware Behavior
-
-The lifecycle is **type-aware** - vectors and rasters take different paths:
-
-```
-  VECTOR (GeoParquet):
-  ┌─────────────┐    snapshot     ┌──────────────────────────────────┐
-  │  EXTERNAL   │ ──────────────▶ │  MATERIALIZED                    │
-  │  (reference)│    (cheap)      │  GeoParquet + Iceberg metadata   │
-  └─────────────┘                 │  (auto-registered, no rewrite!)  │
-       register                   └──────────────────────────────────┘
-
-  RASTER (COG/Zarr → Raquet):
-  ┌─────────────┐    snapshot     ┌─────────────┐  materialize  ┌──────────────┐
-  │  EXTERNAL   │ ──────────────▶ │   CACHED    │ ────────────▶ │ MATERIALIZED │
-  │  (reference)│    (download)   │  COG / Zarr │  (expensive)  │ Raquet +     │
-  └─────────────┘                 └─────────────┘               │ Iceberg meta │
-       register                                                 └──────────────┘
-```
-
-| Kind | snapshot | materialize |
-|------|----------|-------------|
-| **Vector** | Download + auto-create Iceberg metadata (free!) | No-op (already done) |
-| **Raster** | Download to COG/Zarr (cache only) | Convert to Raquet + Iceberg (expensive) |
-
-**Key insight:** For vectors, Iceberg registration is free thanks to "lightweight Iceberg"
-(name-mapping property). So snapshot does it automatically. For rasters, format conversion
-is expensive, so it remains an explicit step.
+1. **SQL-first**
+2. **Iceberg-native**
+3. **CLI-first (agent-ready)**
+4. **Canonical metadata, multi-standard outputs**
+5. **AI-ready semantics (OSI aligned)**
 
 ---
 
-## Data Format Pipeline
+## 4. The Core Paradigm: Define Once
 
-### Format Transformation Strategy
+Portal.line keeps a canonical definition of:
 
-```
-  ORIGIN (Various)              CACHE (Cloud-Native)         MATERIALIZED (Iceberg)
-┌─────────────────────┐       ┌─────────────────────┐       ┌─────────────────────┐
-│                     │       │                     │       │                     │
-│  Shapefile          │       │                     │       │  GeoParquet         │
-│  GeoJSON            │ ────▶ │  GeoParquet         │ ────▶ │  + Iceberg metadata │
-│  WFS                │       │                     │       │                     │
-│  ArcGIS FeatureServer       │                     │       │                     │
-│                     │       │                     │       │                     │
-├─────────────────────┤       ├─────────────────────┤       ├─────────────────────┤
-│                     │       │                     │       │                     │
-│  GeoTIFF            │       │  COG                │       │  Raquet             │
-│  ArcGIS ImageServer │ ────▶ │  or                 │ ────▶ │  (QUADBIN indexed)  │
-│  STAC raster assets │       │  Zarr               │       │                     │
-│                     │       │                     │       │                     │
-├─────────────────────┤       ├─────────────────────┤       ├─────────────────────┤
-│                     │       │                     │       │                     │
-│  LAS / LAZ          │ ────▶ │  COPC               │ ────▶ │  Pointquet          │
-│  E57                │       │                     │       │                     │
-│                     │       │                     │       │                     │
-├─────────────────────┤       ├─────────────────────┤       ├─────────────────────┤
-│                     │       │                     │       │                     │
-│  MBTiles            │ ────▶ │  Tilesets           │ ────▶ │  Tilequet           │
-│  PMTiles            │       │                     │       │                     │
-│                     │       │                     │       │                     │
-└─────────────────────┘       └─────────────────────┘       └─────────────────────┘
-```
+- Resource identity and lineage
+- Spatial/temporal/quality metadata
+- Access policy (public/private)
+- Semantics for AI interpretation (OSI)
 
-### Format Summary
-
-| Kind | snapshot produces | materialize produces | Steps |
-|------|-------------------|----------------------|-------|
-| **Vector** | GeoParquet + Iceberg metadata | (already done) | 1 step |
-| **Raster** | COG or Zarr (cache only) | Raquet (QUADBIN) + Iceberg | 2 steps |
-| **Point Cloud** | COPC | Pointquet + Iceberg | 2 steps |
-| **Tileset** | Tilesets | Tilequet + Iceberg | 2 steps |
-
-**Key Insight:** Vector data gets Iceberg "for free" (lightweight Iceberg = no data rewrite). Raster/point cloud/tileset formats require expensive conversion, so materialization is explicit.
+From this canonical layer, we derive outputs for legacy and modern ecosystems.
 
 ---
 
-## Extractors
+## 5. Architecture Overview
 
-### Supported Sources
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         VECTOR SOURCES                              │
-│                                                                     │
-│  ┌─────────┐    ┌─────────────────┐    ┌─────────┐    ┌─────────┐ │
-│  │   WFS   │    │ArcGIS           │    │ PostGIS │    │  Local  │ │
-│  │         │    │FeatureServer    │    │         │    │  Files  │ │
-│  └────┬────┘    └────────┬────────┘    └────┬────┘    └────┬────┘ │
-│       │                  │                  │              │       │
-│       │ ogr2ogr          │ gpio             │ geopandas    │ geopandas
-│       │                  │                  │              │       │
-│       └──────────────────┴────────┬─────────┴──────────────┘       │
-│                                   ▼                                 │
-│                           ┌─────────────┐                          │
-│                           │ GeoParquet  │                          │
-│                           └─────────────┘                          │
-└─────────────────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────────────────┐
-│                         RASTER SOURCES                              │
-│                                                                     │
-│  ┌─────────────────┐    ┌─────────────┐    ┌─────────────────────┐ │
-│  │ArcGIS           │    │   STAC      │    │     GeoTIFF         │ │
-│  │ ImageServer     │    │   Assets    │    │                     │ │
-│  └────────┬────────┘    └──────┬──────┘    └──────────┬──────────┘ │
-│           │                    │                      │            │
-│           │ raquet-io          │ download             │ raquet-io  │
-│           │                    │ + raquet-io          │            │
-│           └────────────────────┴───────────┬──────────┘            │
-│                                            ▼                        │
-│                                    ┌─────────────┐                 │
-│                                    │ COG/Raquet  │                 │
-│                                    └─────────────┘                 │
-└─────────────────────────────────────────────────────────────────────┘
+```text
+External Systems (STAC, ArcGIS, Portals, Files, DBs)
+                    |
+                    v
+         Portal.line Canonical Catalog
+        (resources + metadata + semantics)
+                    |
+      +-------------+-------------+
+      |             |             |
+      v             v             v
+  Iceberg/SQL      STAC      ISO/Other outputs
+      |
+      v
+   Web/UI is just another view over the same canonical source
 ```
 
-### Extractor Summary
-
-| Source | Tool | Output | Metadata Captured |
-|--------|------|--------|-------------------|
-| WFS | `ogr2ogr` | GeoParquet | Service URL, layer |
-| ArcGIS FeatureServer | `gpio` | GeoParquet | Name, fields, extent, geometry type |
-| ArcGIS ImageServer | `raquet-io` | Raquet | Name, extent, pixel size, bands |
-| STAC | `httpx` + `raquet-io` | GeoParquet/Raquet | Collection, bbox, properties, assets |
-| PostGIS | `geopandas` | GeoParquet | Table, connection ref |
-| Local File | `geopandas` | GeoParquet | Path, format |
+**Key idea:** The website is an output, not the source of truth.
 
 ---
 
-## Catalog Federation
+## 6. Resource Modes: Reference vs Materialize
 
-### Multi-Catalog Aggregation
+Portal.line supports both patterns:
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                       UPSTREAM CATALOGS                              │
-│                                                                      │
-│   ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────────┐ │
-│   │  STAC Catalog   │  │  ArcGIS Server  │  │  Another Portolan   │ │
-│   │  (earth-search) │  │  (Wildfire FS)  │  │    Catalog          │ │
-│   └────────┬────────┘  └────────┬────────┘  └──────────┬──────────┘ │
-│            │                    │                      │            │
-└────────────┼────────────────────┼──────────────────────┼────────────┘
-             │                    │                      │
-             │     portolan catalog sync                 │
-             │                    │                      │
-             ▼                    ▼                      ▼
-┌──────────────────────────────────────────────────────────────────────┐
-│                       PORTOLAN CATALOG                               │
-│                                                                      │
-│   ┌────────────────────────────────────────────────────────────┐    │
-│   │              CatalogSource Registry                        │    │
-│   │              (.portolan/sources.json)                      │    │
-│   └────────────────────────────────────────────────────────────┘    │
-│                                                                      │
-│   ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐ │
-│   │federated_        │  │federated_        │  │federated_        │ │
-│   │  earth_search/   │  │  wildfire/       │  │  partner/        │ │
-│   │                  │  │                  │  │                  │ │
-│   │ ○ sentinel_2     │  │ ○ response_pts   │  │ ○ buildings      │ │
-│   │ ○ landsat_8      │  │ ○ response_lines │  │ ○ roads          │ │
-│   │ ○ dem            │  │ ○ response_polys │  │ ○ parcels        │ │
-│   └──────────────────┘  └──────────────────┘  └──────────────────┘ │
-│                                                                      │
-└──────────────────────────────────────────────────────────────────────┘
-```
+- **Reference mode:** keep remote assets in place; register metadata and access paths.
+- **Materialize mode:** import/cast/convert data into preferred cloud-native representations.
 
-### Federation Workflow
+This covers:
 
-```bash
-# 1. Register upstream catalog
-portolan catalog add https://server/FeatureServer --name wildfire --type arcgis
-
-# 2. Sync to discover resources
-portolan catalog sync wildfire
-# → Creates EXTERNAL resources in federated_wildfire/
-
-# 3. Batch snapshot all discovered resources
-portolan snapshot --all --namespace federated_wildfire
-
-# 4. Batch materialize to Iceberg
-portolan materialize --all --namespace federated_wildfire
-```
-
-**Design Decision:** Treat ArcGIS servers like STAC catalogs - both are "catalog sources" that can be synced to discover multiple resources.
+- Datasets we do not want to copy
+- Datasets we must normalize for performance/governance
+- Mixed catalogs where both coexist
 
 ---
 
-## Output Generation
+## 7. Public and Private Data by Design
 
-### Multi-Standard Compatibility
+Canonical metadata includes publication intent and access posture.
 
-```
-                    ┌─────────────────────────┐
-                    │     Resource JSON       │
-                    │   (Source of Truth)     │
-                    └────────────┬────────────┘
-                                 │
-         ┌───────────┬───────────┼───────────┬───────────┐
-         │           │           │           │           │
-         ▼           ▼           ▼           ▼           ▼
-    ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
-    │ Iceberg │ │  STAC   │ │ISO 19139│ │DuckLake │ │  Web    │
-    │Metadata │ │  Item   │ │   XML   │ │   SQL   │ │  JSON   │
-    └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
-         │           │           │           │           │
-         ▼           ▼           ▼           ▼           ▼
-    ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐
-    │ DuckDB  │ │  STAC   │ │ INSPIRE │ │Embedded │ │ Browser │
-    │Snowflake│ │ Clients │ │GeoNetwork│ │Analytics│ │   UI    │
-    │  Spark  │ │         │ │         │ │         │ │         │
-    └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘
-```
-
-### Output Formats
-
-| Output | Format | Use Case |
-|--------|--------|----------|
-| **Iceberg** | JSON + Avro manifests | Query engines (DuckDB, Snowflake, Spark) |
-| **STAC** | JSON | Cloud-native geospatial discovery |
-| **ISO 19139** | XML | Government SDI, INSPIRE compliance |
-| **DuckLake** | SQL | Embedded analytics |
-| **Web** | JSON | Browser-based catalog UI |
-
-**Design Decision:** Generate all outputs from a single resource definition. The resource JSON is the canonical source; outputs are derived views.
+- Public datasets: discoverable and publishable through open outputs.
+- Private datasets: controlled visibility with internal query/access paths.
+- Same lifecycle model; different exposure policies.
 
 ---
 
-## Iceberg Integration
+## 8. Federation: Integrate Existing Infrastructure
 
-### Why Iceberg?
+Portal.line can federate and register existing resources from:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                      WITHOUT ICEBERG                                │
-│                                                                     │
-│       ┌─────────────────┐                                          │
-│       │  Parquet File   │                                          │
-│       └────────┬────────┘                                          │
-│                │                                                    │
-│                ├──────────────▶  DuckDB ✓                          │
-│                │                                                    │
-│                ├──────────────▶  Snowflake ?  (needs setup)        │
-│                │                                                    │
-│                └──────────────▶  Spark ?  (needs config)           │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
+- STAC catalogs
+- ArcGIS Servers / Portals
+- Other existing enterprise catalogs
 
-┌─────────────────────────────────────────────────────────────────────┐
-│                       WITH ICEBERG                                  │
-│                                                                     │
-│       ┌─────────────────┐                                          │
-│       │  Parquet File   │                                          │
-│       └────────┬────────┘                                          │
-│                │                                                    │
-│                ▼                                                    │
-│       ┌─────────────────┐                                          │
-│       │ Iceberg Metadata│                                          │
-│       └────────┬────────┘                                          │
-│                │                                                    │
-│                ├──────────────▶  DuckDB ✓                          │
-│                │                                                    │
-│                ├──────────────▶  Snowflake ✓                       │
-│                │                                                    │
-│                ├──────────────▶  Spark ✓                           │
-│                │                                                    │
-│                ├──────────────▶  BigQuery ✓                        │
-│                │                                                    │
-│                └──────────────▶  Trino ✓                           │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Iceberg Metadata Structure
-
-```
-data/{namespace}/{resource}/
-│
-├── {resource}.parquet              ◀── Original data (unchanged!)
-│
-└── metadata/
-    ├── v1.metadata.json            ◀── Table metadata + name-mapping
-    ├── snap-1-manifest-list.avro   ◀── Snapshot manifest list
-    └── snap-1-manifest.avro        ◀── Data file manifest
-```
-
-**Lightweight Iceberg:** We use `schema.name-mapping.default` property to enable column matching by name. This means:
-- Original Parquet files are **never rewritten**
-- No field IDs needed in Parquet metadata
-- Same query compatibility with DuckDB, Spark, Trino, etc.
-
-**Key Benefit:** Same GeoParquet file becomes queryable by ANY Iceberg-compatible engine without data modification.
+**Goal:** adopt incrementally, without forcing a big-bang migration.
 
 ---
 
-## Metadata Model
+## 9. Lifecycle: Git-Like Catalog Operations
 
-### Three-Layer Metadata
+Client-side workflow emphasizes controlled change management:
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         RESOURCE METADATA                           │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │                      USER METADATA                            │ │
-│  │                    (Manual input)                             │ │
-│  │                                                               │ │
-│  │   title          description          tags          license   │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │                     SOURCE METADATA                           │ │
-│  │                  (Extracted from origin)                      │ │
-│  │                                                               │ │
-│  │   provider       fetched_at       original_fields    extent   │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────────┐ │
-│  │                    DERIVED METADATA                           │ │
-│  │                   (Computed from data)                        │ │
-│  │                                                               │ │
-│  │   row_count      schema_hash      file_size_bytes       bbox  │ │
-│  └───────────────────────────────────────────────────────────────┘ │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+1. Clone / checkout catalog state
+2. Add or update metadata/resources locally
+3. Validate and preview outputs
+4. Push/sync updates
+5. Pull remote changes
 
-| Layer | Source | When Updated |
-|-------|--------|--------------|
-| **User** | Manual input | On register/edit |
-| **Source** | Extracted from origin | On snapshot |
-| **Derived** | Computed from data | On snapshot |
+This gives familiar operational discipline without needing full branch complexity.
 
 ---
 
-## CLI Design
+## 10. Why Iceberg + SQL at the Center
 
-### Command Structure
-
-```
-portolan
-│
-├── init                         # Create catalog
-├── status                       # Show catalog state
-├── validate                     # Validate all resources
-├── sync                         # Push to remote storage
-│
-├── register <type> <url>        # Register EXTERNAL resource
-├── snapshot <name>              # Create CACHED snapshot
-│   └── --all --namespace <ns>   # Batch all in namespace
-├── materialize <name>           # Create MATERIALIZED Iceberg table
-│   ├── --remote                 # Iceberg from remote data (no download)
-│   └── --all --namespace <ns>   # Batch all in namespace
-├── add <file>                   # Convenience: register + snapshot + materialize
-│
-└── catalog
-    ├── add <url>                # Register upstream catalog
-    ├── list                     # List registered catalogs
-    ├── sync [name]              # Sync from upstream
-    └── remove <name>            # Unregister catalog
-```
-
-### Example Workflow
-
-```bash
-# Vector resource (snapshot = done, Iceberg auto-created)
-portolan register arcgis_featureserver "https://server/0" --name buildings
-portolan snapshot buildings
-# → Already materialized! Query with DuckDB immediately.
-
-# Raster resource (needs explicit materialize for format conversion)
-portolan register arcgis_imageserver "https://server/ImageServer" --name dem
-portolan snapshot dem          # Downloads COG (cache only)
-portolan materialize dem       # Converts to Raquet + Iceberg (expensive)
-
-# Federated catalog
-portolan catalog add "https://server/FeatureServer" --name city --type arcgis
-portolan catalog sync city
-portolan snapshot --all --namespace federated_city
-# → Vector resources are already queryable via Iceberg!
-```
-
-```bash
-# Remote GeoParquet (no download at all!)
-portolan register file "s3://overturemaps-us-west-2/release/.../places.parquet" --name places
-portolan materialize places --remote
-# → Reads only Parquet schema (range request), creates Iceberg metadata
-# → 965 MB file stays on S3, queryable via Iceberg!
-```
-
-**Design Decision:** Type-aware lifecycle - vectors get Iceberg for free (lightweight registration), rasters require explicit materialization (expensive format conversion). Remote GeoParquet files can be registered as Iceberg without any download.
+- Aligns with where analytics platforms already are.
+- Enables broad interoperability with engines and tools.
+- Makes geospatial metadata queryable with normal SQL workflows.
+- Creates a bridge between geospatial specialists and mainstream data teams.
 
 ---
 
-## Key Design Decisions
+## 11. Compatibility Strategy
 
-### 1. Local-First Architecture
+Portal.line is not anti-standards; it is a standards bridge.
 
-```
-┌────────────────────┐     ┌────────────────────┐
-│   Local Work       │     │   Remote Storage   │
-│                    │     │                    │
-│  ○ Edit offline    │────▶│  ○ Source of truth │
-│  ○ Version control │sync │  ○ Shared access   │
-│  ○ Batch changes   │     │  ○ Multi-output    │
-└────────────────────┘     └────────────────────┘
-```
-
-**Rationale:** Offline capability, version control friendly, batch operations before sync, no cloud lock-in.
-
-### 2. Type-Aware Lifecycle
-
-```
-VECTOR:  EXTERNAL ──snapshot──▶ MATERIALIZED  (1 step, Iceberg is free)
-RASTER:  EXTERNAL ──snapshot──▶ CACHED ──materialize──▶ MATERIALIZED  (2 steps)
-```
-
-**Rationale:** Lightweight Iceberg (name-mapping) makes vector registration free - no reason to have a separate step. Raster format conversion remains expensive, so it stays explicit.
-
-### 3. Format Standardization
-
-```
-Any Format ──▶ Cloud-Native ──▶ Iceberg-Ready
-                (GeoParquet)     (+ metadata)
-                (COG/Zarr)       (Raquet)
-                (COPC)           (Pointquet)
-```
-
-**Rationale:** Industry standards with broad tool support, efficient cloud storage, progressive enhancement.
-
-### 4. Multi-Output Generation
-
-```
-              ┌─────────────┐
-              │  Resource   │
-              │    JSON     │
-              └──────┬──────┘
-                     │
-    ┌────────┬───────┼───────┬────────┐
-    ▼        ▼       ▼       ▼        ▼
- Iceberg   STAC   ISO19139  Web   DuckLake
-```
-
-**Rationale:** Single source of truth, compliance with multiple standards, no metadata duplication.
-
-### 5. Catalog Federation
-
-```
-Upstream A ─┐
-            │
-Upstream B ─┼──▶ Portolan ──▶ Unified Query
-            │     Catalog
-Upstream C ─┘
-```
-
-**Rationale:** Aggregate from multiple sources, maintain local control, selective caching.
+- Keep one canonical representation internally.
+- Publish outward to multiple formats for ecosystem compatibility.
+- Preserve value from prior standards while modernizing the core.
 
 ---
 
-## Technology Stack
+## 12. Current Scope vs Roadmap
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                              CORE                                   │
-│                                                                     │
-│     Python 3.11+      Click CLI       PyArrow       GeoPandas      │
-│                                                                     │
-├─────────────────────────────────────────────────────────────────────┤
-│                           EXTRACTION                                │
-│                                                                     │
-│     GDAL/ogr2ogr        gpio CLI       raquet-io        httpx      │
-│                                                                     │
-├─────────────────────────────────────────────────────────────────────┤
-│                            STORAGE                                  │
-│                                                                     │
-│       Parquet           Iceberg          GCS/S3         Local      │
-│                                                                     │
-├─────────────────────────────────────────────────────────────────────┤
-│                             QUERY                                   │
-│                                                                     │
-│       DuckDB          Snowflake          Spark         BigQuery    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+### Current
 
-### Key Dependencies
+- Read-oriented publishing catalog
+- Strong federation and publication workflows
+- Canonical metadata + output generation
 
-| Tool | Purpose |
-|------|---------|
-| `click` | CLI framework |
-| `pyarrow` | Parquet/Arrow operations |
-| `geopandas` | Vector data handling |
-| `httpx` | HTTP client |
-| `jsonschema` | Validation |
-| `ogr2ogr` | WFS extraction |
-| `gpio` | ArcGIS FeatureServer extraction |
-| `raquet-io` | Raster to Raquet conversion |
+### Next
+
+- Writable Iceberg catalog operations
+- Richer transactional behaviors
+- Optional backend evolution (including Nessie-like under-the-hood models)
 
 ---
 
-## Future Roadmap
+## 13. Positioning vs Emerging Open Catalog Projects
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│  Phase 1 (Complete)     Phase 2 (Current)    Phase 3 (Next)        │
-│  ─────────────────      ────────────────     ──────────────        │
-│                                                                     │
-│  ✓ Extractors           ✓ Federation         ○ Schema Drift        │
-│    - WFS                  - Catalog sources    - Change detection  │
-│    - ArcGIS FS            - Batch operations   - Version tracking  │
-│    - ArcGIS IS                                                     │
-│    - STAC                                                          │
-│    - Local files                                                   │
-│                                                                     │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  Phase 4 (Future)                                                  │
-│  ────────────────                                                  │
-│                                                                     │
-│  ○ Real-time Sync       ○ Time Travel        ○ Access Control      │
-│    - Webhooks             - Historical         - Fine-grained      │
-│    - Scheduled refresh    - snapshots          - permissions       │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+The market is moving toward open-source catalogs with overlapping features.
+
+Portal.line differentiation:
+
+- Geospatial-first metadata depth
+- Canonical-to-multi-standard publishing model
+- CLI-first operations for human + agent workflows
+- Practical bridge from existing infra to modern analytics stacks
 
 ---
 
-## Summary
+## 14. Suggested Demo Flow (If You Present Live)
 
-### What Portolan Provides
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                                                                     │
-│   1. Unified ingestion     from heterogeneous geospatial sources   │
-│                                                                     │
-│   2. Cloud-native formats  for efficient storage and query         │
-│                                                                     │
-│   3. Multi-standard outputs for interoperability                   │
-│                                                                     │
-│   4. SQL-queryable catalogs via Iceberg                            │
-│                                                                     │
-│   5. Federated discovery   across multiple upstream catalogs       │
-│                                                                     │
-│   6. AI-ready metadata     with semantic descriptions              │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### The Vision
-
-```
-        Any geospatial data source
-                    │
-                    ▼
-             ┌─────────────┐
-             │  Portolan   │
-             └──────┬──────┘
-                    │
-        ┌───────────┼───────────┐
-        ▼           ▼           ▼
-   SQL Query    STAC/ISO    AI Agents
-   (any engine)  Discovery   Understand
-```
+1. Start from an empty local catalog.
+2. Federate one existing source (for example STAC or ArcGIS).
+3. Register one referenced remote asset (no copy).
+4. Materialize one dataset that requires conversion.
+5. Show SQL queryability through Iceberg metadata.
+6. Generate web/STAC output from the same canonical source.
 
 ---
 
-## Resources
+## 15. Closing Message
 
-- **Documentation:** `docs/catalog-data-model.md`
-- **Test Resources:** `tests/TEST_RESOURCES.md`
-- **CLI Help:** `portolan --help`
+**Portal.line is a canonical metadata operating layer for geospatial + analytics convergence.**
+
+- Define once
+- Query with SQL
+- Publish everywhere
+- Prepare for AI agents
+- Evolve from read-only publishing today to writable catalogs tomorrow
+
+---
+
+## Optional Appendix: One-Slide Summary
+
+```text
+Problem: Fragmented geospatial catalogs and APIs
+Approach: Canonical metadata + SQL-first Iceberg core
+Execution: CLI-first lifecycle + federation + multi-output publishing
+Today: Read/publish workflow
+Tomorrow: Writable catalogs and deeper transactional control
+```

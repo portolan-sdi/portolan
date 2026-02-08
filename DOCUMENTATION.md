@@ -72,7 +72,7 @@ This creates a `.portolan` directory with the catalog structure:
 
 ### Add Your First Dataset
 
-The quickest way to add data is the `add` command, which registers, snapshots, and materializes in one step:
+The quickest way to add data is the `add` command, which registers and snapshots in one step:
 
 ```bash
 # Add a local file
@@ -90,7 +90,7 @@ portolan status
 
 ### Query with DuckDB
 
-Once materialized, your data is queryable as an Iceberg table:
+Once snapshotted, your data is queryable as an Iceberg table:
 
 ```bash
 duckdb -c "
@@ -119,8 +119,7 @@ remote data     as GeoParquet    with metadata
 | State | What it means | How to get there |
 |-------|---------------|------------------|
 | **EXTERNAL** | Only a pointer to the data source | `portolan register` |
-| **CACHED** | Data downloaded to local GeoParquet | `portolan snapshot` |
-| **MATERIALIZED** | Iceberg table wrapping the snapshot | `portolan materialize` |
+| **MATERIALIZED** | Data downloaded + Iceberg table created | `portolan snapshot` |
 
 ### Namespaces
 
@@ -179,13 +178,12 @@ Portolan uses layered metadata with clear precedence:
 For local files you want to manage in your catalog:
 
 ```bash
-# Quick add (register + snapshot + materialize)
+# Quick add (register + snapshot)
 portolan add data.parquet --title "My Data"
 
 # Or step by step:
 portolan register file /path/to/data.parquet --name mydata
 portolan snapshot mydata
-portolan materialize mydata
 ```
 
 ### Workflow 2: Connect to External Services
@@ -198,11 +196,8 @@ portolan register arcgis_featureserver https://services.arcgis.com/.../0 \
   --name boundaries \
   --title "Administrative Boundaries"
 
-# Download as GeoParquet
+# Download as GeoParquet + create Iceberg metadata
 portolan snapshot boundaries
-
-# Make it queryable via Iceberg
-portolan materialize boundaries
 ```
 
 ### Workflow 3: Database Extraction
@@ -218,9 +213,8 @@ portolan register postgres "public.buildings" \
   --connection-ref mydb \
   --name buildings
 
-# Extract and materialize
+# Extract and create Iceberg metadata
 portolan snapshot buildings
-portolan materialize buildings
 ```
 
 ### Workflow 4: STAC Import
@@ -320,26 +314,13 @@ If the schema changes between snapshots, you'll see a warning:
 Use --force to accept the new schema.
 ```
 
-### Materialize
-
-```bash
-portolan materialize <NAME> [OPTIONS]
-```
-
-Create Iceberg table from snapshot (CACHED → MATERIALIZED).
-
-**Options:**
-- `--namespace, -ns` - Namespace (default: "default")
-- `--force, -f` - Re-materialize even if already done
-- `--verbose, -v` - Verbose output
-
 ### Add (Convenience)
 
 ```bash
 portolan add <FILE> [OPTIONS]
 ```
 
-Register + snapshot + materialize in one command.
+Register + snapshot in one command.
 
 **Options:**
 - `--name, -n` - Resource name

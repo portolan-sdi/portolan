@@ -247,6 +247,69 @@ def _get_remote_file_size(url: str, region: str | None = None) -> int:
     return Path(path).stat().st_size
 
 
+# ============== ICEBERG METADATA HELPER ==============
+
+
+def _create_iceberg_metadata(resource, resource_name, catalog, namespace,
+                              parquet_path=None, table=None,
+                              data_file_url=None, verbose=False):
+    """Create Iceberg metadata for a resource.
+
+    Either parquet_path (reads schema from local file) or table (pre-built
+    IcebergTable) must be provided.  data_file_url overrides the URL stored
+    in the manifest (e.g., for remote data that stays at source).
+
+    Returns the Path to the written v1.metadata.json.
+    """
+    import json
+    import uuid
+
+    from iceberg_catalog import (
+        create_table_metadata,
+        generate_manifest_files,
+        parquet_to_iceberg_table,
+    )
+    from portolan_resource import IcebergAsset
+
+    if verbose:
+        click.echo("  Creating Iceberg metadata...")
+
+    if table is None:
+        if parquet_path is None:
+            raise ValueError("Either parquet_path or table must be provided")
+        table = parquet_to_iceberg_table(str(parquet_path), table_name=resource_name)
+
+    metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    table_uuid = str(uuid.uuid4())
+    data_base_url = f"file://{catalog.path.absolute()}"
+    table_path = f"{namespace}/{resource_name}"
+    file_url = data_file_url or f"file://{Path(parquet_path).absolute()}"
+
+    generate_manifest_files(
+        table=table,
+        data_base_url=data_base_url,
+        metadata_dir=metadata_dir,
+        arrow_schema=table.arrow_schema,
+        snapshot_id=1,
+        sequence_number=1,
+        table_path=table_path,
+        data_file_path=file_url,
+    )
+
+    metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
+    metadata_path = metadata_dir / "v1.metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    resource.assets.iceberg = IcebergAsset(
+        metadata=str(metadata_path.relative_to(catalog.path)),
+    )
+
+    return metadata_path
+
+
 # ============== CLI ==============
 
 @click.group()
@@ -598,6 +661,22 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
     if not resource.origin:
         raise click.ClickException("Resource has no origin - cannot snapshot.")
 
+    # Smart hint: if origin is a remote Parquet file, suggest --remote instead
+    if resource.origin.url:
+        url = resource.origin.url
+        is_remote = url.startswith(("s3://", "gs://", "https://", "http://"))
+        is_parquet = url.lower().endswith((".parquet", ".geoparquet"))
+        if is_remote and is_parquet:
+            click.echo()
+            click.echo(click.style("Hint:", fg="yellow") + f" {resource_name} points to a remote Parquet file.")
+            click.echo("  The data is already in cloud-native format — you could skip the download")
+            click.echo("  and create Iceberg metadata pointing directly to the source:")
+            click.echo()
+            click.echo(f"    portolan add {resource.origin.url} --no-snapshot")
+            click.echo()
+            if not click.confirm("  Download anyway?", default=True):
+                return
+
     click.echo(f"Snapshotting {resource_name}...")
 
     # Output path for snapshot
@@ -674,46 +753,8 @@ def snapshot(ctx, resource_name: str | None, namespace: str, all_resources: bool
     # For vector resources (GeoParquet), auto-create Iceberg metadata
     # This is "lightweight Iceberg" - just metadata, no data rewrite needed
     if resource.kind == "vector" and resource.assets.snapshot and resource.assets.snapshot.format == "geoparquet":
-        import uuid
-
-        from iceberg_catalog import (
-            create_table_metadata,
-            generate_manifest_files,
-            parquet_to_iceberg_table,
-        )
-        from portolan_resource import IcebergAsset
-
-        if verbose:
-            click.echo("  Auto-creating Iceberg metadata for vector resource...")
-
-        table = parquet_to_iceberg_table(str(output_path), table_name=resource_name)
-        metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-
-        table_uuid = str(uuid.uuid4())
-        data_base_url = f"file://{catalog.path.absolute()}"
-        table_path = f"{namespace}/{resource_name}"
-        snapshot_file_url = f"file://{output_path.absolute()}"
-
-        generate_manifest_files(
-            table=table,
-            data_base_url=data_base_url,
-            metadata_dir=metadata_dir,
-            arrow_schema=table.arrow_schema,
-            snapshot_id=1,
-            sequence_number=1,
-            table_path=table_path,
-            data_file_path=snapshot_file_url,
-        )
-
-        metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
-        metadata_path = metadata_dir / "v1.metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-
-        resource.assets.iceberg = IcebergAsset(
-            metadata=str(metadata_path.relative_to(catalog.path)),
-        )
+        _create_iceberg_metadata(resource, resource_name, catalog, namespace,
+                                  parquet_path=output_path, verbose=verbose)
 
     # Validate before saving
     errors = validate_resource(resource.to_dict())
@@ -773,15 +814,7 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
         portolan materialize buildings --remote          # Remote Iceberg (no download)
         portolan materialize --all --namespace federated_wildfire  # Batch materialize
     """
-    import json
-    import uuid
-
-    from iceberg_catalog import (
-        create_table_metadata,
-        generate_manifest_files,
-        parquet_to_iceberg_table,
-    )
-    from portolan_resource import IcebergAsset, load_resource, save_resource
+    from portolan_resource import load_resource, save_resource
     from schemas import validate_resource
 
     catalog = get_catalog(ctx)
@@ -899,34 +932,9 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
             file_size_bytes=file_size,
         )
 
-        # Generate metadata directory
-        metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
-        metadata_dir.mkdir(parents=True, exist_ok=True)
-
-        table_uuid = str(uuid.uuid4())
-        data_base_url = f"file://{catalog.path.absolute()}"
-        table_path = f"{namespace}/{resource_name}"
-
-        # Data file path points to the REMOTE URL
-        generate_manifest_files(
-            table=table,
-            data_base_url=data_base_url,
-            metadata_dir=metadata_dir,
-            arrow_schema=arrow_schema,
-            snapshot_id=1,
-            sequence_number=1,
-            table_path=table_path,
-            data_file_path=remote_url,
-        )
-
-        metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
-        metadata_path = metadata_dir / "v1.metadata.json"
-        with open(metadata_path, "w") as f:
-            json.dump(metadata, f, indent=2)
-
-        # Update resource with Iceberg asset (no snapshot asset - data stays remote)
-        resource.assets.iceberg = IcebergAsset(
-            metadata=str(metadata_path.relative_to(catalog.path)),
+        metadata_path = _create_iceberg_metadata(
+            resource, resource_name, catalog, namespace,
+            table=table, data_file_url=remote_url, verbose=verbose,
         )
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
@@ -967,49 +975,9 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
 
     # Lightweight Iceberg: no Parquet rewrite needed
     # We use schema.name-mapping.default property for column matching by name
-
-    # Create Iceberg table
-    if verbose:
-        click.echo("  Creating Iceberg table metadata...")
-    table = parquet_to_iceberg_table(str(snapshot_path), table_name=resource_name)
-
-    # Generate metadata directory
-    metadata_dir = catalog.path / "data" / namespace / resource_name / "metadata"
-    metadata_dir.mkdir(parents=True, exist_ok=True)
-
-    # Generate Iceberg metadata
-    table_uuid = str(uuid.uuid4())
-    data_base_url = f"file://{catalog.path.absolute()}"
-
-    # Table path includes namespace
-    table_path = f"{namespace}/{resource_name}"
-
-    # Generate manifest files
-    if verbose:
-        click.echo("  Generating manifest files...")
-    # Use actual snapshot path for data file
-    snapshot_file_url = f"file://{snapshot_path.absolute()}"
-    generate_manifest_files(
-        table=table,
-        data_base_url=data_base_url,
-        metadata_dir=metadata_dir,
-        arrow_schema=table.arrow_schema,
-        snapshot_id=1,
-        sequence_number=1,
-        table_path=table_path,
-        data_file_path=snapshot_file_url,
-    )
-
-    # Create table metadata
-    metadata = create_table_metadata(table, data_base_url, table_uuid, table_path=table_path)
-
-    metadata_path = metadata_dir / "v1.metadata.json"
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=2)
-
-    # Update resource
-    resource.assets.iceberg = IcebergAsset(
-        metadata=str(metadata_path.relative_to(catalog.path)),
+    metadata_path = _create_iceberg_metadata(
+        resource, resource_name, catalog, namespace,
+        parquet_path=snapshot_path, verbose=verbose,
     )
     resource.updated_at = datetime.now(timezone.utc).isoformat()
 
