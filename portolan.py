@@ -501,7 +501,13 @@ def _detect_source_type(source: str) -> str:
         ext = Path(source).suffix.lower()
         if ext in (".laz", ".las", ".copc"):
             return "pointcloud"
+        if ext == ".pmtiles":
+            return "pmtiles"
         return "file"
+
+    # PMTiles (cloud-native tiles)
+    if source_lower.endswith(".pmtiles"):
+        return "pmtiles"
 
     # Remote GeoParquet / Parquet
     if source_lower.endswith((".parquet", ".geoparquet")):
@@ -556,6 +562,10 @@ def _detect_default_action(origin_type: str, source_url: str, catalog_only: bool
     if catalog_only:
         return "catalog_only"
 
+    # Tiles are catalog-only by design (discoverable, not queryable)
+    if origin_type == "pmtiles":
+        return "catalog_only"
+
     is_remote = source_url.startswith(("s3://", "gs://", "http://", "https://")) if source_url else False
     is_cloud_native = is_remote and _is_parquet_or_copc(source_url)
 
@@ -576,6 +586,8 @@ def _normalize_origin_type(origin_type: str) -> str:
     """Map unified type names to internal origin types."""
     if origin_type == "geoparquet":
         return "file"
+    if origin_type == "pmtiles":
+        return "file"
     return origin_type
 
 
@@ -595,13 +607,17 @@ def _register_resource(catalog, origin_type, url, name, namespace,
     )
     from schemas import validate_resource
 
-    # Normalize origin type
-    internal_type = _normalize_origin_type(origin_type)
-
-    # Detect kind based on origin type
+    # Detect kind based on origin type (before normalization)
     kind = "vector"
-    if internal_type == "arcgis_imageserver":
+    if origin_type == "arcgis_imageserver":
         kind = "raster"
+    elif origin_type == "pointcloud":
+        kind = "pointcloud"
+    elif origin_type == "pmtiles":
+        kind = "tiles"
+
+    # Normalize origin type for internal storage
+    internal_type = _normalize_origin_type(origin_type)
 
     # For database types, layer is the table name, URL is optional
     if internal_type in ("postgres", "oracle"):
@@ -1588,6 +1604,16 @@ def metadata_show(ctx, name: str, namespace: str, as_json: bool):
             click.echo(f"  geometry_type: {d.geometry_type}")
         if d.crs:
             click.echo(f"  crs: {d.crs}")
+        if d.columns:
+            click.echo(f"  columns ({len(d.columns)}):")
+            for col in d.columns:
+                ctype = col["type"]
+                if col.get("geometry_type"):
+                    ctype = f'{ctype} ({col["geometry_type"]})'
+                if col.get("crs"):
+                    ctype += f' [{col["crs"]}]'
+                null_str = ", nullable" if col.get("nullable") else ""
+                click.echo(f"    {col['name']}: {ctype}{null_str}")
         if d.schema_hash:
             click.echo(f"  schema_hash: {d.schema_hash}")
         if d.files:

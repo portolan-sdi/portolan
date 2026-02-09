@@ -20,6 +20,7 @@ from portolan_resource import (
     SyncConfig,
     Upstream,
     UserMetadata,
+    compute_derived_metadata,
     load_resource,
     save_resource,
 )
@@ -179,6 +180,86 @@ class TestResourceMetadata:
             source=SourceMetadata(provider="stac", data={"topic_category": "boundaries"}),
         )
         assert meta.get_effective("topic_category") == "boundaries"
+
+
+class TestDerivedColumns:
+    """Test suite for derived column metadata."""
+
+    def test_columns_serialization(self):
+        """Test columns survive to_dict/from_dict roundtrip."""
+        columns = [
+            {"name": "id", "type": "int64", "nullable": False},
+            {"name": "name", "type": "string", "nullable": True},
+            {"name": "geometry", "type": "geometry", "nullable": True, "geometry_type": "Point", "crs": "EPSG:4326"},
+        ]
+        derived = DerivedMetadata(row_count=100, columns=columns)
+        data = derived.to_dict()
+        assert data["columns"] == columns
+
+        restored = DerivedMetadata.from_dict(data)
+        assert restored.columns == columns
+        assert len(restored.columns) == 3
+        assert restored.columns[2]["geometry_type"] == "Point"
+
+    def test_columns_empty_not_serialized(self):
+        """Empty columns list should not appear in serialization."""
+        derived = DerivedMetadata(row_count=50)
+        data = derived.to_dict()
+        assert "columns" not in data
+
+    def test_columns_in_resource_roundtrip(self):
+        """Columns survive full resource serialization roundtrip."""
+        columns = [
+            {"name": "pop", "type": "int64", "nullable": True},
+            {"name": "geom", "type": "geometry", "nullable": True, "geometry_type": "Polygon", "crs": "EPSG:4326"},
+        ]
+        resource = Resource(
+            name="test",
+            kind="vector",
+            metadata=ResourceMetadata(
+                derived=DerivedMetadata(row_count=10, columns=columns),
+            ),
+        )
+        data = resource.to_dict()
+        restored = Resource.from_dict(data)
+        assert restored.metadata.derived.columns == columns
+
+
+class TestComputeDerivedMetadata:
+    """Test suite for compute_derived_metadata column extraction."""
+
+    def test_extracts_columns_from_geoparquet(self, sample_geoparquet):
+        """Test that columns are extracted from a GeoParquet file."""
+        derived = compute_derived_metadata(sample_geoparquet)
+
+        assert derived.columns is not None
+        assert len(derived.columns) >= 3  # name, country, population, geometry
+
+        col_names = [c["name"] for c in derived.columns]
+        assert "name" in col_names
+        assert "country" in col_names
+        assert "population" in col_names
+
+        # Check types are simplified
+        for col in derived.columns:
+            assert "name" in col
+            assert "type" in col
+            assert "nullable" in col
+
+    def test_geometry_column_enriched(self, sample_geoparquet):
+        """Test that geometry columns get geometry_type and crs."""
+        derived = compute_derived_metadata(sample_geoparquet)
+
+        geom_cols = [c for c in derived.columns if c["type"] == "geometry"]
+        assert len(geom_cols) >= 1
+        geom = geom_cols[0]
+        assert "geometry_type" in geom
+
+    def test_row_count_and_schema_hash(self, sample_geoparquet):
+        """Test that row count and schema hash are still computed."""
+        derived = compute_derived_metadata(sample_geoparquet)
+        assert derived.row_count == 3
+        assert derived.schema_hash is not None
 
 
 class TestResourceLifecycle:

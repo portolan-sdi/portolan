@@ -235,6 +235,7 @@ class DerivedMetadata:
     previous_schema_hash: str | None = None  # For drift detection
     schema_changed_at: str | None = None  # When schema drift was detected
     row_count: int | None = None
+    columns: list[dict] | None = None  # [{name, type, nullable, geometry_type?, crs?}]
     bbox: list[float] | None = None  # [west, south, east, north]
     geometry_type: str | None = None
     crs: str | None = None
@@ -250,6 +251,8 @@ class DerivedMetadata:
             result["schema_changed_at"] = self.schema_changed_at
         if self.row_count is not None:
             result["row_count"] = self.row_count
+        if self.columns:
+            result["columns"] = self.columns
         if self.bbox:
             result["bbox"] = self.bbox
         if self.geometry_type:
@@ -267,6 +270,7 @@ class DerivedMetadata:
             previous_schema_hash=data.get("previous_schema_hash"),
             schema_changed_at=data.get("schema_changed_at"),
             row_count=data.get("row_count"),
+            columns=data.get("columns"),
             bbox=data.get("bbox"),
             geometry_type=data.get("geometry_type"),
             crs=data.get("crs"),
@@ -381,7 +385,7 @@ class Resource:
     """
 
     name: str
-    kind: str  # vector, raster, table, collection
+    kind: str  # vector, raster, table, collection, pointcloud, tiles
 
     # Source information
     origin: Origin | None = None
@@ -484,6 +488,41 @@ def save_resource(resource: Resource, path: Path) -> None:
         json.dump(resource.to_dict(), f, indent=2)
 
 
+def _simplify_arrow_type(arrow_type) -> str:
+    """Convert an Arrow type to a simple, human-readable type string."""
+    import pyarrow as pa
+
+    if pa.types.is_boolean(arrow_type):
+        return "boolean"
+    if pa.types.is_int8(arrow_type) or pa.types.is_int16(arrow_type) or pa.types.is_int32(arrow_type):
+        return "int32"
+    if pa.types.is_int64(arrow_type):
+        return "int64"
+    if pa.types.is_uint8(arrow_type) or pa.types.is_uint16(arrow_type) or pa.types.is_uint32(arrow_type):
+        return "uint32"
+    if pa.types.is_uint64(arrow_type):
+        return "uint64"
+    if pa.types.is_float16(arrow_type) or pa.types.is_float32(arrow_type):
+        return "float32"
+    if pa.types.is_float64(arrow_type):
+        return "float64"
+    if pa.types.is_string(arrow_type) or pa.types.is_large_string(arrow_type):
+        return "string"
+    if pa.types.is_binary(arrow_type) or pa.types.is_large_binary(arrow_type):
+        return "binary"
+    if pa.types.is_date(arrow_type):
+        return "date"
+    if pa.types.is_timestamp(arrow_type):
+        return "timestamp"
+    if pa.types.is_struct(arrow_type):
+        return "struct"
+    if pa.types.is_list(arrow_type) or pa.types.is_large_list(arrow_type):
+        return "list"
+    if pa.types.is_map(arrow_type):
+        return "map"
+    return str(arrow_type)
+
+
 def compute_derived_metadata(parquet_path: Path) -> DerivedMetadata:
     """Compute derived metadata from a parquet file."""
     import hashlib
@@ -505,7 +544,8 @@ def compute_derived_metadata(parquet_path: Path) -> DerivedMetadata:
     # Get file size
     file_size = parquet_path.stat().st_size
 
-    # Try to get bbox from GeoParquet metadata
+    # Parse GeoParquet metadata for geometry column info
+    geo_columns = {}  # col_name -> {geometry_type, crs, bbox}
     bbox = None
     geometry_type = None
     crs = None
@@ -517,21 +557,42 @@ def compute_derived_metadata(parquet_path: Path) -> DerivedMetadata:
         geo_info = json.loads(geo_meta[b"geo"])
         if "columns" in geo_info:
             for col_name, col_info in geo_info["columns"].items():
+                geo_col = {}
                 if "bbox" in col_info:
                     bbox = col_info["bbox"]
                 if "geometry_types" in col_info:
                     types = col_info["geometry_types"]
-                    geometry_type = types[0] if len(types) == 1 else "mixed"
+                    gt = types[0] if len(types) == 1 else "mixed"
+                    geometry_type = gt
+                    geo_col["geometry_type"] = gt
                 if "crs" in col_info:
                     crs_info = col_info["crs"]
                     if isinstance(crs_info, dict):
-                        crs = crs_info.get("id", {}).get("code")
-                        if crs:
-                            crs = f"EPSG:{crs}"
+                        code = crs_info.get("id", {}).get("code")
+                        if code:
+                            crs = f"EPSG:{code}"
+                            geo_col["crs"] = f"EPSG:{code}"
+                if geo_col:
+                    geo_columns[col_name] = geo_col
+
+    # Extract column-level schema
+    columns = []
+    for field in schema:
+        col = {
+            "name": field.name,
+            "type": _simplify_arrow_type(field.type),
+            "nullable": field.nullable,
+        }
+        # Enrich geometry columns with geo info
+        if field.name in geo_columns:
+            col["type"] = "geometry"
+            col.update(geo_columns[field.name])
+        columns.append(col)
 
     return DerivedMetadata(
         schema_hash=schema_hash,
         row_count=row_count,
+        columns=columns,
         bbox=bbox,
         geometry_type=geometry_type,
         crs=crs,

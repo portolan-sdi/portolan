@@ -111,6 +111,21 @@ DERIVED_METADATA_SCHEMA = {
         "previous_schema_hash": {"type": "string"},
         "schema_changed_at": {"type": "string", "format": "date-time"},
         "row_count": {"type": "integer", "minimum": 0},
+        "columns": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "type"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string"},
+                    "nullable": {"type": "boolean"},
+                    "geometry_type": {"type": "string"},
+                    "crs": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
         "bbox": {
             "type": "array",
             "items": {"type": "number"},
@@ -176,7 +191,7 @@ RESOURCE_SCHEMA = {
         },
         "kind": {
             "type": "string",
-            "enum": ["vector", "raster", "table", "collection"],
+            "enum": ["vector", "raster", "table", "collection", "pointcloud", "tiles"],
             "description": "Type of spatial data",
         },
         "origin": {"$ref": "#/$defs/Origin"},

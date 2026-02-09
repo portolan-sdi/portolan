@@ -212,6 +212,55 @@ class TestUserMetadataProperties:
         assert errors == []
 
 
+class TestDerivedColumnsValidation:
+    """Test suite for derived columns schema validation."""
+
+    def test_valid_columns(self):
+        """Test resource with valid derived columns."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "derived": {
+                    "columns": [
+                        {"name": "id", "type": "int64", "nullable": False},
+                        {"name": "geom", "type": "geometry", "nullable": True, "geometry_type": "Point", "crs": "EPSG:4326"},
+                    ],
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert errors == []
+
+    def test_columns_missing_required(self):
+        """Test columns entry missing required name/type."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "derived": {
+                    "columns": [{"name": "id"}],  # missing type
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+
+    def test_columns_rejects_extra_properties(self):
+        """Test that unknown properties in columns are rejected."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "derived": {
+                    "columns": [{"name": "id", "type": "int64", "unknown_field": "x"}],
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+
+
 class TestConfigValidation:
     """Test suite for config schema validation."""
 

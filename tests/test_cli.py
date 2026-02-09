@@ -423,6 +423,39 @@ class TestChangeDetection:
             assert "Refreshed force_test" in result.output
 
 
+class TestTilesKind:
+    """Test suite for tiles kind (PMTiles)."""
+
+    def test_pmtiles_detected_as_tiles(self, initialized_catalog):
+        """PMTiles URL should be detected as tiles kind and catalog-only."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["add", "https://example.com/buildings.pmtiles",
+                 "--name", "test_tiles", "--namespace", "demo", "-v"],
+            )
+            assert result.exit_code == 0
+            assert "pmtiles" in result.output.lower()
+
+            # Check resource was created with kind=tiles
+            resource_path = initialized_catalog.path / "resources" / "demo" / "test_tiles.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["kind"] == "tiles"
+            # Should be registered (catalog-only, no snapshot/iceberg)
+            assert "snapshot" not in data.get("assets", {}) or data["assets"].get("snapshot") is None
+
+    def test_pointcloud_kind_schema_valid(self):
+        """Pointcloud and tiles are valid kinds in schema."""
+        from schemas import validate_resource
+
+        for kind in ("pointcloud", "tiles"):
+            data = {"name": "test", "kind": kind}
+            errors = validate_resource(data)
+            assert errors == [], f"kind='{kind}' should be valid"
+
+
 class TestMetadataCommands:
     """Test suite for metadata commands."""
 

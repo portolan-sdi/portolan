@@ -76,8 +76,9 @@ def _normalize_resource(resource: dict) -> dict:
             "assets": assets,
             "properties": {
                 "row_count": derived.get("row_count"),
-                "column_count": derived.get("column_count"),
+                "column_count": len(derived.get("columns", [])) or derived.get("column_count"),
             },
+            "columns": derived.get("columns", []),
             "tags": user_meta.get("tags", []),
             "license": user_meta.get("license"),
             "attribution": user_meta.get("attribution"),
@@ -1059,12 +1060,12 @@ def generate_web_catalog(catalog: CatalogConfig, verbose: bool = False) -> dict[
                     resource["_kind"] = raw.get("kind", "vector")
                     # Derive state from raw assets
                     raw_assets = raw.get("assets", {})
-                    if raw_assets.get("iceberg"):
-                        resource["_state"] = "materialized"
-                    elif raw_assets.get("snapshot"):
-                        resource["_state"] = "cached"
+                    if raw_assets.get("iceberg") or raw_assets.get("snapshot"):
+                        resource["_state"] = "ready"
+                    elif raw.get("origin"):
+                        resource["_state"] = "registered"
                     else:
-                        resource["_state"] = "external"
+                        resource["_state"] = "unknown"
                     all_resources.append(resource)
                     namespaces[namespace].append(resource)
                 except Exception as e:
@@ -1293,10 +1294,29 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
         .kind-badge.vector {{ background: #dbeafe; color: #1e40af; }}
         .kind-badge.raster {{ background: #fef3c7; color: #92400e; }}
         .kind-badge.collection {{ background: #f3e8ff; color: #6b21a8; }}
+        .kind-badge.pointcloud {{ background: #e0f2fe; color: #075985; }}
+        .kind-badge.tiles {{ background: #fce7f3; color: #9d174d; }}
         .state-icon {{ font-size: 0.75rem; }}
-        .state-icon.materialized {{ color: var(--green); }}
-        .state-icon.cached {{ color: var(--amber); }}
-        .state-icon.external {{ color: var(--muted); }}
+        .state-icon.ready {{ color: var(--green); }}
+        .state-icon.registered {{ color: var(--muted); }}
+        .tag-badge {{
+            display: inline-block;
+            padding: 0.0625rem 0.3125rem;
+            border-radius: 3px;
+            font-size: 0.625rem;
+            font-weight: 500;
+            background: #e0e7ff;
+            color: #3730a3;
+        }}
+        .license-badge {{
+            display: inline-block;
+            padding: 0.0625rem 0.3125rem;
+            border-radius: 3px;
+            font-size: 0.625rem;
+            font-weight: 500;
+            background: #dcfce7;
+            color: #166534;
+        }}
         .asset-link {{
             display: inline-block;
             background: #e2e8f0;
@@ -1307,6 +1327,31 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
             text-decoration: none;
         }}
         .asset-link:hover {{ background: #cbd5e1; }}
+        .col-schema {{ margin-top: 0.375rem; }}
+        .col-table {{
+            font-size: 0.75rem;
+            border-collapse: collapse;
+            margin-top: 0.25rem;
+            width: 100%;
+        }}
+        .col-table th {{
+            text-align: left;
+            font-weight: 500;
+            padding: 0.125rem 0.5rem 0.125rem 0;
+            border-bottom: 1px solid #e2e8f0;
+            color: var(--muted);
+            font-size: 0.6875rem;
+        }}
+        .col-table td {{
+            padding: 0.125rem 0.5rem 0.125rem 0;
+            border-bottom: 1px solid #f1f5f9;
+        }}
+        .col-table code {{
+            font-size: 0.75rem;
+            background: #f8fafc;
+            padding: 0 0.25rem;
+            border-radius: 2px;
+        }}
 
         footer {{
             margin-top: 2rem;
@@ -1429,15 +1474,23 @@ def _render_resource_row(r: dict) -> str:
     name = r.get("name", "unknown")
     title = r.get("title", name)
     kind = r.get("_kind", "vector")
-    state = r.get("_state", "external")
+    state = r.get("_state", "registered")
     abstract = r.get("abstract", "")[:120]
     if len(r.get("abstract", "")) > 120:
         abstract += "..."
 
     # State indicator
-    state_icons = {"materialized": "&#9679;", "cached": "&#9681;", "external": "&#9675;"}
-    state_titles = {"materialized": "Materialized", "cached": "Cached", "external": "External"}
+    state_icons = {"ready": "&#9679;", "registered": "&#9675;"}
+    state_titles = {"ready": "Ready", "registered": "Registered"}
     state_icon = f'<span class="state-icon {state}" title="{state_titles.get(state, state)}">{state_icons.get(state, "&#9675;")}</span>'
+
+    # Tags
+    tags = r.get("tags", [])
+    tags_html = " ".join(f'<span class="tag-badge">{_html_escape(t)}</span>' for t in tags[:5])
+
+    # License
+    license_val = r.get("license")
+    license_html = f'<span class="license-badge">{_html_escape(license_val)}</span>' if license_val else ""
 
     # Asset links
     asset_links = []
@@ -1447,10 +1500,37 @@ def _render_resource_row(r: dict) -> str:
             asset_links.append(f'<a href="{href}" class="asset-link">{asset_key}</a>')
     assets_html = " ".join(asset_links)
 
+    # Description line: abstract + key user properties
+    desc_parts = []
+    if abstract:
+        desc_parts.append(_html_escape(abstract))
+    user_props = r.get("user_properties", {})
+    if user_props.get("contact_organization"):
+        desc_parts.append(f'<span style="color:var(--text)">&#8226; {_html_escape(user_props["contact_organization"])}</span>')
+
+    desc_html = " ".join(desc_parts)
+
+    # Column schema (collapsible)
+    columns = r.get("columns", [])
+    columns_html = ""
+    if columns:
+        col_count = len(columns)
+        rows = []
+        for col in columns:
+            ctype = _html_escape(col.get("type", ""))
+            if col.get("geometry_type"):
+                ctype = f'{ctype} ({_html_escape(col["geometry_type"])})'
+            if col.get("crs"):
+                ctype += f' <span style="color:var(--muted)">{_html_escape(col["crs"])}</span>'
+            nullable = "yes" if col.get("nullable") else "no"
+            rows.append(f'<tr><td><code>{_html_escape(col["name"])}</code></td><td>{ctype}</td><td style="color:var(--muted)">{nullable}</td></tr>')
+        columns_html = f'''<details class="col-schema"><summary style="cursor:pointer;font-size:0.75rem;color:var(--muted)">{col_count} columns</summary>
+            <table class="col-table"><tr><th>Name</th><th>Type</th><th>Nullable</th></tr>{"".join(rows)}</table></details>'''
+
     return f'''<div class="resource-row" data-name="{_html_escape(name)}">
         <div class="resource-name">{state_icon} {_html_escape(title)}<br><small style="color:var(--muted);font-weight:400">{_html_escape(name)}</small></div>
-        <div class="resource-desc">{_html_escape(abstract)}</div>
-        <div class="resource-meta"><span class="kind-badge {kind}">{kind}</span> {assets_html}</div>
+        <div class="resource-desc">{desc_html}{columns_html}</div>
+        <div class="resource-meta"><span class="kind-badge {kind}">{kind}</span> {license_html} {tags_html} {assets_html}</div>
     </div>'''
 
 
