@@ -12,7 +12,9 @@ from output_generators import (
     generate_iso19139_catalog,
     generate_web_catalog,
     generate_ducklake_catalog,
+    _normalize_resource,
     _resource_to_stac_item,
+    _resource_to_iso19139,
     _calculate_collection_bbox,
     _xml_escape,
     _html_escape,
@@ -177,6 +179,84 @@ class TestISO19139Generator:
         content = xml_path.read_text()
 
         assert "Sample Cities" in content
+
+
+class TestRichMetadataInOutputs:
+    """Test rich user metadata flows through to outputs."""
+
+    def test_normalize_passes_through_user_properties(self):
+        """_normalize_resource includes tags, license, and user_properties."""
+        resource = {
+            "name": "test",
+            "kind": "vector",
+            "origin": {"type": "file"},
+            "assets": {},
+            "metadata": {
+                "user": {
+                    "title": "Test",
+                    "tags": ["boundaries", "admin"],
+                    "license": "CC-BY-4.0",
+                    "properties": {"contact_email": "test@example.com"},
+                },
+            },
+        }
+        normalized = _normalize_resource(resource)
+        assert normalized["tags"] == ["boundaries", "admin"]
+        assert normalized["license"] == "CC-BY-4.0"
+        assert normalized["user_properties"]["contact_email"] == "test@example.com"
+
+    def test_stac_item_includes_keywords_and_license(self):
+        """STAC item includes tags as keywords and license."""
+        normalized = {
+            "name": "test",
+            "title": "Test",
+            "abstract": "",
+            "type": "vector",
+            "format": "vector",
+            "spatial_extent": None,
+            "crs": None,
+            "temporal_extent": None,
+            "created_at": "2024-01-01T00:00:00Z",
+            "assets": {},
+            "properties": {},
+            "tags": ["boundaries", "admin"],
+            "license": "CC-BY-4.0",
+            "attribution": None,
+            "user_properties": {"contact_organization": "Survey Corp"},
+        }
+        item = _resource_to_stac_item(normalized, "test_collection")
+        assert item["properties"]["keywords"] == ["boundaries", "admin"]
+        assert item["properties"]["license"] == "CC-BY-4.0"
+        assert item["properties"]["portolan:contact_organization"] == "Survey Corp"
+
+    def test_iso_includes_contact_and_keywords(self):
+        """ISO 19139 XML includes contact info and keywords from user properties."""
+        normalized = {
+            "name": "test",
+            "title": "Test Resource",
+            "abstract": "A test",
+            "type": "vector",
+            "format": "vector",
+            "spatial_extent": None,
+            "created_at": "2024-01-01T00:00:00Z",
+            "assets": {},
+            "tags": ["boundaries", "water"],
+            "license": "CC-BY-4.0",
+            "user_properties": {
+                "contact_organization": "National Survey",
+                "contact_email": "data@survey.gov",
+                "topic_category": "planningCadastre",
+                "lineage": "Extracted from WFS 2024",
+            },
+        }
+        xml = _resource_to_iso19139(normalized)
+        assert "National Survey" in xml
+        assert "data@survey.gov" in xml
+        assert "planningCadastre" in xml
+        assert "boundaries" in xml
+        assert "water" in xml
+        assert "CC-BY-4.0" in xml
+        assert "Extracted from WFS 2024" in xml
 
 
 class TestXMLEscape:

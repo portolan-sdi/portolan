@@ -10,9 +10,9 @@ This guide covers everything you need to know to use Portolan for managing your 
 4. [Workflow Guide](#workflow-guide)
 5. [CLI Reference](#cli-reference)
 6. [Working with Data Sources](#working-with-data-sources)
-7. [Catalog Federation](#catalog-federation)
-8. [Querying Data](#querying-data)
-9. [Remote Storage](#remote-storage)
+7. [Querying Data](#querying-data)
+8. [Remote Storage](#remote-storage)
+9. [Automation & Orchestration](#automation--orchestration)
 10. [Troubleshooting](#troubleshooting)
 
 ---
@@ -109,18 +109,21 @@ SELECT * FROM iceberg_scan('.portolan/data/default/mydata/metadata/v1.metadata.j
 Every resource in Portolan has a lifecycle state:
 
 ```
-EXTERNAL ──────► CACHED ──────► MATERIALIZED
-   │                │                │
-   │                │                │
-   ▼                ▼                ▼
-Pointer to      Downloaded       Iceberg table
-remote data     as GeoParquet    with metadata
+REGISTERED ──────► READY
+     │                │
+     ▼                ▼
+Pointer to      Iceberg table
+data source     (queryable via SQL)
 ```
 
 | State | What it means | How to get there |
 |-------|---------------|------------------|
-| **EXTERNAL** | Only a pointer to the data source | `portolan register` |
-| **MATERIALIZED** | Data downloaded + Iceberg table created | `portolan snapshot` |
+| **REGISTERED** | Discoverable pointer to data, not SQL-queryable | `portolan add --catalog-only` |
+| **READY** | Has Iceberg table, queryable via DuckDB/BigQuery/etc. | `portolan add` (default) |
+
+Data location is orthogonal to state:
+- **local** — data downloaded and stored in the catalog
+- **linked** — Iceberg points to remote data (no local copy)
 
 ### Namespaces
 
@@ -139,7 +142,7 @@ Resources are organized into namespaces:
 Use `--namespace` (or `-ns`) to specify a namespace:
 
 ```bash
-portolan register file /path/to/data.parquet --namespace imagery --name satellite
+portolan add /path/to/data.parquet --namespace imagery --name satellite
 ```
 
 ### Metadata Layers
@@ -179,29 +182,39 @@ Portolan uses layered metadata with clear precedence:
 For local files you want to manage in your catalog:
 
 ```bash
-# Quick add (register + snapshot)
+# Add a local file (auto-detects type, downloads + creates Iceberg)
 portolan add data.parquet --title "My Data"
 
-# Or step by step:
-portolan register file /path/to/data.parquet --name mydata
-portolan snapshot mydata
+# Add a GeoJSON file (auto-converts to GeoParquet)
+portolan add boundaries.geojson --public --name boundaries
 ```
 
-### Workflow 2: Connect to External Services
+### Workflow 2: Add Remote Cloud-Native Data
+
+For remote Parquet/COPC files already in cloud storage:
+
+```bash
+# Remote Parquet — creates Iceberg without downloading
+portolan add s3://bucket/data.parquet --name remote_data
+
+# Force local download for SLA/offline access
+portolan add s3://bucket/data.parquet --name local_copy --cache-data
+```
+
+### Workflow 3: Connect to External Services
 
 For remote data sources like WFS, ArcGIS, or databases:
 
 ```bash
-# Register an ArcGIS FeatureServer
-portolan register arcgis_featureserver https://services.arcgis.com/.../0 \
-  --name boundaries \
-  --title "Administrative Boundaries"
+# ArcGIS FeatureServer (auto-detected from URL)
+portolan add https://services.arcgis.com/.../FeatureServer/0 \
+  --name boundaries --title "Administrative Boundaries"
 
-# Download as GeoParquet + create Iceberg metadata
-portolan snapshot boundaries
+# WFS layer
+portolan add https://example.com/wfs --type wfs --layer boundaries --name boundaries
 ```
 
-### Workflow 3: Database Extraction
+### Workflow 4: Database Extraction
 
 For PostgreSQL or Oracle databases:
 
@@ -209,27 +222,49 @@ For PostgreSQL or Oracle databases:
 # First, store your connection securely
 portolan connection add mydb "postgresql://user:pass@host:5432/dbname"
 
-# Register the table
-portolan register postgres "public.buildings" \
-  --connection-ref mydb \
-  --name buildings
-
-# Extract and create Iceberg metadata
-portolan snapshot buildings
+# Add the table (extracts to GeoParquet + creates Iceberg)
+portolan add "public.buildings" --type postgres --connection-ref mydb --name buildings
 ```
 
-### Workflow 4: STAC Import
+### Workflow 5: Discover from Catalogs
 
-Import from a STAC catalog:
+Discover and register resources from STAC or ArcGIS catalogs:
 
 ```bash
-# Import up to 50 items from a STAC catalog
-portolan import stac https://earth-search.aws.element84.com/v1 \
-  --max-items 50 \
-  --collections sentinel-2-l2a
+# Load from a STAC catalog
+portolan load https://earth-search.aws.element84.com/v1 \
+  --max-items 50 --collections sentinel-2-l2a
+
+# Load from an ArcGIS server
+portolan load https://services.arcgis.com/.../rest/services
 ```
 
-### Workflow 5: Sync to Remote
+### Workflow 6: Re-fetch Data
+
+Re-fetch data from the original source. Portolan tracks a source fingerprint and skips unchanged sources automatically:
+
+```bash
+# Refresh a single resource (skips if source unchanged)
+portolan refresh cities
+
+# Force refresh even if source hasn't changed
+portolan refresh cities --force
+
+# Refresh all resources in a namespace
+portolan refresh --all --namespace imagery
+```
+
+**Change detection by source type:**
+
+| Source type | Detection method | Behavior |
+|---|---|---|
+| Local file | mtime + file size | Skips if unchanged |
+| Remote Parquet (s3://, gs://) | file size + ETag/Last-Modified | Skips if unchanged |
+| WFS, ArcGIS, Database | No cheap detection available | Always re-extracts |
+
+Use `--force` to bypass change detection and always re-extract.
+
+### Workflow 7: Sync to Remote
 
 Push your local catalog to cloud storage:
 
@@ -237,12 +272,21 @@ Push your local catalog to cloud storage:
 # Configure remote
 # (edit .portolan/state.json to set remote_url)
 
-# Sync
+# Sync local → remote
 portolan sync
 
-# Pull changes from remote
+# Pull remote → local
 portolan pull
 ```
+
+**Important:** `refresh` and `sync` are different operations:
+
+| Command | Direction | What it does |
+|---|---|---|
+| `portolan refresh` | External origins → local catalog | Re-fetches data from original sources (WFS, ArcGIS, databases, files) |
+| `portolan sync` | Local catalog → remote storage | Pushes catalog and data to cloud storage (GCS/S3/Azure) |
+
+A typical update cycle: `portolan refresh --all` then `portolan sync`.
 
 ---
 
@@ -256,79 +300,116 @@ portolan init [PATH] [--remote URL]
 
 Initialize a new catalog. PATH defaults to current directory.
 
-### Resource Registration
+### Add Resource
 
 ```bash
-portolan register <TYPE> <URL> [OPTIONS]
+portolan add <SOURCE> [OPTIONS]
 ```
 
-Register an external resource (creates EXTERNAL state).
-
-**Types:** `file`, `wfs`, `arcgis_featureserver`, `arcgis_imageserver`, `stac`, `postgres`, `oracle`, `pointcloud`
+Add a resource to the catalog. Smart defaults based on source type — does the right thing automatically.
 
 **Options:**
-- `--name, -n` - Resource name (default: derived from URL)
+- `--type` - Source type (auto-detected if omitted)
+- `--name, -n` - Resource name (default: derived from source)
 - `--namespace, -ns` - Namespace (default: "default")
-- `--layer, -l` - Layer name for multi-layer sources
-- `--connection-ref` - Connection reference for databases
+- `--layer, -l` - Layer name for multi-layer sources or database tables
+- `--connection-ref` - Connection reference for database sources
 - `--title` - Human-readable title
 - `--description` - Description
+- `--public` - Use "public" namespace
+- `--catalog-only` - Just register for discovery, no processing
+- `--cache-data` - Force local download for remote cloud-native formats (SLA/offline)
+- `--bbox` - Bounding box filter: xmin,ymin,xmax,ymax (WGS84)
+
+**Smart defaults by source type:**
+
+| Source | Default action |
+|--------|---------------|
+| Local Parquet/GeoParquet | Copy + Iceberg |
+| Local Shapefile/GeoJSON | Convert to GeoParquet + Iceberg |
+| Remote Parquet (s3://, gs://) | Remote Iceberg (no download) |
+| Remote COPC | Remote Iceberg (no download) |
+| ArcGIS FeatureServer | Download + GeoParquet + Iceberg |
+| WFS endpoint | Download + GeoParquet + Iceberg |
+| Database table | Extract + Iceberg |
+| Local LAZ/LAS | Convert to Parquet + Iceberg |
+| Unknown format | Register for discovery only |
 
 **Examples:**
 
 ```bash
 # Local file
-portolan register file /data/cities.parquet --name cities
+portolan add cities.parquet --name cities --public
+
+# Remote cloud-native (no download)
+portolan add s3://bucket/data.parquet --name overture
 
 # ArcGIS FeatureServer
-portolan register arcgis_featureserver https://services.arcgis.com/.../0 --name parcels
+portolan add https://services.arcgis.com/.../FeatureServer/0 --name parcels
 
 # PostgreSQL table
-portolan register postgres "public.buildings" --connection-ref mydb --name buildings
+portolan add "public.buildings" --type postgres --connection-ref mydb --name buildings
 
-# WFS layer
-portolan register wfs https://example.com/wfs --layer boundaries --name boundaries
+# Point cloud
+portolan add scan.laz --type pointcloud --name lidar
+
+# Discovery-only (no processing)
+portolan add some.pmtiles --catalog-only --name tiles
 ```
 
-### Snapshot
+### Refresh Resource
 
 ```bash
-portolan snapshot <NAME> [OPTIONS]
+portolan refresh [NAME] [OPTIONS]
 ```
 
-Download/extract data to local GeoParquet (EXTERNAL → CACHED).
+Re-fetch data from the original source, detect schema drift, and re-create Iceberg metadata.
+
+Portolan stores a source fingerprint when data is first added. On refresh, it compares the current source against the stored fingerprint and skips re-extraction if unchanged. Use `--force` to bypass this check.
 
 **Options:**
 - `--namespace, -ns` - Namespace (default: "default")
-- `--force, -f` - Re-snapshot even if already cached
+- `--all` - Refresh all resources in namespace
+- `--force` - Force refresh even if source hasn't changed
+- `--bbox` - Bounding box filter
 - `--verbose, -v` - Verbose output
+
+**Change Detection:**
+
+For local files, Portolan checks the modification time and file size. For remote files, it checks file size and ETag/Last-Modified headers. API sources (WFS, ArcGIS, databases) don't support cheap change detection and are always re-extracted.
 
 **Schema Drift Detection:**
 
-If the schema changes between snapshots, you'll see a warning:
+If the schema changes between refreshes, you'll see a warning and the change is tracked in the resource metadata (`metadata.derived.previous_schema_hash`).
 
-```
-⚠️  Schema drift detected for cities
-  Previous schema hash: abc123
-  New schema hash:      def456
-
-Use --force to accept the new schema.
-```
-
-### Add (Convenience)
+### Load from Catalog
 
 ```bash
-portolan add <FILE> [OPTIONS]
+portolan load <URL> [OPTIONS]
 ```
 
-Register + snapshot in one command.
+Discover and register resources from an external catalog or service.
 
 **Options:**
-- `--name, -n` - Resource name
-- `--namespace, -ns` - Namespace
-- `--public` - Use "public" namespace
-- `--title` - Title
-- `--description` - Description
+- `--type` - Catalog type: `stac`, `arcgis-server` (auto-detected if omitted)
+- `--namespace, -ns` - Namespace (default: derived from catalog type)
+- `--max-items` - Maximum items to load (default: 100, 0 = all)
+- `--collections, -c` - Filter to specific collections (STAC only, repeatable)
+- `--dry-run` - Preview what would be added
+- `--verbose, -v` - Verbose output
+
+**Examples:**
+
+```bash
+# STAC catalog
+portolan load https://earth-search.aws.element84.com/v1 --max-items 50
+
+# ArcGIS server
+portolan load https://services.arcgis.com/.../rest/services
+
+# Preview
+portolan load https://example.com/stac --dry-run
+```
 
 ### Connection Management
 
@@ -359,45 +440,14 @@ portolan connection add oracledb "oracle://user:pass@host:1521/service" -g GEOME
 portolan connection list -v
 ```
 
-### Catalog Federation
+### Dataset Management
 
 ```bash
-# Register an upstream catalog
-portolan catalog add <URL> [OPTIONS]
+# List all resources
+portolan dataset list [--namespace NS] [--verbose] [--json]
 
-# List registered catalogs
-portolan catalog list [--verbose]
-
-# Sync from upstream
-portolan catalog sync [NAME] [OPTIONS]
-
-# Remove a catalog
-portolan catalog remove <NAME> [--force]
-```
-
-**Options for add:**
-- `--name, -n` - Catalog name
-- `--type` - Catalog type (`stac`, `arcgis`, `wfs`, `portolan`)
-- `--collections, -c` - Filter to specific collections (repeatable)
-
-**Options for sync:**
-- `--max-items` - Maximum items to sync (default: 100)
-- `--dry-run` - Preview changes without saving
-
-**Examples:**
-
-```bash
-# Add a STAC catalog
-portolan catalog add https://earth-search.aws.element84.com/v1 --name earth-search
-
-# Filter to specific collections
-portolan catalog add https://example.com/stac -c sentinel-2-l2a -c landsat-8
-
-# Sync
-portolan catalog sync earth-search --max-items 50
-
-# Preview what would be synced
-portolan catalog sync --dry-run
+# Remove a resource
+portolan dataset remove <NAMESPACE/NAME> [--force]
 ```
 
 ### Sync & Status
@@ -429,21 +479,6 @@ portolan validate default/cities
 portolan validate --resources-only
 ```
 
-### Import
-
-```bash
-portolan import stac <URL> [OPTIONS]
-```
-
-Import items from a STAC catalog.
-
-**Options:**
-- `--namespace, -n` - Namespace for imported items (default: "stac")
-- `--max-items` - Maximum items to import (default: 100, 0 = all)
-- `--collections, -c` - Filter to specific collections (repeatable)
-- `--dry-run` - Preview without saving
-- `--verbose, -v` - Verbose output
-
 ### Rebuild
 
 ```bash
@@ -466,8 +501,7 @@ Rebuild catalog and all enabled outputs.
 Supported formats: GeoParquet, Parquet, GeoJSON, Shapefile, GeoPackage, and anything geopandas can read.
 
 ```bash
-portolan register file /path/to/data.geojson --name mydata
-portolan snapshot mydata  # Converts to GeoParquet
+portolan add /path/to/data.geojson --name mydata  # Converts to GeoParquet + Iceberg
 ```
 
 ### WFS (Web Feature Service)
@@ -475,11 +509,7 @@ portolan snapshot mydata  # Converts to GeoParquet
 Requires GDAL/ogr2ogr to be installed.
 
 ```bash
-portolan register wfs "https://example.com/wfs" \
-  --layer "myLayer" \
-  --name boundaries
-
-portolan snapshot boundaries
+portolan add "https://example.com/wfs" --type wfs --layer "myLayer" --name boundaries
 ```
 
 ### ArcGIS FeatureServer
@@ -487,31 +517,20 @@ portolan snapshot boundaries
 Requires [geoparquet-io](https://github.com/geoparquet/geoparquet-io) CLI (`gpio`).
 
 ```bash
-portolan register arcgis_featureserver \
-  "https://services.arcgis.com/xxx/ArcGIS/rest/services/MyService/FeatureServer/0" \
-  --name parcels
-
-portolan snapshot parcels
+portolan add "https://services.arcgis.com/.../FeatureServer/0" --name parcels
 ```
 
 ### ArcGIS ImageServer (Raster)
 
 ```bash
-portolan register arcgis_imageserver \
-  "https://services.arcgis.com/xxx/ArcGIS/rest/services/Elevation/ImageServer" \
-  --name elevation
-
-portolan snapshot elevation  # Creates Raquet format
+portolan add "https://services.arcgis.com/.../ImageServer" --name elevation
+# Creates Raquet format + Iceberg
 ```
 
 ### STAC Items
 
 ```bash
-portolan register stac \
-  "https://earth-search.aws.element84.com/v1/collections/sentinel-2-l2a/items/S2A_..." \
-  --name sentinel_scene
-
-portolan snapshot sentinel_scene  # Downloads primary asset
+portolan add "https://earth-search.aws.element84.com/v1/..." --type stac --name sentinel_scene
 ```
 
 ### PostgreSQL/PostGIS
@@ -520,27 +539,18 @@ portolan snapshot sentinel_scene  # Downloads primary asset
 # Store connection
 portolan connection add gisdb "postgresql://user:pass@localhost:5432/gis"
 
-# Register table
-portolan register postgres "public.buildings" \
-  --connection-ref gisdb \
-  --name buildings
-
-portolan snapshot buildings
+# Add table
+portolan add "public.buildings" --type postgres --connection-ref gisdb --name buildings
 ```
 
 ### Oracle Spatial
 
 ```bash
 # Store connection
-portolan connection add oradb "oracle://user:pass@host:1521/service" \
-  --geometry-column SHAPE
+portolan connection add oradb "oracle://user:pass@host:1521/service" --geometry-column SHAPE
 
-# Register table
-portolan register oracle "ADMIN.PARCELS" \
-  --connection-ref oradb \
-  --name parcels
-
-portolan snapshot parcels
+# Add table
+portolan add "ADMIN.PARCELS" --type oracle --connection-ref oradb --name parcels
 ```
 
 ### Point Cloud / LiDAR (LAZ, LAS)
@@ -551,14 +561,9 @@ Requires the DuckDB PDAL extension, which reads 119+ point cloud formats via [PD
 # Install the extension (one-time)
 duckdb -c "INSTALL pdal FROM community;"
 
-# Register a LAZ/LAS file
-portolan register pointcloud /path/to/scan.laz \
-  --name autzen_lidar \
-  --namespace lidar \
-  --title "Autzen Stadium LiDAR"
-
-# Snapshot converts LAZ → Parquet → Iceberg in one step
-portolan snapshot autzen_lidar --namespace lidar
+# Add a LAZ/LAS file (converts to Parquet + Iceberg in one step)
+portolan add /path/to/scan.laz --type pointcloud --name autzen_lidar \
+  --namespace lidar --title "Autzen Stadium LiDAR"
 ```
 
 The point cloud is stored as a flat Parquet table with columns like X, Y, Z, Intensity, Classification, ReturnNumber, Red, Green, Blue, etc. All standard numeric types — queryable in DuckDB, BigQuery, Snowflake, and any Iceberg-compatible engine.
@@ -578,60 +583,35 @@ Supported input formats include LAS, LAZ, COPC, E57, PLY, PCD, and any format su
 
 ---
 
-## Catalog Federation
+## Loading from External Catalogs
 
-Portolan can track and sync with upstream catalogs like STAC, keeping your local catalog up to date.
+Portolan can discover and register resources from external STAC catalogs and ArcGIS servers.
 
-### Register Upstream Catalogs
-
-```bash
-# STAC catalog
-portolan catalog add https://earth-search.aws.element84.com/v1 \
-  --name earth-search
-
-# With collection filter
-portolan catalog add https://planetarycomputer.microsoft.com/api/stac/v1 \
-  --name planetary-computer \
-  --collections sentinel-2-l2a landsat-c2-l2
-```
-
-### Sync Updates
+### STAC Catalogs
 
 ```bash
-# Sync all catalogs
-portolan catalog sync
+# Discover items from a STAC catalog
+portolan load https://earth-search.aws.element84.com/v1
 
-# Sync specific catalog
-portolan catalog sync earth-search
+# Filter to specific collections
+portolan load https://earth-search.aws.element84.com/v1 \
+  -c sentinel-2-l2a --max-items 50
 
-# Preview changes
-portolan catalog sync --dry-run
-
-# Limit items
-portolan catalog sync earth-search --max-items 50
+# Preview what would be loaded
+portolan load https://example.com/stac --dry-run
 ```
 
-### How Sync Works
+### ArcGIS Servers
 
-1. Fetches current state from upstream catalog
-2. Computes hash of items to detect changes
-3. Compares with last sync hash
-4. For new/changed items:
-   - Creates resource entry with upstream reference
-   - Preserves source metadata
-5. Updates sync state with new hash
+```bash
+# Discover all FeatureServers and ImageServers
+portolan load https://services.arcgis.com/.../rest/services
 
-Synced resources have an `upstream` field tracking their origin:
-
-```json
-{
-  "upstream": {
-    "catalog": "earth-search",
-    "type": "stac",
-    "id": "S2A_..."
-  }
-}
+# Preview first
+portolan load https://services.arcgis.com/.../rest/services --dry-run
 ```
+
+Resources loaded from catalogs start in **REGISTERED** state (discoverable but not SQL-queryable). Use `portolan refresh <name>` to download and process individual resources.
 
 ---
 
@@ -731,6 +711,133 @@ portolan clone gs://public-catalog/portolan ./local-copy
 
 ---
 
+## Automation & Orchestration
+
+Portolan is designed as a CLI-first tool, making it easy to automate with external schedulers. Rather than building an internal scheduling engine, Portolan provides the building blocks for external orchestration.
+
+### Understanding refresh vs sync
+
+These are the two key operations for keeping data current:
+
+```
+External origins          Local catalog          Remote storage
+(WFS, ArcGIS, DB)        (.portolan/)           (GCS/S3/Azure)
+       │                       │                       │
+       │   portolan refresh    │    portolan sync      │
+       │ ────────────────────► │ ────────────────────► │
+       │   (re-fetch data)     │   (push catalog)      │
+       │                       │                       │
+       │                       │    portolan pull       │
+       │                       │ ◄──────────────────── │
+       │                       │   (pull catalog)      │
+```
+
+- **`refresh`** pulls fresh data FROM external origins INTO your local catalog
+- **`sync`** pushes your local catalog TO remote storage for sharing/querying
+- **`pull`** pulls a shared catalog FROM remote storage to your local machine
+
+### Automated update pipeline
+
+The typical automation pattern is:
+
+```bash
+#!/bin/bash
+# update-catalog.sh — run on a schedule
+
+# 1. Re-fetch all data from origins (skips unchanged sources)
+portolan refresh --all
+
+# 2. Push updated catalog to remote storage
+portolan sync
+
+# 3. (Optional) Check sync health
+portolan control health
+```
+
+### External orchestration examples
+
+**Cron (simplest):**
+
+```cron
+# Refresh and sync every 6 hours
+0 */6 * * * cd /path/to/project && portolan refresh --all && portolan sync
+```
+
+**GitHub Actions:**
+
+```yaml
+name: Update Catalog
+on:
+  schedule:
+    - cron: '0 */6 * * *'  # Every 6 hours
+  workflow_dispatch:         # Manual trigger
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync
+      - run: uv run portolan refresh --all
+      - run: uv run portolan sync
+```
+
+**Google Cloud Functions / AWS Lambda:**
+
+```python
+def update_catalog(event, context):
+    """Cloud function triggered on a schedule."""
+    import subprocess
+    subprocess.run(["portolan", "refresh", "--all"], check=True)
+    subprocess.run(["portolan", "sync"], check=True)
+```
+
+### Control plane
+
+Portolan includes a lightweight control plane that logs every sync operation to a local DuckDB database (`.portolan/control.duckdb`). This provides:
+
+- **Event history** — every refresh, sync, and pull is logged with timestamps and outcomes
+- **Retry with backoff** — failed operations are retried automatically (configurable)
+- **Health monitoring** — check success/failure rates over time
+
+```bash
+# View sync history
+portolan control history
+
+# Check health summary (last 24 hours)
+portolan control health
+
+# View history for a specific operation type
+portolan control history --type snapshot
+```
+
+### Configuring retry policy
+
+Add a `sync_policy` section to `.portolan/config.json`:
+
+```json
+{
+  "sync_policy": {
+    "max_retries": 3,
+    "retry_backoff": "exponential",
+    "retry_delay_seconds": 2.0,
+    "timeout_seconds": 300,
+    "on_failure": "log"
+  }
+}
+```
+
+| Setting | Options | Default |
+|---|---|---|
+| `max_retries` | 0-10 | 3 |
+| `retry_backoff` | `exponential`, `linear`, `fixed` | `exponential` |
+| `retry_delay_seconds` | seconds | 2.0 |
+| `on_failure` | `log`, `webhook` | `log` |
+| `webhook_url` | URL (when `on_failure: webhook`) | — |
+
+---
+
 ## Troubleshooting
 
 ### "Resource validation failed"
@@ -752,7 +859,7 @@ The source data schema changed. Options:
 
 1. Accept the new schema:
    ```bash
-   portolan snapshot mydata --force
+   portolan refresh mydata --force
    ```
 
 2. Investigate the change by comparing the schema hashes in the resource JSON.

@@ -155,185 +155,11 @@ class TestRebuildCommand:
             assert result.exit_code == 0
 
 
-class TestRegisterCommand:
-    """Test suite for register command."""
-
-    def test_register_file(self, initialized_catalog, sample_geoparquet):
-        """Test registering a local file."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            result = runner.invoke(
-                cli,
-                [
-                    "register",
-                    "file",
-                    str(sample_geoparquet),
-                    "--name",
-                    "test_file",
-                ],
-            )
-
-            assert result.exit_code == 0
-            assert "Registered file resource" in result.output
-            assert "State: EXTERNAL" in result.output
-
-            # Check resource file was created
-            resource_path = initialized_catalog.path / "resources" / "default" / "test_file.json"
-            assert resource_path.exists()
-
-    def test_register_with_namespace(self, initialized_catalog, sample_geoparquet):
-        """Test registering with custom namespace."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            result = runner.invoke(
-                cli,
-                [
-                    "register",
-                    "file",
-                    str(sample_geoparquet),
-                    "--name",
-                    "test_ns",
-                    "--namespace",
-                    "custom",
-                ],
-            )
-
-            assert result.exit_code == 0
-            resource_path = initialized_catalog.path / "resources" / "custom" / "test_ns.json"
-            assert resource_path.exists()
-
-    def test_register_with_title(self, initialized_catalog, sample_geoparquet):
-        """Test registering with title and description."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            result = runner.invoke(
-                cli,
-                [
-                    "register",
-                    "file",
-                    str(sample_geoparquet),
-                    "--name",
-                    "titled",
-                    "--title",
-                    "My Title",
-                    "--description",
-                    "My Description",
-                ],
-            )
-
-            assert result.exit_code == 0
-
-            # Check metadata
-            import json
-            resource_path = initialized_catalog.path / "resources" / "default" / "titled.json"
-            with open(resource_path) as f:
-                data = json.load(f)
-            assert data["metadata"]["user"]["title"] == "My Title"
-            assert data["metadata"]["user"]["description"] == "My Description"
-
-
-class TestSnapshotCommand:
-    """Test suite for snapshot command."""
-
-    def test_snapshot_file(self, initialized_catalog, sample_geoparquet):
-        """Test snapshotting a registered vector file auto-creates Iceberg metadata."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # First register
-            runner.invoke(
-                cli,
-                ["register", "file", str(sample_geoparquet), "--name", "snap_test"],
-            )
-
-            # Then snapshot
-            result = runner.invoke(cli, ["snapshot", "snap_test"])
-
-            assert result.exit_code == 0
-            assert "Snapshot created" in result.output
-            # Vector resources should be auto-materialized
-            assert "State: MATERIALIZED" in result.output
-            assert "Iceberg: auto-registered" in result.output
-
-            # Check snapshot file was created
-            snapshot_path = initialized_catalog.path / "data" / "raw" / "default" / "snap_test" / "snap_test.parquet"
-            assert snapshot_path.exists()
-
-            # Check Iceberg metadata was auto-created
-            metadata_path = initialized_catalog.path / "data" / "default" / "snap_test" / "metadata" / "v1.metadata.json"
-            assert metadata_path.exists()
-
-    def test_snapshot_not_found(self, initialized_catalog):
-        """Test snapshot of non-existent resource."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            result = runner.invoke(cli, ["snapshot", "nonexistent"])
-
-            assert result.exit_code != 0
-            assert "Resource not found" in result.output
-
-
-class TestMaterializeCommand:
-    """Test suite for materialize command."""
-
-    def test_materialize_vector_already_done(self, initialized_catalog, sample_geoparquet):
-        """Test materializing a vector resource that was auto-materialized by snapshot."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Register and snapshot (auto-materializes for vectors)
-            runner.invoke(
-                cli,
-                ["register", "file", str(sample_geoparquet), "--name", "mat_test"],
-            )
-            runner.invoke(cli, ["snapshot", "mat_test"])
-
-            # Materialize should recognize it's already done
-            result = runner.invoke(cli, ["materialize", "mat_test"])
-
-            assert result.exit_code == 0
-            assert "already has Iceberg metadata" in result.output
-
-            # Iceberg metadata should exist (from snapshot)
-            metadata_path = initialized_catalog.path / "data" / "default" / "mat_test" / "metadata" / "v1.metadata.json"
-            assert metadata_path.exists()
-
-    def test_materialize_force_vector(self, initialized_catalog, sample_geoparquet):
-        """Test force re-materializing a vector resource."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Register and snapshot (auto-materializes for vectors)
-            runner.invoke(
-                cli,
-                ["register", "file", str(sample_geoparquet), "--name", "force_mat"],
-            )
-            runner.invoke(cli, ["snapshot", "force_mat"])
-
-            # Force materialize should regenerate
-            result = runner.invoke(cli, ["materialize", "force_mat", "--force"])
-
-            assert result.exit_code == 0
-            assert "Materialized" in result.output
-
-    def test_materialize_not_cached(self, initialized_catalog, sample_geoparquet):
-        """Test materializing without snapshotting first."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Register but don't snapshot
-            runner.invoke(
-                cli,
-                ["register", "file", str(sample_geoparquet), "--name", "not_cached"],
-            )
-
-            result = runner.invoke(cli, ["materialize", "not_cached"])
-
-            assert result.exit_code != 0
-            assert "must be cached first" in result.output
-
-
 class TestAddCommand:
-    """Test suite for add convenience command."""
+    """Test suite for the add command."""
 
     def test_add_full_lifecycle(self, initialized_catalog, sample_geoparquet):
-        """Test add runs full lifecycle (register + snapshot + materialize)."""
+        """Test add runs full lifecycle (download + Iceberg)."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
             result = runner.invoke(
@@ -348,11 +174,10 @@ class TestAddCommand:
                 ],
             )
 
-            assert result.exit_code == 0
+            assert result.exit_code == 0, result.output
             assert "Resource added successfully" in result.output
 
-            # Check resource is materialized
-            import json
+            # Check resource has Iceberg metadata
             resource_path = initialized_catalog.path / "resources" / "default" / "full_test.json"
             with open(resource_path) as f:
                 data = json.load(f)
@@ -374,6 +199,316 @@ class TestAddCommand:
             # Check resource is in public namespace
             resource_path = initialized_catalog.path / "resources" / "public" / "public_test.json"
             assert resource_path.exists()
+
+    def test_add_catalog_only(self, initialized_catalog, sample_geoparquet):
+        """Test add with --catalog-only flag registers without processing."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "add",
+                    str(sample_geoparquet),
+                    "--name",
+                    "catalog_only_test",
+                    "--catalog-only",
+                ],
+            )
+
+            assert result.exit_code == 0
+            assert "registered for discovery" in result.output
+
+            # Check resource exists but has no Iceberg
+            resource_path = initialized_catalog.path / "resources" / "default" / "catalog_only_test.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+
+            assert "iceberg" not in data.get("assets", {})
+            assert "snapshot" not in data.get("assets", {})
+
+    def test_add_with_namespace(self, initialized_catalog, sample_geoparquet):
+        """Test add with custom namespace."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "add",
+                    str(sample_geoparquet),
+                    "--name",
+                    "ns_test",
+                    "--namespace",
+                    "custom",
+                ],
+            )
+
+            assert result.exit_code == 0
+            resource_path = initialized_catalog.path / "resources" / "custom" / "ns_test.json"
+            assert resource_path.exists()
+
+    def test_add_with_title_description(self, initialized_catalog, sample_geoparquet):
+        """Test add with title and description."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                [
+                    "add",
+                    str(sample_geoparquet),
+                    "--name",
+                    "titled",
+                    "--title",
+                    "My Title",
+                    "--description",
+                    "My Description",
+                ],
+            )
+
+            assert result.exit_code == 0
+
+            resource_path = initialized_catalog.path / "resources" / "default" / "titled.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["metadata"]["user"]["title"] == "My Title"
+            assert data["metadata"]["user"]["description"] == "My Description"
+
+    def test_add_creates_iceberg(self, initialized_catalog, sample_geoparquet):
+        """Test that add auto-creates Iceberg metadata for parquet files."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["add", str(sample_geoparquet), "--name", "iceberg_test"],
+            )
+
+            assert result.exit_code == 0
+
+            # Check Iceberg metadata was created
+            metadata_path = initialized_catalog.path / "data" / "default" / "iceberg_test" / "metadata" / "v1.metadata.json"
+            assert metadata_path.exists()
+
+
+class TestRefreshCommand:
+    """Test suite for refresh command."""
+
+    def test_refresh_not_found(self, initialized_catalog):
+        """Test refresh of non-existent resource."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(cli, ["refresh", "nonexistent"])
+            assert result.exit_code != 0
+            assert "Resource not found" in result.output
+
+
+class TestSchemaDrift:
+    """Test suite for schema drift detection."""
+
+    def test_schema_drift_on_refresh(self, initialized_catalog, temp_catalog_dir):
+        """Refresh with changed source schema should detect drift."""
+        import duckdb
+
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Create first parquet file
+            parquet_v1 = temp_catalog_dir / "data_v1.parquet"
+            conn = duckdb.connect()
+            conn.execute("INSTALL spatial; LOAD spatial")
+            conn.execute(f"""
+                COPY (
+                    SELECT 'Paris' as name, 1000 as population,
+                    ST_Point(2.35, 48.85) as geometry
+                ) TO '{parquet_v1}' (FORMAT PARQUET)
+            """)
+            conn.close()
+
+            # Add resource
+            result = runner.invoke(
+                cli,
+                ["add", str(parquet_v1), "--name", "drift_test"],
+            )
+            assert result.exit_code == 0
+
+            # Verify schema_hash was stored
+            resource_path = initialized_catalog.path / "resources" / "default" / "drift_test.json"
+            with open(resource_path) as f:
+                resource_data = json.load(f)
+            assert resource_data["metadata"]["derived"]["schema_hash"] is not None
+            original_hash = resource_data["metadata"]["derived"]["schema_hash"]
+
+            # Create second parquet with different schema (extra column)
+            parquet_v2 = temp_catalog_dir / "data_v2.parquet"
+            conn = duckdb.connect()
+            conn.execute("INSTALL spatial; LOAD spatial")
+            conn.execute(f"""
+                COPY (
+                    SELECT 'Paris' as name, 1000 as population,
+                    'France' as country,
+                    ST_Point(2.35, 48.85) as geometry
+                ) TO '{parquet_v2}' (FORMAT PARQUET)
+            """)
+            conn.close()
+
+            # Update the resource origin to point to v2
+            resource_data["origin"]["url"] = str(parquet_v2)
+            with open(resource_path, "w") as f:
+                json.dump(resource_data, f, indent=2)
+
+            # Refresh should detect drift
+            result = runner.invoke(cli, ["refresh", "drift_test", "--force"])
+            assert result.exit_code == 0
+            assert "Schema drift detected" in result.output
+
+            # Verify schema hash changed
+            with open(resource_path) as f:
+                resource_data = json.load(f)
+            new_hash = resource_data["metadata"]["derived"]["schema_hash"]
+            assert new_hash != original_hash
+            assert resource_data["metadata"]["derived"]["previous_schema_hash"] == original_hash
+
+    def test_no_drift_same_schema(self, initialized_catalog, sample_geoparquet):
+        """Re-add with same schema should not report drift."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Add resource
+            runner.invoke(
+                cli,
+                ["add", str(sample_geoparquet), "--name", "no_drift"],
+            )
+
+            # Refresh with --force (same file, same schema)
+            result = runner.invoke(cli, ["refresh", "no_drift", "--force"])
+            assert result.exit_code == 0
+            assert "Schema drift" not in result.output
+
+
+class TestChangeDetection:
+    """Test suite for refresh change detection."""
+
+    def test_refresh_skips_unchanged_file(self, initialized_catalog, sample_geoparquet):
+        """Refresh should skip re-extraction when source file hasn't changed."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            # Add resource (stores source fingerprint)
+            result = runner.invoke(
+                cli,
+                ["add", str(sample_geoparquet), "--name", "skip_test"],
+            )
+            assert result.exit_code == 0
+
+            # Verify fingerprint was stored
+            resource_path = initialized_catalog.path / "resources" / "default" / "skip_test.json"
+            with open(resource_path) as f:
+                resource_data = json.load(f)
+            assert resource_data["assets"]["snapshot"].get("source_fingerprint") is not None
+
+            # Refresh without --force — should skip since file hasn't changed
+            result = runner.invoke(cli, ["refresh", "skip_test"])
+            assert result.exit_code == 0
+            assert "source unchanged, skipping" in result.output
+
+    def test_refresh_force_overrides_skip(self, initialized_catalog, sample_geoparquet):
+        """--force should refresh even when source is unchanged."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["add", str(sample_geoparquet), "--name", "force_test"],
+            )
+            assert result.exit_code == 0
+
+            # Refresh with --force — should NOT skip
+            result = runner.invoke(cli, ["refresh", "force_test", "--force"])
+            assert result.exit_code == 0
+            assert "source unchanged" not in result.output
+            assert "Refreshed force_test" in result.output
+
+
+class TestMetadataCommands:
+    """Test suite for metadata commands."""
+
+    def test_metadata_show(self, initialized_catalog, sample_geoparquet):
+        """Test metadata show displays user metadata."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "meta_test", "--title", "Test Cities"])
+            result = runner.invoke(cli, ["metadata", "show", "meta_test"])
+            assert result.exit_code == 0
+            assert "Test Cities" in result.output
+            assert "User metadata:" in result.output
+
+    def test_metadata_show_json(self, initialized_catalog, sample_geoparquet):
+        """Test metadata show --json outputs valid JSON."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "json_test", "--title", "JSON Test"])
+            result = runner.invoke(cli, ["metadata", "show", "json_test", "--json"])
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert "user" in data
+            assert data["user"]["title"] == "JSON Test"
+
+    def test_metadata_set_well_known(self, initialized_catalog, sample_geoparquet):
+        """Setting a well-known field goes to typed field."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "wk_test"])
+            result = runner.invoke(cli, ["metadata", "set", "wk_test", "license", "CC-BY-4.0"])
+            assert result.exit_code == 0
+
+            resource_path = initialized_catalog.path / "resources" / "default" / "wk_test.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["metadata"]["user"]["license"] == "CC-BY-4.0"
+
+    def test_metadata_set_custom_property(self, initialized_catalog, sample_geoparquet):
+        """Setting a non-well-known field goes to properties."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "prop_test"])
+            result = runner.invoke(cli, ["metadata", "set", "prop_test", "contact_email", "test@example.com"])
+            assert result.exit_code == 0
+
+            resource_path = initialized_catalog.path / "resources" / "default" / "prop_test.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["metadata"]["user"]["properties"]["contact_email"] == "test@example.com"
+
+    def test_metadata_set_json_bulk(self, initialized_catalog, sample_geoparquet):
+        """Bulk set via JSON."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "bulk_test"])
+            result = runner.invoke(cli, [
+                "metadata", "set", "bulk_test",
+                "--json", '{"license": "MIT", "contact_email": "bulk@example.com", "topic_category": "boundaries"}',
+            ])
+            assert result.exit_code == 0
+            assert "Updated 3 field(s)" in result.output
+
+            resource_path = initialized_catalog.path / "resources" / "default" / "bulk_test.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["metadata"]["user"]["license"] == "MIT"
+            assert data["metadata"]["user"]["properties"]["contact_email"] == "bulk@example.com"
+            assert data["metadata"]["user"]["properties"]["topic_category"] == "boundaries"
+
+    def test_metadata_unset(self, initialized_catalog, sample_geoparquet):
+        """Unset removes a property."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            runner.invoke(cli, ["add", str(sample_geoparquet), "--name", "unset_test"])
+            runner.invoke(cli, ["metadata", "set", "unset_test", "contact_email", "test@example.com"])
+            result = runner.invoke(cli, ["metadata", "unset", "unset_test", "contact_email"])
+            assert result.exit_code == 0
+            assert "Removed" in result.output
+
+    def test_metadata_set_nonexistent_resource(self, initialized_catalog):
+        """Set on nonexistent resource fails."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(cli, ["metadata", "set", "nonexistent", "key", "value"])
+            assert result.exit_code != 0
+            assert "not found" in result.output.lower()
 
 
 class TestParseRemoteUrl:
@@ -482,94 +617,6 @@ class TestTableNameValidation:
             _validate_table_name("123table")
 
 
-class TestSchemaDrift:
-    """Test suite for schema drift detection."""
-
-    def test_snapshot_force_detects_and_accepts_drift(self, initialized_catalog, temp_catalog_dir):
-        """Snapshot --force with changed schema should detect drift and accept it."""
-        import duckdb
-
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Create first parquet file
-            parquet_v1 = temp_catalog_dir / "data_v1.parquet"
-            conn = duckdb.connect()
-            conn.execute("INSTALL spatial; LOAD spatial")
-            conn.execute(f"""
-                COPY (
-                    SELECT 'Paris' as name, 1000 as population,
-                    ST_Point(2.35, 48.85) as geometry
-                ) TO '{parquet_v1}' (FORMAT PARQUET)
-            """)
-            conn.close()
-
-            # Register and snapshot
-            result = runner.invoke(
-                cli,
-                ["register", "file", str(parquet_v1), "--name", "drift_test"],
-            )
-            assert result.exit_code == 0
-
-            result = runner.invoke(cli, ["snapshot", "drift_test"])
-            assert result.exit_code == 0
-
-            # Verify schema_hash was stored
-            resource_path = initialized_catalog.path / "resources" / "default" / "drift_test.json"
-            with open(resource_path) as f:
-                resource_data = json.load(f)
-            assert resource_data["metadata"]["derived"]["schema_hash"] is not None
-            original_hash = resource_data["metadata"]["derived"]["schema_hash"]
-
-            # Create second parquet with different schema (extra column)
-            parquet_v2 = temp_catalog_dir / "data_v2.parquet"
-            conn = duckdb.connect()
-            conn.execute("INSTALL spatial; LOAD spatial")
-            conn.execute(f"""
-                COPY (
-                    SELECT 'Paris' as name, 1000 as population,
-                    'France' as country,
-                    ST_Point(2.35, 48.85) as geometry
-                ) TO '{parquet_v2}' (FORMAT PARQUET)
-            """)
-            conn.close()
-
-            # Update the resource origin to point to v2
-            resource_data["origin"]["url"] = str(parquet_v2)
-            with open(resource_path, "w") as f:
-                json.dump(resource_data, f, indent=2)
-
-            # Re-snapshot with --force should detect drift and accept it
-            result = runner.invoke(cli, ["snapshot", "drift_test", "--force"])
-            assert result.exit_code == 0
-            assert "Schema drift detected" in result.output
-            assert "Schema change accepted" in result.output
-
-            # Verify schema hash changed
-            with open(resource_path) as f:
-                resource_data = json.load(f)
-            new_hash = resource_data["metadata"]["derived"]["schema_hash"]
-            assert new_hash != original_hash
-
-            # Verify previous_schema_hash was tracked
-            assert resource_data["metadata"]["derived"]["previous_schema_hash"] == original_hash
-
-    def test_no_drift_same_schema(self, initialized_catalog, sample_geoparquet):
-        """Re-snapshot with same schema should not report drift."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Register and snapshot
-            runner.invoke(
-                cli,
-                ["register", "file", str(sample_geoparquet), "--name", "no_drift"],
-            )
-            runner.invoke(cli, ["snapshot", "no_drift"])
-
-            # Re-snapshot with --force (same file, same schema)
-            result = runner.invoke(cli, ["snapshot", "no_drift", "--force"])
-            assert result.exit_code == 0
-            assert "Schema drift" not in result.output
-
-
 class TestExtractorDispatch:
     """Test suite for extractor dispatch."""
 
@@ -605,29 +652,10 @@ class TestExtractorDispatch:
         assert output_path.stat().st_size > 0
 
 
-class TestImportArcgisServer:
-    """Test suite for import arcgis-server command."""
+class TestLoadCommand:
+    """Test suite for load command."""
 
-    def test_help_shows(self):
-        """Command shows up in help."""
-        runner = CliRunner()
-        result = runner.invoke(cli, ["import", "arcgis-server", "--help"])
-        assert result.exit_code == 0
-        assert "arcgis-server" in result.output.lower() or "ArcGIS" in result.output
-
-    def test_bad_url_rejected(self, initialized_catalog):
-        """Non-ArcGIS URL is rejected."""
-        runner = CliRunner()
-        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            result = runner.invoke(
-                cli,
-                ["import", "arcgis-server", "https://example.com/not-arcgis"],
-                catch_exceptions=False,
-            )
-            assert result.exit_code != 0
-            assert "REST services endpoint" in result.output
-
-    def test_dry_run_with_mocked_discovery(self, initialized_catalog, monkeypatch):
+    def test_load_arcgis_dry_run(self, initialized_catalog, monkeypatch):
         """Dry run prints discovered services without saving."""
         fake_fs = [
             {
@@ -659,7 +687,7 @@ class TestImportArcgisServer:
             result = runner.invoke(
                 cli,
                 [
-                    "import", "arcgis-server",
+                    "load",
                     "https://example.com/arcgis/rest/services",
                     "--dry-run",
                 ],
@@ -670,11 +698,9 @@ class TestImportArcgisServer:
             assert "buildings_footprints" in result.output
             assert "buildings_points" in result.output
             assert "elevation" in result.output
-            assert "1 FeatureServer" in result.output
-            assert "1 ImageServer" in result.output
 
-    def test_import_saves_resources(self, initialized_catalog, monkeypatch):
-        """Import saves resource JSON files to catalog."""
+    def test_load_arcgis_saves_resources(self, initialized_catalog, monkeypatch):
+        """Load saves resource JSON files to catalog."""
         fake_fs = [
             {
                 "name": "Rivers",
@@ -696,16 +722,16 @@ class TestImportArcgisServer:
             result = runner.invoke(
                 cli,
                 [
-                    "import", "arcgis-server",
+                    "load",
                     "https://example.com/arcgis/rest/services",
                     "--namespace", "test_arcgis",
                 ],
                 catch_exceptions=False,
             )
             assert result.exit_code == 0
-            assert "Imported 1 resources" in result.output
+            assert "Loaded 1 resources" in result.output
 
-        # Check resource file was created
+        # Check resource file was created in new Resource format
         resource_file = initialized_catalog.path / "resources" / "test_arcgis" / "rivers.json"
         assert resource_file.exists()
 
@@ -715,58 +741,30 @@ class TestImportArcgisServer:
         assert resource["origin"]["type"] == "arcgis_featureserver"
         assert "FeatureServer/0" in resource["origin"]["url"]
 
-    def test_skip_rasters(self, initialized_catalog, monkeypatch):
-        """--skip-rasters filters out ImageServers."""
-        fake_fs = [
-            {
-                "name": "Data",
-                "url": "https://example.com/rest/services/Data/FeatureServer",
-                "layers": [{"id": 0, "name": "Layer", "geometryType": "esriGeometryPoint"}],
-            }
-        ]
-        fake_is = [
-            {
-                "name": "Raster",
-                "url": "https://example.com/rest/services/Raster/ImageServer",
-                "pixel_type": "U8",
-                "band_count": 1,
-                "extent": {},
-            }
-        ]
-
-        monkeypatch.setattr(
-            "portolan.discover_arcgis_services",
-            lambda url, verbose=False: (fake_fs, fake_is),
-        )
-
+    def test_load_bad_arcgis_url(self, initialized_catalog):
+        """Non-ArcGIS URL is rejected."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
             result = runner.invoke(
                 cli,
-                [
-                    "import", "arcgis-server",
-                    "https://example.com/rest/services",
-                    "--skip-rasters",
-                    "--dry-run",
-                ],
+                ["load", "https://example.com/not-arcgis", "--type", "arcgis-server"],
                 catch_exceptions=False,
             )
-            assert result.exit_code == 0
-            assert "0 ImageServer" in result.output
-            assert "raster" not in result.output.lower().split("dry run")[1]
+            assert result.exit_code != 0
+            assert "REST services endpoint" in result.output
 
 
 class TestDottedNamespaces:
     """Tests for hierarchical dotted namespace support."""
 
-    def test_register_with_dotted_namespace(self, initialized_catalog, sample_geoparquet):
-        """Register a resource using a dotted namespace."""
+    def test_add_with_dotted_namespace(self, initialized_catalog, sample_geoparquet):
+        """Add a resource using a dotted namespace."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
             result = runner.invoke(
                 cli,
                 [
-                    "register", "file",
+                    "add",
                     str(sample_geoparquet),
                     "--name", "fires",
                     "--namespace", "europe.spain",
@@ -788,7 +786,7 @@ class TestDottedNamespaces:
             result = runner.invoke(
                 cli,
                 [
-                    "register", "file",
+                    "add",
                     str(sample_geoparquet),
                     "--name", "test",
                     "--namespace", "Europe.Spain",
@@ -801,17 +799,17 @@ class TestDottedNamespaces:
         """dataset list renders dotted namespaces as a tree."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
-            # Register resources in dotted namespaces
+            # Add resources in dotted namespaces
             runner.invoke(
                 cli,
-                ["register", "file", str(sample_geoparquet), "--name", "fires",
-                 "--namespace", "europe.spain"],
+                ["add", str(sample_geoparquet), "--name", "fires",
+                 "--namespace", "europe.spain", "--catalog-only"],
                 catch_exceptions=False,
             )
             runner.invoke(
                 cli,
-                ["register", "file", str(sample_geoparquet), "--name", "cities",
-                 "--namespace", "europe.france"],
+                ["add", str(sample_geoparquet), "--name", "cities",
+                 "--namespace", "europe.france", "--catalog-only"],
                 catch_exceptions=False,
             )
 
@@ -834,10 +832,11 @@ class TestDottedNamespaces:
             result = runner.invoke(
                 cli,
                 [
-                    "register", "file",
+                    "add",
                     str(sample_geoparquet),
                     "--name", "test",
                     "--namespace", "my_server.data_folder",
+                    "--catalog-only",
                 ],
                 catch_exceptions=False,
             )

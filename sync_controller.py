@@ -8,8 +8,7 @@ Uses DuckDB as the backing store for sync events, keeping the project serverless
 Sync operation types:
 - remote_push:   portolan sync       (push local changes to remote)
 - remote_pull:   portolan pull       (pull remote changes to local)
-- catalog_sync:  portolan catalog sync (discover resources from upstream catalogs)
-- snapshot:      portolan snapshot   (download data from origin to local cache)
+- snapshot:      portolan refresh    (re-fetch data from origin)
 
 Usage:
     controller = SyncController(portolan_dir)

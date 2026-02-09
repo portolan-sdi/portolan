@@ -65,8 +65,8 @@ See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide.
 │  ┌─────────────────────────────────────────────────────────────────────────────────────────┐   │
 │  │                              resources/{namespace}/{name}.json                          │   │
 │  │                                                                                         │   │
-│  │   Resource Lifecycle:  EXTERNAL ──► CACHED ──► MATERIALIZED                             │   │
-│  │                        (origin)    (+snapshot)  (+iceberg)                              │   │
+│  │   Resource Lifecycle:  REGISTERED ──────────► READY                                     │   │
+│  │                        (origin only)          (+iceberg, queryable via SQL)              │   │
 │  └─────────────────────────────────────────────────────────────────────────────────────────┘   │
 │                                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────────────────────┐   │
@@ -79,13 +79,14 @@ See [DOCUMENTATION.md](DOCUMENTATION.md) for the full user guide.
 
 ### Resource Lifecycle
 
-Resources progress through three states based on what operations have been performed:
+Resources have two states:
 
 | State | Condition | Description |
 |-------|-----------|-------------|
-| **EXTERNAL** | Has `origin`, no `assets.snapshot` | Pointer to remote data |
-| **CACHED** | Has `origin` + `assets.snapshot` | Downloaded to local GeoParquet |
-| **MATERIALIZED** | Has `origin` + `assets.snapshot` + `assets.iceberg` | Wrapped as Iceberg table |
+| **REGISTERED** | Has `origin`, no assets | Discoverable pointer to data |
+| **READY** | Has `assets.iceberg` or `assets.snapshot` | SQL-queryable via Iceberg |
+
+Data location is orthogonal: **local** (data in catalog) or **linked** (Iceberg points to remote data).
 
 ### Supported Origin Types
 
@@ -104,20 +105,22 @@ Resources progress through three states based on what operations have been perfo
 
 ```
 portolan/
-├── portolan.py           # Main CLI (Click-based)
-├── resource.py           # Resource model and lifecycle
-├── catalog_sources.py    # Federation with upstream catalogs
-├── catalog_state.py      # Sync state management
-├── iceberg_catalog.py    # Iceberg catalog generation
-├── schemas.py            # JSON Schema validation
-├── output_generators.py  # STAC/ISO output generation
-├── esri2iceberg.py       # ArcGIS converter utilities
-├── web/                  # Browser-based catalog viewer
+├── portolan.py            # Main CLI (Click-based): add, load, refresh, sync, etc.
+├── portolan_resource.py   # Resource model and lifecycle states
+├── extractors.py          # Data extraction dispatch (file, WFS, ArcGIS, DB, etc.)
+├── catalog_state.py       # Sync state management
+├── iceberg_catalog.py     # Iceberg catalog generation (facade)
+├── iceberg_metadata.py    # Iceberg core types + schemas
+├── iceberg_rest_catalog.py # Iceberg REST catalog endpoints
+├── sdi_catalog.py         # STAC + ISO metadata generation
+├── schemas.py             # JSON Schema validation
+├── output_generators.py   # STAC/ISO output generation
+├── web/                   # Browser-based catalog viewer
 │   └── index.html
-├── docs/                 # Additional documentation
+├── docs/                  # Additional documentation
 │   ├── catalog-data-model.md
 │   └── demo-catalog.md
-└── tests/                # Test suite
+└── tests/                 # Test suite
     ├── test_cli.py
     ├── test_resource.py
     ├── test_schemas.py
@@ -175,11 +178,11 @@ uv run mypy portolan.py resource.py
 To add a new origin type:
 
 1. Add the type to `ORIGIN_SCHEMA` in `schemas.py`
-2. Update the `register` command choices in `portolan.py`
-3. Add extraction logic in the `snapshot` command
+2. Add the type to `EXTRACTORS` set in `extractors.py`
+3. Add extraction logic in `run_extractor()` in `extractors.py`
 4. Add tests in `tests/test_cli.py`
 
-Example extraction branch:
+Example extraction branch in `extractors.py`:
 
 ```python
 elif resource.origin.type == "my_new_type":

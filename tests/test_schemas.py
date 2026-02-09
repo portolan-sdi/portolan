@@ -154,6 +154,64 @@ class TestResourceValidation:
         assert "mode" in errors[0]
 
 
+class TestUserMetadataProperties:
+    """Test suite for user metadata properties bag."""
+
+    def test_valid_resource_with_properties(self):
+        """Properties bag validates."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "user": {
+                    "title": "Test",
+                    "properties": {
+                        "contact_email": "test@example.com",
+                        "topic_category": "boundaries",
+                        "spatial_resolution": 100,
+                    },
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert errors == []
+
+    def test_unknown_top_level_keys_rejected(self):
+        """Unknown keys at user metadata level are still rejected."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "user": {
+                    "title": "Test",
+                    "unknown_field": "should fail",
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert len(errors) == 1
+
+    def test_properties_accepts_any_values(self):
+        """Properties dict accepts any value types."""
+        data = {
+            "name": "test",
+            "kind": "vector",
+            "metadata": {
+                "user": {
+                    "properties": {
+                        "string_val": "hello",
+                        "number_val": 42,
+                        "bool_val": True,
+                        "list_val": ["a", "b"],
+                        "nested_val": {"key": "value"},
+                    },
+                },
+            },
+        }
+        errors = validate_resource(data)
+        assert errors == []
+
+
 class TestConfigValidation:
     """Test suite for config schema validation."""
 

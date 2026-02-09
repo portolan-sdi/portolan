@@ -1,19 +1,15 @@
 """
 Resource model for Portolan.
 
-This module defines the resource lifecycle model with type-aware behavior.
+This module defines the resource lifecycle model.
 
 States are detected by the presence of assets:
-- origin only → EXTERNAL (reference, no local data)
-- origin + assets.snapshot → CACHED (local snapshot, no Iceberg)
-- origin + assets.snapshot + assets.iceberg → MATERIALIZED (Iceberg-queryable)
+- origin only → REGISTERED (reference, discoverable but not SQL-queryable)
+- origin + assets.iceberg or assets.snapshot → READY (queryable via Iceberg)
 
-Type-aware lifecycle:
-- Vector (GeoParquet): snapshot auto-creates Iceberg metadata (free)
-  EXTERNAL → MATERIALIZED in one step via 'portolan snapshot'
-- Raster (COG/Zarr → Raquet): snapshot only caches, materialize is explicit
-  EXTERNAL → CACHED via 'portolan snapshot'
-  CACHED → MATERIALIZED via 'portolan materialize' (expensive conversion)
+The data location (local vs remote) is orthogonal to the state:
+- is_local: data is cached locally (assets.snapshot present)
+- is_linked: Iceberg points to remote data (assets.iceberg without snapshot)
 """
 
 from __future__ import annotations
@@ -81,14 +77,18 @@ class SnapshotAsset:
     type: str  # MIME type
     taken_at: str  # ISO timestamp
     format: str  # geoparquet, cog, etc.
+    source_fingerprint: dict | None = None  # For change detection (mtime, size, etag, etc.)
 
     def to_dict(self) -> dict:
-        return {
+        result = {
             "href": self.href,
             "type": self.type,
             "taken_at": self.taken_at,
             "format": self.format,
         }
+        if self.source_fingerprint:
+            result["source_fingerprint"] = self.source_fingerprint
+        return result
 
     @classmethod
     def from_dict(cls, data: dict) -> SnapshotAsset:
@@ -97,6 +97,7 @@ class SnapshotAsset:
             type=data["type"],
             taken_at=data["taken_at"],
             format=data["format"],
+            source_fingerprint=data.get("source_fingerprint"),
         )
 
 
@@ -149,13 +150,21 @@ class Assets:
 
 @dataclass
 class UserMetadata:
-    """User-provided metadata (authoritative overrides)."""
+    """User-provided metadata (authoritative overrides).
+
+    Well-known fields (title, description, tags, license, attribution) are typed
+    for convenience. The open `properties` dict stores everything else — ISO 19115
+    fields, STAC extensions, OSI metadata, custom fields, etc.
+    """
 
     title: str | None = None
     description: str | None = None
     tags: list[str] = field(default_factory=list)
     license: str | None = None
     attribution: str | None = None
+    properties: dict = field(default_factory=dict)
+
+    WELL_KNOWN = {"title", "description", "tags", "license", "attribution"}
 
     def to_dict(self) -> dict:
         result = {}
@@ -169,6 +178,8 @@ class UserMetadata:
             result["license"] = self.license
         if self.attribution:
             result["attribution"] = self.attribution
+        if self.properties:
+            result["properties"] = self.properties
         return result
 
     @classmethod
@@ -179,6 +190,7 @@ class UserMetadata:
             tags=data.get("tags", []),
             license=data.get("license"),
             attribution=data.get("attribution"),
+            properties=data.get("properties", {}),
         )
 
 
@@ -307,21 +319,25 @@ class ResourceMetadata:
             sync=SyncConfig.from_dict(data.get("sync", {})),
         )
 
+    def get_effective(self, key: str) -> Any:
+        """Get a metadata value with precedence: user.properties > user well-known > source.data > None."""
+        if key in self.user.properties:
+            return self.user.properties[key]
+        if key in UserMetadata.WELL_KNOWN:
+            val = getattr(self.user, key, None)
+            if val:
+                return val
+        if self.source and self.source.data.get(key):
+            return self.source.data[key]
+        return None
+
     def get_effective_title(self) -> str | None:
         """Get title with precedence: user > source > None."""
-        if self.user.title:
-            return self.user.title
-        if self.source and self.source.data.get("title"):
-            return self.source.data["title"]
-        return None
+        return self.get_effective("title")
 
     def get_effective_description(self) -> str | None:
         """Get description with precedence: user > source > None."""
-        if self.user.description:
-            return self.user.description
-        if self.source and self.source.data.get("description"):
-            return self.source.data["description"]
-        return None
+        return self.get_effective("description")
 
 
 # =============================================================================
@@ -360,9 +376,8 @@ class Resource:
     The unified resource model with lifecycle states.
 
     States are indicated by presence of fields:
-    - EXTERNAL: origin present, no assets.snapshot, no assets.iceberg
-    - CACHED: origin + assets.snapshot present, no assets.iceberg
-    - MATERIALIZED: origin + assets.snapshot + assets.iceberg present
+    - REGISTERED: origin present, no assets (discoverable, not queryable)
+    - READY: has assets.iceberg or assets.snapshot (queryable)
     """
 
     name: str
@@ -387,13 +402,21 @@ class Resource:
     @property
     def state(self) -> str:
         """Determine lifecycle state from assets."""
-        if self.assets.iceberg:
-            return "materialized"
-        if self.assets.snapshot:
-            return "cached"
+        if self.assets.iceberg or self.assets.snapshot:
+            return "ready"
         if self.origin:
-            return "external"
+            return "registered"
         return "unknown"
+
+    @property
+    def is_local(self) -> bool:
+        """Whether data is stored locally in the catalog."""
+        return self.assets.snapshot is not None
+
+    @property
+    def is_linked(self) -> bool:
+        """Whether Iceberg points to remote data (no local copy)."""
+        return self.assets.iceberg is not None and self.assets.snapshot is None
 
     @property
     def title(self) -> str:

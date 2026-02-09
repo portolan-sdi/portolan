@@ -127,21 +127,74 @@ class TestResourceMetadata:
         meta = ResourceMetadata()
         assert meta.get_effective_title() is None
 
+    def test_user_metadata_with_properties(self):
+        """Test UserMetadata with custom properties."""
+        meta = UserMetadata(
+            title="Test",
+            properties={"contact_email": "test@example.com", "topic_category": "boundaries"},
+        )
+        data = meta.to_dict()
+        assert data["title"] == "Test"
+        assert data["properties"]["contact_email"] == "test@example.com"
+        assert data["properties"]["topic_category"] == "boundaries"
+
+    def test_user_metadata_properties_roundtrip(self):
+        """Test properties survive serialization roundtrip."""
+        meta = UserMetadata(
+            title="Test",
+            license="CC-BY-4.0",
+            properties={"lineage": "Extracted from WFS", "spatial_resolution": 100},
+        )
+        data = meta.to_dict()
+        restored = UserMetadata.from_dict(data)
+        assert restored.properties["lineage"] == "Extracted from WFS"
+        assert restored.properties["spatial_resolution"] == 100
+        assert restored.license == "CC-BY-4.0"
+
+    def test_user_metadata_empty_properties_not_serialized(self):
+        """Empty properties dict should not appear in serialization."""
+        meta = UserMetadata(title="Test")
+        data = meta.to_dict()
+        assert "properties" not in data
+
+    def test_get_effective_from_properties(self):
+        """get_effective reads from user properties."""
+        meta = ResourceMetadata(
+            user=UserMetadata(properties={"contact_email": "test@example.com"}),
+        )
+        assert meta.get_effective("contact_email") == "test@example.com"
+
+    def test_get_effective_user_properties_over_source(self):
+        """User properties take precedence over source data."""
+        meta = ResourceMetadata(
+            user=UserMetadata(properties={"contact_email": "user@example.com"}),
+            source=SourceMetadata(provider="stac", data={"contact_email": "source@example.com"}),
+        )
+        assert meta.get_effective("contact_email") == "user@example.com"
+
+    def test_get_effective_falls_back_to_source(self):
+        """get_effective falls back to source.data when not in user."""
+        meta = ResourceMetadata(
+            user=UserMetadata(),
+            source=SourceMetadata(provider="stac", data={"topic_category": "boundaries"}),
+        )
+        assert meta.get_effective("topic_category") == "boundaries"
+
 
 class TestResourceLifecycle:
     """Test suite for resource lifecycle states."""
 
-    def test_external_state(self):
-        """Test resource with only origin is EXTERNAL."""
+    def test_registered_state(self):
+        """Test resource with only origin is REGISTERED."""
         resource = Resource(
             name="test",
             kind="vector",
             origin=Origin(type="wfs", url="https://example.com/wfs"),
         )
-        assert resource.state == "external"
+        assert resource.state == "registered"
 
-    def test_cached_state(self):
-        """Test resource with snapshot is CACHED."""
+    def test_ready_with_snapshot(self):
+        """Test resource with snapshot is READY."""
         resource = Resource(
             name="test",
             kind="vector",
@@ -155,10 +208,12 @@ class TestResourceLifecycle:
                 ),
             ),
         )
-        assert resource.state == "cached"
+        assert resource.state == "ready"
+        assert resource.is_local is True
+        assert resource.is_linked is False
 
-    def test_materialized_state(self):
-        """Test resource with iceberg asset is MATERIALIZED."""
+    def test_ready_with_iceberg(self):
+        """Test resource with iceberg asset is READY."""
         resource = Resource(
             name="test",
             kind="vector",
@@ -173,7 +228,22 @@ class TestResourceLifecycle:
                 iceberg=IcebergAsset(metadata="data/test/metadata/v1.metadata.json"),
             ),
         )
-        assert resource.state == "materialized"
+        assert resource.state == "ready"
+        assert resource.is_local is True
+
+    def test_ready_linked(self):
+        """Test resource with only iceberg (no snapshot) is READY and linked."""
+        resource = Resource(
+            name="test",
+            kind="vector",
+            origin=Origin(type="file", url="s3://bucket/data.parquet"),
+            assets=Assets(
+                iceberg=IcebergAsset(metadata="data/test/metadata/v1.metadata.json"),
+            ),
+        )
+        assert resource.state == "ready"
+        assert resource.is_local is False
+        assert resource.is_linked is True
 
     def test_unknown_state(self):
         """Test resource with no origin is UNKNOWN."""

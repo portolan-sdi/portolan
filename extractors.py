@@ -47,6 +47,13 @@ def _load_connection(catalog_path: Path, name: str | None) -> dict | None:
     return connections.get("connections", {}).get(name)
 
 
+# Supported extractor types — used by _detect_default_action in portolan.py
+EXTRACTORS = {
+    "file", "arcgis_featureserver", "wfs", "arcgis_imageserver",
+    "stac", "postgres", "oracle", "pointcloud",
+}
+
+
 def run_extractor(
     resource: Resource,
     output_path: Path,

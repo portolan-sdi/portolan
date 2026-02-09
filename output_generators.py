@@ -60,6 +60,8 @@ def _normalize_resource(resource: dict) -> dict:
                 "title": "Iceberg metadata",
             }
 
+        user_properties = user_meta.get("properties", {})
+
         return {
             "name": resource.get("name", "unknown"),
             "title": user_meta.get("title", resource.get("name", "unknown")),
@@ -76,6 +78,10 @@ def _normalize_resource(resource: dict) -> dict:
                 "row_count": derived.get("row_count"),
                 "column_count": derived.get("column_count"),
             },
+            "tags": user_meta.get("tags", []),
+            "license": user_meta.get("license"),
+            "attribution": user_meta.get("attribution"),
+            "user_properties": user_properties,
         }
 
     # Old format - pass through unchanged
@@ -362,11 +368,33 @@ def _resource_to_stac_item(resource: dict, collection: str, depth: int = 1) -> d
         "portolan:format": resource.get("format", "unknown"),
     }
 
-    # Add temporal if available
+    # Add license and keywords from user metadata
+    if resource.get("license"):
+        properties["license"] = resource["license"]
+    if resource.get("tags"):
+        properties["keywords"] = resource["tags"]
+
+    # Map well-known user properties to STAC properties
+    user_props = resource.get("user_properties", {})
+    stac_field_map = {
+        "start_datetime": "start_datetime",
+        "end_datetime": "end_datetime",
+    }
+    for src_key, stac_key in stac_field_map.items():
+        if user_props.get(src_key):
+            properties[stac_key] = user_props[src_key]
+
+    # Pass through remaining user properties as portolan: extension
+    skip_keys = set(stac_field_map.keys())
+    for k, v in user_props.items():
+        if k not in skip_keys:
+            properties[f"portolan:{k}"] = v
+
+    # Add temporal if available (from old format)
     temporal = resource.get("temporal_extent", {}) or {}
-    if temporal.get("start"):
+    if temporal.get("start") and "start_datetime" not in properties:
         properties["start_datetime"] = temporal["start"]
-    if temporal.get("end"):
+    if temporal.get("end") and "end_datetime" not in properties:
         properties["end_datetime"] = temporal["end"]
 
     # Build assets
@@ -591,6 +619,92 @@ def _resource_to_iso19139(resource: dict) -> str:
     title = resource.get("title", name)
     abstract = resource.get("abstract", "")
     spatial = resource.get("spatial_extent", {}) or {}
+    user_props = resource.get("user_properties", {})
+
+    # Extract ISO-relevant fields from user properties
+    contact_org = user_props.get("contact_organization", "")
+    contact_email = user_props.get("contact_email", "")
+    contact_role = user_props.get("contact_role", "pointOfContact")
+    topic_category = user_props.get("topic_category", "geoscientificInformation")
+    keywords = resource.get("tags", [])
+    license_text = resource.get("license", "")
+    use_constraints = user_props.get("use_constraints", "")
+    lineage = user_props.get("lineage", "")
+
+    # Build optional XML blocks
+    contact_xml = ""
+    if contact_org or contact_email:
+        contact_xml = f'''
+    <gmd:contact>
+        <gmd:CI_ResponsibleParty>
+            <gmd:organisationName>
+                <gco:CharacterString>{_xml_escape(contact_org)}</gco:CharacterString>
+            </gmd:organisationName>
+            <gmd:contactInfo>
+                <gmd:CI_Contact>
+                    <gmd:address>
+                        <gmd:CI_Address>
+                            <gmd:electronicMailAddress>
+                                <gco:CharacterString>{_xml_escape(contact_email)}</gco:CharacterString>
+                            </gmd:electronicMailAddress>
+                        </gmd:CI_Address>
+                    </gmd:address>
+                </gmd:CI_Contact>
+            </gmd:contactInfo>
+            <gmd:role>
+                <gmd:CI_RoleCode codeList="http://standards.iso.org/iso/19139/resources/gmxCodelists.xml#CI_RoleCode" codeListValue="{_xml_escape(contact_role)}">{_xml_escape(contact_role)}</gmd:CI_RoleCode>
+            </gmd:role>
+        </gmd:CI_ResponsibleParty>
+    </gmd:contact>'''
+
+    keywords_xml = ""
+    if keywords:
+        kw_items = "\n".join(
+            f'                    <gmd:keyword><gco:CharacterString>{_xml_escape(kw)}</gco:CharacterString></gmd:keyword>'
+            for kw in keywords
+        )
+        keywords_xml = f'''
+            <gmd:descriptiveKeywords>
+                <gmd:MD_Keywords>
+{kw_items}
+                </gmd:MD_Keywords>
+            </gmd:descriptiveKeywords>'''
+
+    constraints_xml = ""
+    if license_text or use_constraints:
+        parts = []
+        if license_text:
+            parts.append(f'                    <gmd:useLimitation><gco:CharacterString>{_xml_escape(license_text)}</gco:CharacterString></gmd:useLimitation>')
+        if use_constraints:
+            parts.append(f'                    <gmd:useConstraints><gmd:MD_RestrictionCode codeList="http://standards.iso.org/iso/19139/resources/gmxCodelists.xml#MD_RestrictionCode" codeListValue="otherRestrictions">{_xml_escape(use_constraints)}</gmd:MD_RestrictionCode></gmd:useConstraints>')
+        constraints_xml = f'''
+            <gmd:resourceConstraints>
+                <gmd:MD_LegalConstraints>
+{chr(10).join(parts)}
+                </gmd:MD_LegalConstraints>
+            </gmd:resourceConstraints>'''
+
+    lineage_xml = ""
+    if lineage:
+        lineage_xml = f'''
+    <gmd:dataQualityInfo>
+        <gmd:DQ_DataQuality>
+            <gmd:scope>
+                <gmd:DQ_Scope>
+                    <gmd:level>
+                        <gmd:MD_ScopeCode codeList="http://standards.iso.org/iso/19139/resources/gmxCodelists.xml#MD_ScopeCode" codeListValue="dataset">dataset</gmd:MD_ScopeCode>
+                    </gmd:level>
+                </gmd:DQ_Scope>
+            </gmd:scope>
+            <gmd:lineage>
+                <gmd:LI_Lineage>
+                    <gmd:statement>
+                        <gco:CharacterString>{_xml_escape(lineage)}</gco:CharacterString>
+                    </gmd:statement>
+                </gmd:LI_Lineage>
+            </gmd:lineage>
+        </gmd:DQ_DataQuality>
+    </gmd:dataQualityInfo>'''
 
     # Build XML using string templates (avoiding complex XML library dependencies)
     xml = f'''<?xml version="1.0" encoding="UTF-8"?>
@@ -615,7 +729,7 @@ def _resource_to_iso19139(resource: dict) -> str:
     <gmd:hierarchyLevel>
         <gmd:MD_ScopeCode codeList="http://standards.iso.org/iso/19139/resources/gmxCodelists.xml#MD_ScopeCode" codeListValue="dataset">dataset</gmd:MD_ScopeCode>
     </gmd:hierarchyLevel>
-
+{contact_xml}
     <!-- Date Stamp -->
     <gmd:dateStamp>
         <gco:DateTime>{datetime.now(timezone.utc).isoformat()}</gco:DateTime>
@@ -655,7 +769,7 @@ def _resource_to_iso19139(resource: dict) -> str:
             <gmd:status>
                 <gmd:MD_ProgressCode codeList="http://standards.iso.org/iso/19139/resources/gmxCodelists.xml#MD_ProgressCode" codeListValue="completed">completed</gmd:MD_ProgressCode>
             </gmd:status>
-
+{keywords_xml}{constraints_xml}
             <!-- Resource Format -->
             <gmd:resourceFormat>
                 <gmd:MD_Format>
@@ -673,7 +787,7 @@ def _resource_to_iso19139(resource: dict) -> str:
 
             <!-- Topic Category -->
             <gmd:topicCategory>
-                <gmd:MD_TopicCategoryCode>geoscientificInformation</gmd:MD_TopicCategoryCode>
+                <gmd:MD_TopicCategoryCode>{_xml_escape(topic_category)}</gmd:MD_TopicCategoryCode>
             </gmd:topicCategory>
 
         </gmd:MD_DataIdentification>
@@ -685,7 +799,7 @@ def _resource_to_iso19139(resource: dict) -> str:
             {_generate_distribution_xml(resource)}
         </gmd:MD_Distribution>
     </gmd:distributionInfo>
-
+{lineage_xml}
 </gmd:MD_Metadata>'''
 
     return xml

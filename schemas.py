@@ -53,7 +53,8 @@ SNAPSHOT_ASSET_SCHEMA = {
         "href": {"type": "string"},
         "type": {"type": "string"},
         "taken_at": {"type": "string"},
-        "format": {"type": "string", "enum": ["geoparquet", "cog", "zarr", "parquet"]},
+        "format": {"type": "string", "enum": ["geoparquet", "cog", "zarr", "parquet", "raquet"]},
+        "source_fingerprint": {"type": "object"},
     },
     "additionalProperties": False,
 }
@@ -85,6 +86,7 @@ USER_METADATA_SCHEMA = {
         "tags": {"type": "array", "items": {"type": "string"}},
         "license": {"type": "string"},
         "attribution": {"type": "string"},
+        "properties": {"type": "object"},
     },
     "additionalProperties": False,
 }
