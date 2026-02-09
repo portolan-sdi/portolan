@@ -63,6 +63,7 @@ def run_extractor(
         "stac": extract_stac,
         "postgres": extract_postgres,
         "oracle": extract_oracle,
+        "pointcloud": extract_pointcloud,
     }
     fn = extractors.get(resource.origin.type)
     if fn is None:
@@ -93,6 +94,52 @@ def extract_file(
         gdf.to_parquet(output_path)
         if verbose:
             click.echo(f"  Converted {source_path} to GeoParquet")
+
+
+def extract_pointcloud(
+    resource: Resource,
+    output_path: Path,
+    catalog_path: Path = None,
+    bbox: str | None = None,
+    verbose: bool = False,
+) -> None:
+    """Extract point cloud (LAZ/LAS/COPC/E57) to Parquet using DuckDB PDAL extension."""
+    import duckdb
+
+    source_url = resource.origin.url
+    source_path = Path(source_url)
+    is_remote = source_url.startswith(("http://", "https://", "s3://"))
+
+    if not is_remote and not source_path.exists():
+        raise click.ClickException(f"Point cloud file not found: {source_path}")
+
+    conn = duckdb.connect()
+    try:
+        conn.execute("INSTALL pdal FROM community; LOAD pdal;")
+    except Exception as e:
+        raise click.ClickException(
+            f"Failed to load DuckDB PDAL extension: {e}\n"
+            "Install with: duckdb -c \"INSTALL pdal FROM community;\""
+        )
+
+    read_path = source_url if is_remote else str(source_path.resolve())
+
+    if verbose:
+        try:
+            info = conn.execute(f"SELECT * FROM PDAL_Info('{read_path}')").fetchone()
+            if info:
+                click.echo(f"  Point cloud: {info[0]} points")
+        except Exception:
+            pass
+
+    conn.execute(f"""
+        COPY (SELECT * FROM PDAL_Read('{read_path}'))
+        TO '{output_path}' (FORMAT PARQUET)
+    """)
+    conn.close()
+
+    if verbose:
+        click.echo(f"  Converted {source_url} to Parquet: {output_path}")
 
 
 def extract_arcgis_featureserver(

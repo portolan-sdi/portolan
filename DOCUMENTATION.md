@@ -25,6 +25,7 @@ This guide covers everything you need to know to use Portolan for managing your 
 - [uv](https://github.com/astral-sh/uv) (recommended) or pip
 - Optional: GDAL (for WFS extraction)
 - Optional: [geoparquet-io](https://github.com/geoparquet/geoparquet-io) (for ArcGIS extraction)
+- Optional: DuckDB PDAL extension (for point cloud LAZ/LAS extraction)
 
 ### Install from Source
 
@@ -263,7 +264,7 @@ portolan register <TYPE> <URL> [OPTIONS]
 
 Register an external resource (creates EXTERNAL state).
 
-**Types:** `file`, `wfs`, `arcgis_featureserver`, `arcgis_imageserver`, `stac`, `postgres`, `oracle`
+**Types:** `file`, `wfs`, `arcgis_featureserver`, `arcgis_imageserver`, `stac`, `postgres`, `oracle`, `pointcloud`
 
 **Options:**
 - `--name, -n` - Resource name (default: derived from URL)
@@ -541,6 +542,39 @@ portolan register oracle "ADMIN.PARCELS" \
 
 portolan snapshot parcels
 ```
+
+### Point Cloud / LiDAR (LAZ, LAS)
+
+Requires the DuckDB PDAL extension, which reads 119+ point cloud formats via [PDAL](https://pdal.io/).
+
+```bash
+# Install the extension (one-time)
+duckdb -c "INSTALL pdal FROM community;"
+
+# Register a LAZ/LAS file
+portolan register pointcloud /path/to/scan.laz \
+  --name autzen_lidar \
+  --namespace lidar \
+  --title "Autzen Stadium LiDAR"
+
+# Snapshot converts LAZ → Parquet → Iceberg in one step
+portolan snapshot autzen_lidar --namespace lidar
+```
+
+The point cloud is stored as a flat Parquet table with columns like X, Y, Z, Intensity, Classification, ReturnNumber, Red, Green, Blue, etc. All standard numeric types — queryable in DuckDB, BigQuery, Snowflake, and any Iceberg-compatible engine.
+
+```sql
+-- Query point cloud via Iceberg
+LOAD iceberg;
+SELECT count(*) as points, min(Z) as min_elevation, max(Z) as max_elevation
+FROM iceberg_scan('.portolan/data/lidar/autzen_lidar/metadata/v1.metadata.json');
+
+-- Filter by classification (2 = ground, 6 = building)
+SELECT X, Y, Z FROM iceberg_scan('...')
+WHERE Classification = 6;
+```
+
+Supported input formats include LAS, LAZ, COPC, E57, PLY, PCD, and any format supported by PDAL. Remote files (S3, HTTP) are also supported.
 
 ---
 

@@ -34,6 +34,7 @@ ORIGIN_SCHEMA = {
                 "stac",
                 "oracle",
                 "postgres",
+                "pointcloud",
             ],
         },
         "url": {"type": "string"},

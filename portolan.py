@@ -531,7 +531,7 @@ def delete_connection(catalog_path: Path, name: str) -> bool:
 
 @cli.command(hidden=True)
 @click.argument("origin_type", type=click.Choice([
-    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle"
+    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle", "pointcloud"
 ]))
 @click.argument("url")
 @click.option("--name", "-n", help="Resource name (default: derived from URL)")
@@ -1122,7 +1122,7 @@ def materialize(ctx, resource_name: str | None, namespace: str, all_resources: b
 @cli.command("add")
 @click.argument("source")
 @click.option("--type", "origin_type", type=click.Choice([
-    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle",
+    "file", "wfs", "arcgis_featureserver", "arcgis_imageserver", "stac", "postgres", "oracle", "pointcloud",
     "geoparquet",
 ]), help="Source type (auto-detected if omitted)")
 @click.option("--name", "-n", help="Resource name (default: derived from source)")

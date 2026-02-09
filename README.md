@@ -98,6 +98,7 @@ Resources progress through three states based on what operations have been perfo
 | `stac` | STAC Item | httpx download |
 | `postgres` | PostgreSQL/PostGIS table | geopandas + psycopg2 |
 | `oracle` | Oracle Spatial table | geopandas + cx_Oracle |
+| `pointcloud` | Point cloud (LAZ, LAS, COPC, E57) | DuckDB PDAL extension |
 
 ## Project Structure
 
