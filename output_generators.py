@@ -1553,7 +1553,7 @@ def update_web_for_resource(catalog: CatalogConfig, resource: dict, namespace: s
 # Iceberg Metadata Catalog Generator
 # =============================================================================
 
-def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = False) -> Path | None:
+def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = False, base_url: str | None = None) -> Path | None:
     """Generate a single Iceberg table with all resources as rows.
 
     This is a metadata output: a discovery catalog of ALL resources (including
@@ -1652,8 +1652,14 @@ def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = Fa
     metadata_dir.mkdir(parents=True, exist_ok=True)
 
     table_uuid = str(uuid.uuid4())
-    data_base_url = f"file://{catalog.path.absolute()}"
+    data_base_url = base_url if base_url else f"file://{catalog.path.absolute()}"
     table_path = "_meta/resources"
+
+    data_file_path = (
+        f"{base_url.rstrip('/')}/data/_meta/resources/resources.parquet"
+        if base_url
+        else f"file://{parquet_path.absolute()}"
+    )
 
     generate_manifest_files(
         table=iceberg_table,
@@ -1663,7 +1669,7 @@ def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = Fa
         snapshot_id=1,
         sequence_number=1,
         table_path=table_path,
-        data_file_path=f"file://{parquet_path.absolute()}",
+        data_file_path=data_file_path,
     )
 
     metadata = create_table_metadata(iceberg_table, data_base_url, table_uuid, table_path=table_path)
@@ -1677,7 +1683,7 @@ def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = Fa
     return metadata_path
 
 
-def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = False) -> int:
+def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = False, base_url: str | None = None) -> int:
     """Regenerate per-resource Iceberg data tables and the static REST catalog.
 
     This is a data output: registers each READY resource with Parquet data as
@@ -1725,7 +1731,7 @@ def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = Fals
     # Also generate the metadata resources table for _meta namespace
     meta_table = None
     if catalog.outputs.is_enabled("metadata", "iceberg"):
-        meta_path = generate_iceberg_metadata_catalog(catalog, verbose=verbose)
+        meta_path = generate_iceberg_metadata_catalog(catalog, verbose=verbose, base_url=base_url)
         if meta_path:
             import pyarrow as pa
             meta_parquet = catalog.path / "data" / "_meta" / "resources" / "resources.parquet"
@@ -1745,17 +1751,11 @@ def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = Fals
         tables_by_ns["_meta"] = [meta_table]
 
     direct_count = 0
-    direct_table_formats = {"geoparquet", "raquet"}
 
     for r in resources:
-        fmt = r.get("format", "")
-        rtype = r.get("type", "external")
         name = r.get("name", "")
         ns = r.get("namespace", "default")
         assets = r.get("assets", {})
-
-        if fmt not in direct_table_formats:
-            continue
 
         data_asset = assets.get("data", {}) or assets.get("cache", {})
         data_url = data_asset.get("href", "")
@@ -1770,13 +1770,16 @@ def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = Fals
             table_data_dir.mkdir(parents=True, exist_ok=True)
             table_parquet_path = table_data_dir / f"{name}.parquet"
 
-            if rtype == "managed" and data_url.startswith("gs://"):
-                local_file = catalog.path / "sample_cities.parquet" if "cities" in name else None
-                if local_file and local_file.exists():
-                    shutil.copy(local_file, table_parquet_path)
+            # Resolve the data file: local path, remote URL, or managed
+            if not data_url.startswith(("http://", "https://", "gs://", "s3://", "az://")):
+                # Local relative path — resolve against catalog dir
+                local_file = catalog.path / data_url
+                if local_file.exists():
+                    if local_file.resolve() != table_parquet_path.resolve():
+                        shutil.copy(local_file, table_parquet_path)
                 else:
                     if verbose:
-                        print(f"  Skipping {name}: managed file not found locally")
+                        print(f"  Skipping {name}: local file not found: {data_url}")
                     continue
             elif data_url.startswith(("http://", "https://", "gs://")):
                 if verbose:
@@ -1807,7 +1810,7 @@ def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = Fals
             direct_count += 1
 
             if verbose:
-                print(f"  Registered {iceberg_ns}.{name} ({fmt}, {table_pa.num_rows} rows)")
+                print(f"  Registered {iceberg_ns}.{name} ({table_pa.num_rows} rows)")
         except Exception as e:
             if verbose:
                 print(f"  Error registering {name}: {e}")
@@ -1815,7 +1818,7 @@ def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = Fals
 
     # Generate the full static Iceberg catalog
     if tables_by_ns:
-        data_base_url = f"file://{catalog.path.absolute()}"
+        data_base_url = base_url if base_url else f"file://{catalog.path.absolute()}"
         generate_static_catalog(
             tables=tables_by_ns,
             output_dir=str(catalog.path),
@@ -1869,7 +1872,7 @@ def update_all_outputs(catalog: CatalogConfig, resource: dict, namespace: str, v
     update_data_outputs(catalog, resource, namespace, verbose=verbose)
 
 
-def regenerate_metadata_outputs(catalog: CatalogConfig, verbose: bool = False):
+def regenerate_metadata_outputs(catalog: CatalogConfig, verbose: bool = False, base_url: str | None = None):
     """
     Regenerate all enabled metadata outputs from scratch.
     """
@@ -1891,17 +1894,17 @@ def regenerate_metadata_outputs(catalog: CatalogConfig, verbose: bool = False):
     if catalog.outputs.is_enabled("metadata", "iceberg"):
         if verbose:
             print("Regenerating Iceberg metadata catalog...")
-        generate_iceberg_metadata_catalog(catalog, verbose=verbose)
+        generate_iceberg_metadata_catalog(catalog, verbose=verbose, base_url=base_url)
 
 
-def regenerate_data_outputs(catalog: CatalogConfig, verbose: bool = False):
+def regenerate_data_outputs(catalog: CatalogConfig, verbose: bool = False, base_url: str | None = None):
     """
     Regenerate all enabled data outputs from scratch.
     """
     if catalog.outputs.is_enabled("data", "iceberg"):
         if verbose:
             print("Regenerating Iceberg data catalog...")
-        regenerate_iceberg_data_catalog(catalog, verbose=verbose)
+        regenerate_iceberg_data_catalog(catalog, verbose=verbose, base_url=base_url)
 
     if catalog.outputs.is_enabled("data", "ducklake"):
         if verbose:
@@ -1909,11 +1912,11 @@ def regenerate_data_outputs(catalog: CatalogConfig, verbose: bool = False):
         generate_ducklake_catalog(catalog, verbose=verbose)
 
 
-def regenerate_all_outputs(catalog: CatalogConfig, verbose: bool = False):
+def regenerate_all_outputs(catalog: CatalogConfig, verbose: bool = False, base_url: str | None = None):
     """
     Regenerate all enabled output formats from scratch.
 
     Called by `portolan rebuild`.
     """
-    regenerate_metadata_outputs(catalog, verbose=verbose)
-    regenerate_data_outputs(catalog, verbose=verbose)
+    regenerate_metadata_outputs(catalog, verbose=verbose, base_url=base_url)
+    regenerate_data_outputs(catalog, verbose=verbose, base_url=base_url)

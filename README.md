@@ -155,7 +155,7 @@ portolan/
 ├── iceberg_metadata.py      # Iceberg core types + schemas
 ├── iceberg_rest_catalog.py  # Iceberg REST catalog endpoints
 ├── sdi_catalog.py           # STAC + ISO 19115 metadata generation
-└── tests/                   # Test suite (288 tests)
+└── tests/                   # Test suite (300 tests)
     ├── conftest.py
     ├── test_cli.py
     ├── test_resource.py
@@ -175,11 +175,11 @@ portolan/
 | `portolan add <source>` | Add a single resource (smart defaults) |
 | `portolan load <catalog-url>` | Bulk load from a STAC or ArcGIS catalog |
 | `portolan refresh [name]` | Re-fetch resources from their origins |
-| `portolan rebuild` | Rebuild all output formats from scratch |
+| `portolan rebuild [--base-url URL]` | Rebuild all output formats (use `--base-url` for remote deployment) |
 | `portolan dataset add <file>` | Add dataset with STAC-style metadata |
 | `portolan metadata show <name>` | Show resource metadata |
 | `portolan metadata set <name> <key> <value>` | Set metadata on a resource |
-| `portolan sync` | Push local changes to remote storage |
+| `portolan sync` | Push resources + all outputs to remote storage |
 | `portolan pull` | Pull remote changes to local |
 | `portolan clone <url>` | Clone a remote catalog |
 | `portolan status` | Show catalog status |
@@ -228,7 +228,28 @@ uv run pytest tests/test_schemas.py -v  # Specific file
 6. **Static catalog**: Generates static Iceberg REST catalog (no server needed)
 7. **Outputs split**: Metadata outputs (discovery) vs data outputs (queryable tables)
 
-## Remote Storage
+## Remote Deployment
+
+Deploy your catalog to any cloud storage and serve it as a public Iceberg REST catalog:
+
+```bash
+# Rebuild with the public URL where the catalog will be hosted
+uv run portolan rebuild --base-url https://catalog.example.com
+
+# Sync everything to remote storage (resources + Iceberg + STAC + web UI)
+uv run portolan sync
+```
+
+Then connect from DuckDB:
+
+```sql
+INSTALL iceberg; LOAD iceberg;
+ATTACH '' AS catalog (TYPE ICEBERG, ENDPOINT 'https://catalog.example.com', AUTHORIZATION_TYPE NONE);
+SHOW ALL TABLES;
+SELECT * FROM catalog.demo.my_dataset;
+```
+
+### Supported Backends
 
 Portolan uses [obstore](https://github.com/developmentseed/obstore) for remote storage:
 

@@ -9,7 +9,7 @@ Portolan is a CLI tool (pre-release) for building spatial data infrastructures u
 ```bash
 uv sync                    # Install dependencies
 uv run portolan <command>  # Run CLI
-.venv/bin/pytest tests/    # Run tests (288 tests, ~4s)
+.venv/bin/pytest tests/    # Run tests (300 tests, ~3s)
 ```
 
 ## Architecture
@@ -25,7 +25,7 @@ uv run portolan <command>  # Run CLI
 | `extractors.py` | Data extraction dispatch. `run_extractor()` routes by `resource.origin.type`. `EXTRACTORS` set lists types with extractors. |
 | `output_generators.py` | All output generation. `_normalize_resource()` converts Resource dicts to flat format for generators. Split into metadata outputs (STAC, ISO, web, Iceberg metadata catalog) and data outputs (Iceberg data tables, DuckLake). |
 | `schemas.py` | JSON Schema definitions and validators. `RESOURCE_SCHEMA`, `CONFIG_SCHEMA`, `STATE_SCHEMA`. `additionalProperties: false` everywhere — update schema when adding fields. |
-| `catalog_state.py` | `ObstoreRemoteStore` wraps obstore for S3/GCS/Azure/S3-compatible. `LocalState` for sync tracking. |
+| `catalog_state.py` | `ObstoreRemoteStore` wraps obstore for S3/GCS/Azure/S3-compatible. `LocalState` for sync tracking. `scan_catalog_outputs()` discovers all output files for sync. |
 | `iceberg_metadata.py` | Core Iceberg types (`IcebergTable`), schema conversion, manifest generation. |
 | `iceberg_rest_catalog.py` | Static Iceberg REST catalog endpoint generation. |
 | `iceberg_catalog.py` | Re-export facade for the three iceberg modules. |
@@ -58,8 +58,16 @@ Three commands move resources through states:
 
 - **Metadata outputs**: Discovery catalogs of ALL resources. `regenerate_metadata_outputs()` / `update_metadata_outputs()`.
 - **Data outputs**: Queryable tables for READY resources. `regenerate_data_outputs()` / `update_data_outputs()`.
-- `rebuild` command delegates to `regenerate_all_outputs()`.
+- `rebuild` command delegates to `regenerate_all_outputs()`. `--base-url` rewrites Iceberg metadata URLs for remote deployment.
 - `add`/`refresh` gate Iceberg data creation on `catalog.outputs.is_enabled("data", "iceberg")`.
+
+### Remote Deployment
+
+- `rebuild --base-url <URL>` rewrites all Iceberg metadata (locations, manifests, data file paths) to use the public URL.
+- `sync` uploads both resources (manifest-tracked with conflict detection) AND all output files (data/, v1/, stac/, iso19139/, web/).
+- Output files are full-overwrite (derived artifacts, no diff tracking needed).
+- `scan_catalog_outputs()` in `catalog_state.py` discovers uploadable files, excludes config/state/resources dir, maps v1/ `__list__`/`__detail__` suffixes.
+- `_EXCLUDED_DATA_SUBDIRS = {"raw"}` skips local extract cache from upload.
 
 ### Key Helpers in portolan.py
 

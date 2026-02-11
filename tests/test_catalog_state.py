@@ -13,12 +13,14 @@ from catalog_state import (
     LocalState,
     Manifest,
     ResourceEntry,
+    _map_v1_path,
     canonical_json,
     compute_diff,
     compute_file_hash,
     compute_hash,
     compute_json_hash,
     get_remote_store,
+    scan_catalog_outputs,
     scan_local_resources,
     LocalFilesystemStore,
 )
@@ -422,3 +424,96 @@ class TestRemoteStore:
         assert kwargs["region"] == "us-east-1"
         assert "virtual_hosted_style_request" not in kwargs
         assert "endpoint" not in kwargs
+
+
+class TestMapV1Path:
+    """Tests for _map_v1_path REST endpoint suffix mapping."""
+
+    def test_list_suffix(self):
+        assert _map_v1_path("v1/catalog/namespaces/__list__") == "v1/catalog/namespaces"
+
+    def test_detail_suffix(self):
+        assert _map_v1_path("v1/catalog/namespaces/_meta/__detail__") == "v1/catalog/namespaces/_meta"
+
+    def test_inline_list_suffix(self):
+        assert _map_v1_path("v1/catalog/namespaces/_meta/tables__list__") == "v1/catalog/namespaces/_meta/tables"
+
+    def test_regular_file_unchanged(self):
+        assert _map_v1_path("v1/catalog/namespaces/_meta/tables/cities") == "v1/catalog/namespaces/_meta/tables/cities"
+
+    def test_config_unchanged(self):
+        assert _map_v1_path("v1/config") == "v1/config"
+
+
+class TestScanCatalogOutputs:
+    """Tests for scan_catalog_outputs output file discovery."""
+
+    def test_excludes_config_and_state(self, tmp_path):
+        catalog_path = tmp_path
+        (catalog_path / "config.json").write_text("{}")
+        (catalog_path / "state.json").write_text("{}")
+        (catalog_path / "control.duckdb").write_bytes(b"")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert "config.json" not in remote_paths
+        assert "state.json" not in remote_paths
+        assert "control.duckdb" not in remote_paths
+
+    def test_excludes_resources_dir(self, tmp_path):
+        catalog_path = tmp_path
+        resources_dir = catalog_path / "resources" / "test"
+        resources_dir.mkdir(parents=True)
+        (resources_dir / "sample.json").write_text("{}")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert not any("resources/" in p for p in remote_paths)
+
+    def test_includes_data_dir(self, tmp_path):
+        catalog_path = tmp_path
+        data_dir = catalog_path / "data" / "_meta" / "resources"
+        data_dir.mkdir(parents=True)
+        (data_dir / "resources.parquet").write_bytes(b"fake")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert "data/_meta/resources/resources.parquet" in remote_paths
+
+    def test_maps_v1_paths(self, tmp_path):
+        catalog_path = tmp_path
+        ns_dir = catalog_path / "v1" / "catalog" / "namespaces"
+        ns_dir.mkdir(parents=True)
+        (ns_dir / "__list__").write_text('{"namespaces": []}')
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert "v1/catalog/namespaces" in remote_paths
+        assert "v1/catalog/namespaces/__list__" not in remote_paths
+
+    def test_includes_stac_and_iso(self, tmp_path):
+        catalog_path = tmp_path
+        (catalog_path / "stac").mkdir()
+        (catalog_path / "stac" / "catalog.json").write_text("{}")
+        (catalog_path / "iso19139").mkdir()
+        (catalog_path / "iso19139" / "record.xml").write_text("<xml/>")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert "stac/catalog.json" in remote_paths
+        assert "iso19139/record.xml" in remote_paths
+
+    def test_excludes_data_raw_subdir(self, tmp_path):
+        catalog_path = tmp_path
+        raw_dir = catalog_path / "data" / "raw" / "test_resource"
+        raw_dir.mkdir(parents=True)
+        (raw_dir / "data.parquet").write_bytes(b"raw data")
+        meta_dir = catalog_path / "data" / "_meta" / "resources"
+        meta_dir.mkdir(parents=True)
+        (meta_dir / "resources.parquet").write_bytes(b"meta")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert not any("data/raw/" in p for p in remote_paths)
+        assert "data/_meta/resources/resources.parquet" in remote_paths
+
+    def test_includes_top_level_parquet(self, tmp_path):
+        catalog_path = tmp_path
+        (catalog_path / "catalog.parquet").write_bytes(b"parquet")
+        results = scan_catalog_outputs(catalog_path)
+        remote_paths = [r[1] for r in results]
+        assert "catalog.parquet" in remote_paths

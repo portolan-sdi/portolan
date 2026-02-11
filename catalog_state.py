@@ -209,6 +209,93 @@ def scan_local_resources(resources_dir: Path) -> dict[str, str]:
     return result
 
 
+# Files that should never be uploaded to remote storage
+_EXCLUDED_FILES = {
+    "config.json",
+    "state.json",
+    "control.duckdb",
+    "sources.json",
+    "base_manifest.json",
+    "catalog.ducklake",
+    "upload_static_catalog.sh",
+    "static_upload_map.json",
+    "sample_cities.parquet",
+}
+
+# Directories handled separately or not uploaded
+_EXCLUDED_DIRS = {
+    "gcs",
+    "resources",  # handled by manifest-based sync
+    "public",     # local staging area
+}
+
+# Subdirectories within data/ that should not be uploaded
+_EXCLUDED_DATA_SUBDIRS = {
+    "raw",    # local extract cache — Iceberg metadata already references data files
+}
+
+
+def _map_v1_path(relative_path: str) -> str:
+    """Map a v1/ local path to its remote upload path.
+
+    Handles the __list__ and __detail__ suffix convention used for local
+    filesystem compatibility:
+      v1/catalog/namespaces/__list__        → v1/catalog/namespaces
+      v1/catalog/namespaces/_meta/__detail__ → v1/catalog/namespaces/_meta
+      v1/catalog/namespaces/_meta/tables__list__ → v1/catalog/namespaces/_meta/tables
+    """
+    if relative_path.endswith("/__list__"):
+        return relative_path[: -len("/__list__")]
+    if relative_path.endswith("/__detail__"):
+        return relative_path[: -len("/__detail__")]
+    # Inline suffix (e.g., tables__list__)
+    if "__list__" in relative_path:
+        return relative_path.replace("__list__", "")
+    return relative_path
+
+
+def scan_catalog_outputs(catalog_path: Path) -> list[tuple[Path, str]]:
+    """Scan catalog directory for all output files that should be uploaded.
+
+    Returns a list of (local_path, remote_path) tuples.
+    The remote_path has v1/ suffix mapping applied.
+
+    Uploads: data/, v1/, stac/, iso19139/, web/, catalog.parquet
+    Skips: config.json, state.json, control.duckdb, resources/ (manifest-tracked)
+    """
+    results = []
+
+    for item in sorted(catalog_path.iterdir()):
+        if item.name.startswith("."):
+            continue
+        if item.name in _EXCLUDED_FILES:
+            continue
+
+        if item.is_file():
+            # Top-level files like catalog.parquet
+            results.append((item, item.name))
+        elif item.is_dir() and item.name not in _EXCLUDED_DIRS:
+            # Recurse into output directories: data/, v1/, stac/, iso19139/, web/
+            for file_path in sorted(item.rglob("*")):
+                if file_path.is_file():
+                    # Skip excluded subdirectories within data/
+                    if item.name == "data":
+                        try:
+                            subdir = file_path.relative_to(item).parts[0]
+                            if subdir in _EXCLUDED_DATA_SUBDIRS:
+                                continue
+                        except (IndexError, ValueError):
+                            pass
+                    relative = str(file_path.relative_to(catalog_path))
+                    if relative.startswith("v1/"):
+                        remote_path = _map_v1_path(relative)
+                    else:
+                        remote_path = relative
+                    results.append((file_path, remote_path))
+
+    return results
+
+
 # =============================================================================
 # Remote Store Abstraction
 # =============================================================================

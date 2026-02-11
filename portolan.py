@@ -2293,6 +2293,7 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
         ResourceEntry,
         compute_status,
         get_remote_store,
+        scan_catalog_outputs,
         scan_local_resources,
     )
 
@@ -2321,17 +2322,24 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
         click.echo("  portolan sync --force-with-lease  # Push anyway (may lose remote changes)")
         raise click.ClickException("Sync aborted. Pull remote changes first.")
 
-    # Check if we have changes to push
-    if not status.is_ahead:
+    # Scan output files (Iceberg data, REST catalog, STAC, etc.)
+    output_files = scan_catalog_outputs(catalog.path)
+
+    # Check if we have anything to push
+    if not status.is_ahead and not output_files:
         click.echo("Nothing to sync. Local catalog matches remote.")
         return
 
     click.echo(f"Syncing to {state.remote_url}...")
-    click.echo(f"  {len(status.diff.added)} added, {len(status.diff.modified)} modified, {len(status.diff.deleted)} deleted")
+    if status.is_ahead:
+        click.echo(f"  Resources: {len(status.diff.added)} added, {len(status.diff.modified)} modified, {len(status.diff.deleted)} deleted")
+    if output_files:
+        click.echo(f"  Outputs: {len(output_files)} files")
 
     if dry_run:
         click.echo()
         click.echo("Dry run - would sync:")
+        click.echo("Resources:")
         for path in status.diff.added[:10]:
             click.echo(click.style(f"  + {path}", fg="green"))
         for path in status.diff.modified[:10]:
@@ -2342,6 +2350,8 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
         shown = min(10, len(status.diff.added)) + min(10, len(status.diff.modified)) + min(10, len(status.diff.deleted))
         if total > shown:
             click.echo(f"  ... and {total - shown} more")
+        if output_files:
+            click.echo(f"\nOutputs: {len(output_files)} files (full upload)")
         return
 
     # Wrap the sync operation with the control plane
@@ -2428,12 +2438,38 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
             except Exception:
                 pass  # CORS setup is best-effort
 
+        # Phase 2: Upload catalog outputs (full overwrite, no diff tracking)
+        # These are derived artifacts (Iceberg data, REST catalog, STAC, etc.)
+        output_uploaded = 0
+        output_errors = 0
+
+        if output_files:
+            if verbose:
+                click.echo(f"\n  Uploading {len(output_files)} catalog output files...")
+
+            for local_path, remote_path in output_files:
+                try:
+                    file_data = local_path.read_bytes()
+                    store.put_resource(remote_path, file_data)
+                    output_uploaded += 1
+                    if verbose:
+                        click.echo(f"  Output: {remote_path}")
+                except Exception as e:
+                    output_errors += 1
+                    if verbose:
+                        click.echo(f"  Error uploading output {remote_path}: {e}")
+
         return SyncResult(
             success=True,
             changes_added=len(status.diff.added),
             changes_modified=len(status.diff.modified),
             changes_deleted=deleted,
-            metadata={"uploaded": uploaded, "errors": errors},
+            metadata={
+                "uploaded": uploaded,
+                "errors": errors,
+                "output_uploaded": output_uploaded,
+                "output_errors": output_errors,
+            },
         )
 
     if controller:
@@ -2449,10 +2485,14 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
 
     click.echo()
     click.echo(click.style("Sync complete!", fg="green"))
-    click.echo(f"  Uploaded: {result.metadata.get('uploaded', 0)}")
-    click.echo(f"  Deleted: {result.changes_deleted}")
-    if result.metadata.get("errors"):
-        click.echo(click.style(f"  Errors: {result.metadata['errors']}", fg="yellow"))
+    click.echo(f"  Resources uploaded: {result.metadata.get('uploaded', 0)}")
+    click.echo(f"  Resources deleted: {result.changes_deleted}")
+    output_uploaded = result.metadata.get("output_uploaded", 0)
+    if output_uploaded:
+        click.echo(f"  Outputs uploaded: {output_uploaded}")
+    if result.metadata.get("errors") or result.metadata.get("output_errors"):
+        total_errors = result.metadata.get("errors", 0) + result.metadata.get("output_errors", 0)
+        click.echo(click.style(f"  Errors: {total_errors}", fg="yellow"))
     click.echo(f"\nRemote: {state.remote_url}")
 
 
@@ -3140,14 +3180,17 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
     click.echo(f"Rebuilding metadata: {', '.join(enabled_meta) or 'none'}")
     click.echo(f"Rebuilding data: {', '.join(enabled_data) or 'none'}")
 
+    if base_url:
+        click.echo(f"Base URL: {base_url}")
+
     if outputs_only:
         click.echo("Rebuilding metadata outputs only (--outputs-only)")
-        regenerate_metadata_outputs(catalog, verbose=verbose)
+        regenerate_metadata_outputs(catalog, verbose=verbose, base_url=base_url)
         click.echo(click.style("Metadata outputs rebuilt!", fg="green"))
         return
 
     # Full rebuild — delegate to output generators
-    regenerate_all_outputs(catalog, verbose=verbose)
+    regenerate_all_outputs(catalog, verbose=verbose, base_url=base_url)
 
     # Also keep a simple catalog.parquet at root for easy access
     meta_parquet = catalog.path / "data" / "_meta" / "resources" / "resources.parquet"
