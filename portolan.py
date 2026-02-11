@@ -49,18 +49,52 @@ class RemoteConfig:
 
 
 @dataclass
+class OutputsConfig:
+    """Configuration for catalog output targets.
+
+    Outputs are split into two categories:
+    - metadata: Discovery catalogs of ALL resources (including registered-only).
+    - data: Queryable data tables. Only for READY resources with Parquet data.
+
+    Each value can be True/False or a dict with "enabled" + format-specific config.
+    """
+    metadata: dict[str, bool | dict] = field(default_factory=lambda: {
+        "stac": False,
+        "iso19139": False,
+        "web": False,
+        "iceberg": True,
+    })
+    data: dict[str, bool | dict] = field(default_factory=lambda: {
+        "iceberg": True,
+        "ducklake": False,
+    })
+
+    def is_enabled(self, category: str, name: str) -> bool:
+        """Check if an output is enabled."""
+        section = self.metadata if category == "metadata" else self.data
+        val = section.get(name, False)
+        return val.get("enabled", False) if isinstance(val, dict) else bool(val)
+
+    def to_dict(self) -> dict:
+        return {"metadata": dict(self.metadata), "data": dict(self.data)}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> OutputsConfig:
+        defaults = cls()
+        return cls(
+            metadata={**defaults.metadata, **data.get("metadata", {})},
+            data={**defaults.data, **data.get("data", {})},
+        )
+
+
+
+@dataclass
 class CatalogConfig:
     """Configuration for a Portolan catalog."""
     path: Path
     default_remote: str | None = None
     remotes: dict[str, RemoteConfig] = field(default_factory=dict)
-    outputs: dict[str, bool] = field(default_factory=lambda: {
-        "iceberg": True,   # Always enabled - core Iceberg REST catalog
-        "stac": False,     # STAC static catalog
-        "iso19139": False, # ISO 19139 XML metadata
-        "ducklake": False, # DuckLake catalog for DuckDB
-        "web": False,      # Static web UI for browsing
-    })
+    outputs: OutputsConfig = field(default_factory=OutputsConfig)
 
     @property
     def config_file(self) -> Path:
@@ -88,7 +122,7 @@ class CatalogConfig:
         data = {
             "default_remote": self.default_remote,
             "remotes": {name: r.to_dict() for name, r in self.remotes.items()},
-            "outputs": self.outputs,
+            "outputs": self.outputs.to_dict(),
         }
         with open(self.config_file, "w") as f:
             json.dump(data, f, indent=2)
@@ -104,9 +138,7 @@ class CatalogConfig:
                 name: RemoteConfig.from_dict(r)
                 for name, r in data.get("remotes", {}).items()
             }
-            # Load outputs with defaults for missing keys
-            default_outputs = {"iceberg": True, "stac": False, "iso19139": False, "ducklake": False, "web": False}
-            outputs = {**default_outputs, **data.get("outputs", {})}
+            outputs = OutputsConfig.from_dict(data.get("outputs", {}))
             return cls(
                 path=path,
                 default_remote=data.get("default_remote"),
@@ -865,7 +897,8 @@ def init(path: str, remote: str | None):
     click.echo("  portolan sync")
     click.echo()
     click.echo("Configure outputs in .portolan/config.json:")
-    click.echo("  stac, iso19139, web")
+    click.echo("  metadata: stac, iso19139, web, iceberg")
+    click.echo("  data: iceberg, ducklake")
 
 
 # ============== CONNECTION MANAGEMENT ==============
@@ -1023,8 +1056,9 @@ def add_resource(ctx, source: str, origin_type: str | None, name: str | None,
         return
 
     if action == "remote":
-        click.echo(f"  Creating remote Iceberg (no download)...")
-        metadata_path = _create_remote_iceberg(resource, name, catalog, namespace, verbose=verbose)
+        if catalog.outputs.is_enabled("data", "iceberg"):
+            click.echo(f"  Creating remote Iceberg (no download)...")
+            metadata_path = _create_remote_iceberg(resource, name, catalog, namespace, verbose=verbose)
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
         errors = validate_resource(resource.to_dict())
@@ -1082,9 +1116,9 @@ def add_resource(ctx, source: str, origin_type: str | None, name: str | None,
         resource.metadata.derived = derived
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Auto-create Iceberg for all parquet-based formats
+        # Auto-create Iceberg data table if enabled
         parquet_formats = {"geoparquet", "raquet", "parquet", "tilequet"}
-        if resource.assets.snapshot.format in parquet_formats:
+        if catalog.outputs.is_enabled("data", "iceberg") and resource.assets.snapshot.format in parquet_formats:
             _create_iceberg_metadata(resource, name, catalog, namespace,
                                       parquet_path=output_path, verbose=verbose)
 
@@ -1210,8 +1244,9 @@ def refresh_resource(ctx, resource_name: str | None, namespace: str, all_resourc
                 click.echo(click.style(f"  {resource_name}: source unchanged, skipping (use --force to override)", dim=True))
                 return
 
-        # Re-read remote schema and update Iceberg
-        metadata_path = _create_remote_iceberg(resource, resource_name, catalog, namespace, verbose=verbose)
+        # Re-read remote schema and update Iceberg (if data.iceberg enabled)
+        if catalog.outputs.is_enabled("data", "iceberg"):
+            _create_remote_iceberg(resource, resource_name, catalog, namespace, verbose=verbose)
 
         # Store fingerprint for future change detection
         new_fp = _get_source_fingerprint(resource.origin.type, url)
@@ -1266,7 +1301,7 @@ def refresh_resource(ctx, resource_name: str | None, namespace: str, all_resourc
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
         parquet_formats = {"geoparquet", "raquet", "parquet", "tilequet"}
-        if resource.assets.snapshot.format in parquet_formats:
+        if catalog.outputs.is_enabled("data", "iceberg") and resource.assets.snapshot.format in parquet_formats:
             _create_iceberg_metadata(resource, resource_name, catalog, namespace,
                                       parquet_path=output_path, verbose=verbose)
 
@@ -2265,15 +2300,10 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
     state = LocalState.load(catalog.path / "state.json")
 
     if not state.remote_url:
-        # Check legacy remote config
-        if catalog.default_remote and catalog.default_remote in catalog.remotes:
-            state.remote_url = catalog.remotes[catalog.default_remote].url
-            state.save(catalog.path / "state.json")
-        else:
-            raise click.ClickException(
-                "No remote configured. Add one with:\n"
-                "  portolan remote add origin gs://your-bucket/path"
-            )
+        raise click.ClickException(
+            "No remote configured. Add one with:\n"
+            "  portolan remote add origin gs://your-bucket/path"
+        )
 
     remote_options = _get_remote_options(catalog, state.remote_url)
     store = get_remote_store(state.remote_url, remote_options)
@@ -2524,9 +2554,16 @@ def status(ctx, verbose: bool):
     # Show outputs
     click.echo()
     click.echo("Outputs:")
-    for name, enabled in catalog.outputs.items():
+    click.echo("  Metadata:")
+    for name, val in catalog.outputs.metadata.items():
+        enabled = val.get("enabled", False) if isinstance(val, dict) else bool(val)
         out_status = click.style("enabled", fg="green") if enabled else click.style("disabled", dim=True)
-        click.echo(f"  {name}: {out_status}")
+        click.echo(f"    {name}: {out_status}")
+    click.echo("  Data:")
+    for name, val in catalog.outputs.data.items():
+        enabled = val.get("enabled", False) if isinstance(val, dict) else bool(val)
+        out_status = click.style("enabled", fg="green") if enabled else click.style("disabled", dim=True)
+        click.echo(f"    {name}: {out_status}")
 
 
 
@@ -3088,309 +3125,49 @@ def rebuild(ctx, verbose: bool, base_url: str | None, outputs_only: bool):
         portolan rebuild --outputs-only               # Only rebuild STAC/ISO
         portolan rebuild --base-url gs://my-bucket    # Rebuild with specific base URL
     """
-    from output_generators import regenerate_all_outputs
+    from output_generators import (
+        regenerate_all_outputs,
+        regenerate_metadata_outputs,
+    )
 
     catalog = get_catalog(ctx)
 
     # Show what will be rebuilt
-    enabled = [k for k, v in catalog.outputs.items() if v]
-    click.echo(f"Rebuilding: {', '.join(enabled)}")
+    enabled_meta = [k for k, v in catalog.outputs.metadata.items()
+                    if (v.get("enabled", False) if isinstance(v, dict) else v)]
+    enabled_data = [k for k, v in catalog.outputs.data.items()
+                    if (v.get("enabled", False) if isinstance(v, dict) else v)]
+    click.echo(f"Rebuilding metadata: {', '.join(enabled_meta) or 'none'}")
+    click.echo(f"Rebuilding data: {', '.join(enabled_data) or 'none'}")
 
     if outputs_only:
-        click.echo("Skipping Iceberg rebuild (--outputs-only)")
-        regenerate_all_outputs(catalog, verbose=verbose)
-        click.echo(click.style("Outputs rebuilt!", fg="green"))
+        click.echo("Rebuilding metadata outputs only (--outputs-only)")
+        regenerate_metadata_outputs(catalog, verbose=verbose)
+        click.echo(click.style("Metadata outputs rebuilt!", fg="green"))
         return
 
-    # Continue with full Iceberg rebuild...
-    import pyarrow as pa
-    import pyarrow.parquet as pq
-
-    from iceberg_catalog import (
-        IcebergTable,
-        _arrow_schema_to_iceberg,
-        add_iceberg_field_ids,
-        generate_static_catalog,
-    )
-
-    catalog = get_catalog(ctx)
-    resources_dir = catalog.path / "resources"
-
-    if not resources_dir.exists():
-        click.echo("No resources found. Import some first with:")
-        click.echo("  portolan add <file> or portolan load <catalog-url>")
-        return
-
-    # Collect all resources (normalize both old and new formats)
-    from output_generators import _normalize_resource
-
-    resources = []
-    for namespace_dir in resources_dir.iterdir():
-        if not namespace_dir.is_dir():
-            continue
-
-        namespace = namespace_dir.name
-
-        for resource_file in namespace_dir.glob("*.json"):
-            if resource_file.name.startswith("_"):
-                continue
-
-            try:
-                with open(resource_file) as f:
-                    resource = _normalize_resource(json.load(f))
-                resource["namespace"] = namespace
-                resources.append(resource)
-
-                if verbose:
-                    click.echo(f"  {namespace}/{resource.get('name', 'unknown')}")
-            except Exception as e:
-                if verbose:
-                    click.echo(f"  Error reading {resource_file}: {e}", err=True)
-
-    if not resources:
-        click.echo("No resources found.")
-        return
-
-    click.echo(f"Found {len(resources)} resources")
-
-    # Flatten resources to tabular format
-    rows = []
-    for r in resources:
-        spatial = r.get("spatial_extent", {}) or {}
-        temporal = r.get("temporal_extent", {}) or {}
-
-        row = {
-            "namespace": r.get("namespace", ""),
-            "name": r.get("name", ""),
-            "type": r.get("type", "external"),
-            "format": r.get("format", "unknown"),
-            "origin": r.get("origin", ""),
-            "title": r.get("title", ""),
-            "abstract": r.get("abstract", ""),
-            "bbox_west": spatial.get("west"),
-            "bbox_south": spatial.get("south"),
-            "bbox_east": spatial.get("east"),
-            "bbox_north": spatial.get("north"),
-            "crs": r.get("crs", ""),
-            "temporal_start": temporal.get("start", ""),
-            "temporal_end": temporal.get("end", ""),
-            "stac_collection": r.get("stac_collection", ""),
-            "stac_item_url": r.get("stac_item_url", ""),
-            "created_at": r.get("created_at", ""),
-            "updated_at": r.get("updated_at", ""),
-            # Store complex fields as JSON strings
-            "assets": json.dumps(r.get("assets", {})),
-            "properties": json.dumps(r.get("properties", {})),
-        }
-        rows.append(row)
-
-    # Create PyArrow table
-    pa_table = pa.Table.from_pylist(rows)
-
-    # Create data directory and write Parquet file
-    data_dir = catalog.path / "data" / "resources"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    parquet_path = data_dir / "resources.parquet"
-    pq.write_table(pa_table, parquet_path, compression="zstd")
-
-    # Add Iceberg field IDs to the Parquet file
-    click.echo("Adding Iceberg field IDs...")
-    add_iceberg_field_ids(parquet_path)
-
-    # Re-read to get updated schema with field IDs
-    pa_table = pq.read_table(parquet_path)
-
-    # Create IcebergTable object for the resources registry
-    iceberg_table = IcebergTable(
-        name="resources",
-        parquet_path="resources/resources.parquet",
-        schema=_arrow_schema_to_iceberg(pa_table.schema),
-        arrow_schema=pa_table.schema,
-        num_rows=len(rows),
-        file_size_bytes=parquet_path.stat().st_size,
-    )
-
-    # Collect tables grouped by namespace
-    from namespace_utils import namespace_to_iceberg
-
-    tables_by_ns: dict[str, list] = {"_meta": [iceberg_table]}
-    direct_count = 0
-
-    # Register GeoParquet and Raquet files as direct Iceberg tables
-    click.echo("Registering direct data tables...")
-    direct_table_formats = {"geoparquet", "raquet"}
-
-    for r in resources:
-        fmt = r.get("format", "")
-        rtype = r.get("type", "external")
-        name = r.get("name", "")
-        ns = r.get("namespace", "default")
-        assets = r.get("assets", {})
-
-        if fmt not in direct_table_formats:
-            continue
-
-        # Get the data URL
-        data_asset = assets.get("data", {}) or assets.get("cache", {})
-        data_url = data_asset.get("href", "")
-
-        if not data_url:
-            if verbose:
-                click.echo(f"  Skipping {name}: no data URL")
-            continue
-
-        # For managed/cached data, copy to the catalog
-        # For external with HTTP/GCS URLs, download
-        try:
-            iceberg_ns = namespace_to_iceberg(ns)
-            table_data_dir = catalog.path / "data" / iceberg_ns / name
-            table_data_dir.mkdir(parents=True, exist_ok=True)
-            table_parquet_path = table_data_dir / f"{name}.parquet"
-
-            if rtype == "managed" and data_url.startswith("gs://"):
-                # Will be uploaded later, create placeholder from local file if exists
-                local_file = catalog.path / "sample_cities.parquet" if "cities" in name else None
-                if local_file and local_file.exists():
-                    shutil.copy(local_file, table_parquet_path)
-                else:
-                    if verbose:
-                        click.echo(f"  Skipping {name}: managed file not found locally")
-                    continue
-            elif data_url.startswith(("http://", "https://", "gs://")):
-                # Download the file
-                if verbose:
-                    click.echo(f"  Downloading {name}...")
-
-                import httpx
-                if data_url.startswith("gs://"):
-                    # Convert gs:// to https://
-                    https_url = data_url.replace("gs://", "https://storage.googleapis.com/")
-                else:
-                    https_url = data_url
-
-                response = httpx.get(https_url, follow_redirects=True, timeout=60)
-                response.raise_for_status()
-
-                with open(table_parquet_path, "wb") as f:
-                    f.write(response.content)
-            else:
-                if verbose:
-                    click.echo(f"  Skipping {name}: unsupported URL scheme")
-                continue
-
-            # Add Iceberg field IDs
-            add_iceberg_field_ids(table_parquet_path)
-
-            # Read schema
-            table_pa = pq.read_table(table_parquet_path)
-
-            # Create IcebergTable
-            direct_table = IcebergTable(
-                name=name,
-                parquet_path=f"{iceberg_ns}/{name}/{name}.parquet",
-                schema=_arrow_schema_to_iceberg(table_pa.schema),
-                arrow_schema=table_pa.schema,
-                num_rows=table_pa.num_rows,
-                file_size_bytes=table_parquet_path.stat().st_size,
-            )
-            tables_by_ns.setdefault(ns, []).append(direct_table)
-            direct_count += 1
-
-            if verbose:
-                click.echo(f"  Registered {iceberg_ns}.{name} ({fmt}, {table_pa.num_rows} rows)")
-
-        except Exception as e:
-            if verbose:
-                click.echo(f"  Error registering {name}: {e}", err=True)
-            continue
-
-    # Determine base URL
-    if base_url:
-        data_base_url = base_url.rstrip("/")
-    else:
-        # Default to local path for testing
-        data_base_url = f"file://{catalog.path.absolute()}"
-
-    # Generate full Iceberg catalog with multi-namespace support
-    total_tables = sum(len(ts) for ts in tables_by_ns.values())
-    click.echo(f"Generating Iceberg catalog with {total_tables} tables across {len(tables_by_ns)} namespaces...")
-    generate_static_catalog(
-        tables=tables_by_ns,
-        output_dir=str(catalog.path),
-        prefix="catalog",
-        data_base_url=data_base_url,
-        verbose=verbose,
-    )
-
-    # Also keep a simple catalog.parquet at root for easy access
-    simple_parquet = catalog.path / "catalog.parquet"
-    shutil.copy(parquet_path, simple_parquet)
-
-    click.echo()
-    click.echo(click.style("Built Iceberg catalog!", fg="green"))
-    click.echo(f"  Resources: {len(resources)}")
-    click.echo(f"  Direct tables: {direct_count}")
-    click.echo(f"  Location: {catalog.path}")
-
-    # Regenerate all enabled outputs (STAC, ISO, etc.)
+    # Full rebuild — delegate to output generators
     regenerate_all_outputs(catalog, verbose=verbose)
 
-    # Show format breakdown
-    format_counts = {}
-    for r in resources:
-        fmt = r.get("format", "unknown")
-        format_counts[fmt] = format_counts.get(fmt, 0) + 1
+    # Also keep a simple catalog.parquet at root for easy access
+    meta_parquet = catalog.path / "data" / "_meta" / "resources" / "resources.parquet"
+    simple_parquet = catalog.path / "catalog.parquet"
+    if meta_parquet.exists():
+        shutil.copy(meta_parquet, simple_parquet)
 
-    click.echo("\nFormats:")
-    for fmt, count in sorted(format_counts.items()):
-        click.echo(f"  {fmt}: {count}")
+    click.echo()
+    click.echo(click.style("Catalog rebuilt!", fg="green"))
+    click.echo(f"  Location: {catalog.path}")
 
-    # Show registered direct tables
-    if direct_count > 0:
-        click.echo("\nDirect tables:")
-        for ns, ts in tables_by_ns.items():
-            if ns == "_meta":
-                continue
-            iceberg_ns = namespace_to_iceberg(ns)
-            for t in ts:
-                click.echo(f"  - catalog.{iceberg_ns}.{t.name}")
+    # Show query hints
+    metadata_path = catalog.path / "data" / "_meta" / "resources" / "metadata" / "v1.metadata.json"
+    if metadata_path.exists():
+        click.echo(f"\nQuery with DuckDB (Iceberg):")
+        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
 
-    click.echo("\nQuery with DuckDB (simple Parquet):")
-    click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{simple_parquet}'\"")
-
-    click.echo("\nQuery with DuckDB (Iceberg):")
-    metadata_path = catalog.path / "data" / "resources" / "metadata" / "v1.metadata.json"
-    click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{metadata_path}')\"")
-
-    if base_url:
-        # Convert gs:// to https:// for public access
-        https_url = base_url.replace("gs://", "https://storage.googleapis.com/")
-
-        click.echo(f"\nAfter uploading with: .portolan/upload_static_catalog.sh {base_url}")
-        click.echo("\nQuery with DuckDB (iceberg_scan):")
-        click.echo(f"  duckdb -c \"SELECT * FROM iceberg_scan('{https_url}/data/resources/metadata/v1.metadata.json')\"")
-        click.echo("\nQuery with DuckDB (REST catalog ATTACH):")
-        click.echo("  ATTACH '' AS catalog (")
-        click.echo("      TYPE iceberg,")
-        click.echo(f"      ENDPOINT '{https_url}',")
-        click.echo("      AUTHORIZATION_TYPE 'none'")
-        click.echo("  );")
-        click.echo("  -- Discovery table:")
-        click.echo("  SELECT * FROM catalog.portolan.resources;")
-        if direct_count > 0:
-            click.echo("  -- Direct data tables:")
-            shown = 0
-            for ns, ts in tables_by_ns.items():
-                if ns == "_meta":
-                    continue
-                iceberg_ns = namespace_to_iceberg(ns)
-                for t in ts:
-                    if shown >= 3:
-                        break
-                    click.echo(f"  SELECT * FROM catalog.{iceberg_ns}.{t.name} LIMIT 10;")
-                    shown += 1
-        click.echo("\nBigQuery (BigLake Iceberg table):")
-        click.echo(f"  bq mk --table --external_table_definition=ICEBERG={base_url}/data/resources/metadata/v1.metadata.json dataset.resources")
+    if simple_parquet.exists():
+        click.echo(f"\nQuery with DuckDB (simple Parquet):")
+        click.echo(f"  duckdb -c \"SELECT name, format, title FROM '{simple_parquet}'\"")
 
 
 

@@ -121,6 +121,8 @@ class TestResourceValidation:
             "stac",
             "oracle",
             "postgres",
+            "pointcloud",
+            "tiles",
         ]
         for origin_type in valid_types:
             data = {
@@ -265,14 +267,19 @@ class TestConfigValidation:
     """Test suite for config schema validation."""
 
     def test_valid_config(self):
-        """Test validation of valid config."""
+        """Test validation of valid config with nested outputs."""
         data = {
             "outputs": {
-                "iceberg": True,
-                "stac": True,
-                "iso19139": True,
-                "ducklake": True,
-                "web": True,
+                "metadata": {
+                    "stac": True,
+                    "iso19139": True,
+                    "web": True,
+                    "iceberg": True,
+                },
+                "data": {
+                    "iceberg": True,
+                    "ducklake": True,
+                },
             }
         }
         errors = validate_config(data)
@@ -280,7 +287,7 @@ class TestConfigValidation:
 
     def test_valid_partial_config(self):
         """Test validation of partial config."""
-        data = {"outputs": {"iceberg": True, "stac": False}}
+        data = {"outputs": {"metadata": {"stac": True}}}
         errors = validate_config(data)
         assert errors == []
 
@@ -290,16 +297,39 @@ class TestConfigValidation:
         errors = validate_config(data)
         assert errors == []
 
+    def test_valid_object_output_value(self):
+        """Test that object values with 'enabled' are valid."""
+        data = {
+            "outputs": {
+                "data": {
+                    "iceberg": {"enabled": True},
+                },
+            }
+        }
+        errors = validate_config(data)
+        assert errors == []
+
     def test_invalid_output_type(self):
-        """Test that non-boolean output fails."""
-        data = {"outputs": {"iceberg": "yes"}}  # Should be boolean
+        """Test that non-boolean, non-object output fails."""
+        data = {"outputs": {"metadata": {"stac": "yes"}}}
+        errors = validate_config(data)
+        assert len(errors) >= 1
+
+    def test_invalid_extra_metadata_output(self):
+        """Test that unknown metadata output key fails."""
+        data = {"outputs": {"metadata": {"unknown_output": True}}}
         errors = validate_config(data)
         assert len(errors) == 1
-        assert "boolean" in errors[0].lower() or "type" in errors[0].lower()
 
-    def test_invalid_extra_output(self):
-        """Test that unknown output key fails."""
-        data = {"outputs": {"unknown_output": True}}
+    def test_invalid_extra_data_output(self):
+        """Test that unknown data output key fails."""
+        data = {"outputs": {"data": {"unknown_output": True}}}
+        errors = validate_config(data)
+        assert len(errors) == 1
+
+    def test_invalid_extra_top_level_output(self):
+        """Test that unknown top-level output key fails."""
+        data = {"outputs": {"unknown_section": {}}}
         errors = validate_config(data)
         assert len(errors) == 1
 
@@ -426,7 +456,9 @@ class TestFileValidation:
     def test_validate_config_file(self, tmp_path):
         """Test validating a config file."""
         config_path = tmp_path / "config.json"
-        config_path.write_text(json.dumps({"outputs": {"iceberg": True}}))
+        config_path.write_text(json.dumps({
+            "outputs": {"metadata": {"iceberg": True}, "data": {"iceberg": True}}
+        }))
 
         errors = validate_config_file(config_path)
         assert errors == []
@@ -450,7 +482,7 @@ class TestCatalogValidation:
 
         # Create config
         (portolan_dir / "config.json").write_text(
-            json.dumps({"outputs": {"iceberg": True}})
+            json.dumps({"outputs": {"metadata": {"iceberg": True}, "data": {"iceberg": True}}})
         )
 
         # Create state
@@ -473,9 +505,9 @@ class TestCatalogValidation:
         portolan_dir = tmp_path / ".portolan"
         portolan_dir.mkdir()
 
-        # Create invalid config
+        # Create invalid config (unknown top-level key in outputs)
         (portolan_dir / "config.json").write_text(
-            json.dumps({"outputs": {"iceberg": "yes"}})  # Should be boolean
+            json.dumps({"outputs": {"unknown_section": True}})
         )
 
         # Create invalid resource
@@ -487,3 +519,62 @@ class TestCatalogValidation:
 
         errors = validate_catalog(portolan_dir)
         assert len(errors) == 2  # config + resource
+
+
+class TestOutputsConfig:
+    """Test suite for OutputsConfig dataclass."""
+
+    def test_defaults(self):
+        """Test default OutputsConfig values."""
+        from portolan import OutputsConfig
+        config = OutputsConfig()
+        assert config.is_enabled("metadata", "iceberg") is True
+        assert config.is_enabled("metadata", "stac") is False
+        assert config.is_enabled("data", "iceberg") is True
+        assert config.is_enabled("data", "ducklake") is False
+
+    def test_is_enabled_with_dict_value(self):
+        """Test is_enabled with object value containing 'enabled'."""
+        from portolan import OutputsConfig
+        config = OutputsConfig(data={"iceberg": {"enabled": True}, "ducklake": {"enabled": False}})
+        assert config.is_enabled("data", "iceberg") is True
+        assert config.is_enabled("data", "ducklake") is False
+
+    def test_to_dict_roundtrip(self):
+        """Test to_dict / from_dict roundtrip."""
+        from portolan import OutputsConfig
+        original = OutputsConfig()
+        restored = OutputsConfig.from_dict(original.to_dict())
+        assert original.metadata == restored.metadata
+        assert original.data == restored.data
+
+    def test_catalog_config_load_new_format(self, tmp_path):
+        """Test that CatalogConfig.load reads new nested format."""
+        from portolan import CatalogConfig
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        config_data = {
+            "outputs": {
+                "metadata": {"stac": True, "iso19139": False, "web": False, "iceberg": True},
+                "data": {"iceberg": True, "ducklake": False},
+            }
+        }
+        (portolan_dir / "config.json").write_text(json.dumps(config_data))
+        catalog = CatalogConfig.load(portolan_dir)
+        assert catalog.outputs.is_enabled("metadata", "stac") is True
+        assert catalog.outputs.is_enabled("data", "iceberg") is True
+        assert catalog.outputs.is_enabled("data", "ducklake") is False
+
+    def test_catalog_config_save_new_format(self, tmp_path):
+        """Test that CatalogConfig.save writes new nested format."""
+        from portolan import CatalogConfig
+        portolan_dir = tmp_path / ".portolan"
+        portolan_dir.mkdir()
+        catalog = CatalogConfig(path=portolan_dir)
+        catalog.save()
+        with open(portolan_dir / "config.json") as f:
+            data = json.load(f)
+        assert "metadata" in data["outputs"]
+        assert "data" in data["outputs"]
+        assert data["outputs"]["metadata"]["iceberg"] is True
+        assert data["outputs"]["data"]["iceberg"] is True

@@ -1,12 +1,10 @@
 """
-Static Iceberg REST Catalog generation — backward-compatibility facade.
+Static Iceberg REST Catalog generation — re-export facade.
 
 This module re-exports all public symbols from the three sub-modules:
 - iceberg_metadata: Core Iceberg types, schemas, manifests, parquet utilities
 - iceberg_rest_catalog: REST catalog endpoint generation
 - sdi_catalog: STAC + ISO 19115 SDI catalog support
-
-All existing imports like ``from iceberg_catalog import X`` continue to work.
 """
 
 # Core Iceberg metadata & types

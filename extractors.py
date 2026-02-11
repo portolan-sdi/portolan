@@ -50,7 +50,7 @@ def _load_connection(catalog_path: Path, name: str | None) -> dict | None:
 # Supported extractor types — used by _detect_default_action in portolan.py
 EXTRACTORS = {
     "file", "arcgis_featureserver", "wfs", "arcgis_imageserver",
-    "stac", "postgres", "oracle", "pointcloud",
+    "stac", "postgres", "oracle", "pointcloud", "tiles", "tiles3d",
 }
 
 
@@ -71,6 +71,8 @@ def run_extractor(
         "postgres": extract_postgres,
         "oracle": extract_oracle,
         "pointcloud": extract_pointcloud,
+        "tiles": extract_tiles,
+        "tiles3d": extract_tiles3d,
     }
     fn = extractors.get(resource.origin.type)
     if fn is None:
@@ -147,6 +149,140 @@ def extract_pointcloud(
 
     if verbose:
         click.echo(f"  Converted {source_url} to Parquet: {output_path}")
+
+
+def extract_tiles(
+    resource: Resource,
+    output_path: Path,
+    catalog_path: Path = None,
+    bbox: str | None = None,
+    verbose: bool = False,
+) -> None:
+    """Convert tile sources (PMTiles, MBTiles) to Tilequet Parquet using tilequet-io."""
+    source_url = resource.origin.url
+    source_lower = source_url.lower()
+
+    # Detect tile source format
+    if source_lower.endswith(".pmtiles"):
+        converter = "pmtiles"
+    elif source_lower.endswith(".mbtiles"):
+        converter = "mbtiles"
+    else:
+        raise click.ClickException(
+            f"Unsupported tile format: {source_url}\n"
+            "Supported: .pmtiles, .mbtiles"
+        )
+
+    cmd = ["tilequet-io", "convert", converter, source_url, str(output_path)]
+    if verbose:
+        cmd.append("-v")
+        click.echo(f"  Running: {' '.join(cmd)}")
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=not verbose)
+    except subprocess.CalledProcessError as e:
+        raise click.ClickException(f"Failed to convert tiles: {e}")
+    except FileNotFoundError:
+        raise click.ClickException(
+            "tilequet-io command not found. Install: pip install 'tilequet-io[all]'"
+        )
+
+    # Read tilequet metadata from the output file
+    try:
+        from tilequet.metadata import read_metadata
+
+        tq_meta = read_metadata(str(output_path))
+        data = {
+            "tile_type": tq_meta.get("tile_type"),
+            "tile_format": tq_meta.get("tile_format"),
+            "bounds": tq_meta.get("bounds"),
+            "bounds_crs": tq_meta.get("bounds_crs"),
+            "center": tq_meta.get("center"),
+            "min_zoom": tq_meta.get("min_zoom"),
+            "max_zoom": tq_meta.get("max_zoom"),
+            "num_tiles": tq_meta.get("num_tiles"),
+            "tiling": tq_meta.get("tiling"),
+            "layers": tq_meta.get("layers"),
+            "name": tq_meta.get("name"),
+            "description": tq_meta.get("description"),
+            "attribution": tq_meta.get("attribution"),
+            "tilejson": tq_meta.get("tilejson"),
+            "processing": tq_meta.get("processing"),
+        }
+        # Remove None values for cleaner storage
+        data = {k: v for k, v in data.items() if v is not None}
+        resource.metadata.source = SourceMetadata(
+            provider="tilequet",
+            ref={"source_url": source_url, "converter": converter},
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            data=data,
+        )
+    except Exception as e:
+        if verbose:
+            click.echo(f"  Warning: Could not read tilequet metadata: {e}")
+
+    if verbose:
+        click.echo(f"  Converted {source_url} to Tilequet: {output_path}")
+
+
+def extract_tiles3d(
+    resource: Resource,
+    output_path: Path,
+    catalog_path: Path = None,
+    bbox: str | None = None,
+    verbose: bool = False,
+) -> None:
+    """Convert OGC 3D Tiles (tileset.json) to Tilequet Parquet using tilequet-io."""
+    source_url = resource.origin.url
+
+    cmd = ["tilequet-io", "convert", "3dtiles", source_url, str(output_path)]
+    if verbose:
+        cmd.append("-v")
+        click.echo(f"  Running: {' '.join(cmd)}")
+
+    try:
+        subprocess.run(cmd, check=True, capture_output=not verbose)
+    except subprocess.CalledProcessError as e:
+        raise click.ClickException(f"Failed to convert 3D Tiles: {e}")
+    except FileNotFoundError:
+        raise click.ClickException(
+            "tilequet-io command not found. Install: pip install 'tilequet-io[all]'"
+        )
+
+    # Read tilequet metadata from the output file
+    try:
+        from tilequet.metadata import read_metadata
+
+        tq_meta = read_metadata(str(output_path))
+        data = {
+            "tile_type": tq_meta.get("tile_type"),
+            "tile_format": tq_meta.get("tile_format"),
+            "bounds": tq_meta.get("bounds"),
+            "bounds_crs": tq_meta.get("bounds_crs"),
+            "center": tq_meta.get("center"),
+            "min_zoom": tq_meta.get("min_zoom"),
+            "max_zoom": tq_meta.get("max_zoom"),
+            "num_tiles": tq_meta.get("num_tiles"),
+            "tiling": tq_meta.get("tiling"),
+            "name": tq_meta.get("name"),
+            "description": tq_meta.get("description"),
+            "attribution": tq_meta.get("attribution"),
+            "tilejson": tq_meta.get("tilejson"),
+            "processing": tq_meta.get("processing"),
+        }
+        data = {k: v for k, v in data.items() if v is not None}
+        resource.metadata.source = SourceMetadata(
+            provider="tilequet",
+            ref={"source_url": source_url, "converter": "3dtiles"},
+            fetched_at=datetime.now(timezone.utc).isoformat(),
+            data=data,
+        )
+    except Exception as e:
+        if verbose:
+            click.echo(f"  Warning: Could not read tilequet metadata: {e}")
+
+    if verbose:
+        click.echo(f"  Converted 3D Tiles {source_url} to Tilequet: {output_path}")
 
 
 def extract_arcgis_featureserver(

@@ -179,16 +179,24 @@ portolan add "https://s3.amazonaws.com/hobu-lidar/autzen-classified.copc.laz" \
 ### 11. PMTiles — Overture Maps Buildings Vector Tiles
 
 ```bash
+# Remote PMTiles — catalog-only (too large to download)
 portolan add "https://overturemaps-tiles-us-west-2-beta.s3.amazonaws.com/2025-03-19/buildings.pmtiles" \
   --name overture_tiles --namespace overture \
   --title "Overture Maps Buildings (PMTiles)" -v
+
+# Local PMTiles — converts via tilequet-io → Parquet → Iceberg (queryable!)
+portolan add buildings.pmtiles \
+  --name local_tiles --namespace demo \
+  --title "Local Buildings Tiles" -v
 ```
 
 - **Source:** [Overture Maps PMTiles](https://docs.overturemaps.org/examples/overture-tiles/)
-- **Result:** Catalog-only (registered, not queryable). State: REGISTERED.
 - **Kind:** `tiles` (auto-detected from `.pmtiles` extension)
-- **Action:** `catalog_only` (tiles are discoverable but not queryable — no snapshot/iceberg)
-- **Tests:** PMTiles detection, tiles kind, catalog-only routing
+- **Remote:** `catalog_only` (registered, discoverable). Use `--cache-data` to force download + conversion.
+- **Local:** Converted to Tilequet (Parquet) via `tilequet-io`, then Iceberg. State: READY, queryable via SQL.
+- **Extractor:** `tilequet-io convert pmtiles` (also supports `.mbtiles`)
+- **Requires:** `pip install 'tilequet-io[pmtiles]'`
+- **Source metadata:** tile_type, tile_format, bounds, zoom range, layer schemas, num_tiles
 
 ## Verification
 

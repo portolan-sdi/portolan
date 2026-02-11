@@ -35,6 +35,8 @@ ORIGIN_SCHEMA = {
                 "oracle",
                 "postgres",
                 "pointcloud",
+                "tiles",
+                "tiles3d",
             ],
         },
         "url": {"type": "string"},
@@ -53,7 +55,7 @@ SNAPSHOT_ASSET_SCHEMA = {
         "href": {"type": "string"},
         "type": {"type": "string"},
         "taken_at": {"type": "string"},
-        "format": {"type": "string", "enum": ["geoparquet", "cog", "zarr", "parquet", "raquet"]},
+        "format": {"type": "string", "enum": ["geoparquet", "cog", "zarr", "parquet", "raquet", "tilequet"]},
         "source_fingerprint": {"type": "object"},
     },
     "additionalProperties": False,
@@ -73,7 +75,6 @@ ASSETS_SCHEMA = {
     "properties": {
         "snapshot": SNAPSHOT_ASSET_SCHEMA,
         "iceberg": ICEBERG_ASSET_SCHEMA,
-        "data": {"type": "object"},  # Legacy field
     },
     "additionalProperties": False,
 }
@@ -231,6 +232,18 @@ SYNC_POLICY_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Output value: boolean or object with "enabled" + format-specific config
+_OUTPUT_VALUE_SCHEMA = {
+    "oneOf": [
+        {"type": "boolean"},
+        {
+            "type": "object",
+            "properties": {"enabled": {"type": "boolean"}},
+            "required": ["enabled"],
+        },
+    ],
+}
+
 CONFIG_SCHEMA = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://portolan.dev/schemas/config.schema.json",
@@ -240,13 +253,28 @@ CONFIG_SCHEMA = {
     "properties": {
         "outputs": {
             "type": "object",
-            "description": "Which output formats to generate",
+            "description": "Output targets split into metadata (discovery) and data (queryable tables)",
             "properties": {
-                "iceberg": {"type": "boolean", "default": True},
-                "stac": {"type": "boolean", "default": True},
-                "iso19139": {"type": "boolean", "default": True},
-                "ducklake": {"type": "boolean", "default": True},
-                "web": {"type": "boolean", "default": True},
+                "metadata": {
+                    "type": "object",
+                    "description": "Metadata outputs — discovery catalogs of all resources",
+                    "properties": {
+                        "stac": _OUTPUT_VALUE_SCHEMA,
+                        "iso19139": _OUTPUT_VALUE_SCHEMA,
+                        "web": _OUTPUT_VALUE_SCHEMA,
+                        "iceberg": _OUTPUT_VALUE_SCHEMA,
+                    },
+                    "additionalProperties": False,
+                },
+                "data": {
+                    "type": "object",
+                    "description": "Data outputs — queryable tables for READY resources",
+                    "properties": {
+                        "iceberg": _OUTPUT_VALUE_SCHEMA,
+                        "ducklake": _OUTPUT_VALUE_SCHEMA,
+                    },
+                    "additionalProperties": False,
+                },
             },
             "additionalProperties": False,
         },

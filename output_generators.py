@@ -1,10 +1,15 @@
 """
-Output generators for compatibility layers.
+Output generators for metadata and data targets.
 
-This module generates static catalog files in various formats:
+Metadata outputs (discovery catalogs of all resources):
 - STAC (SpatioTemporal Asset Catalog)
 - ISO 19139 (XML metadata)
-- OGC API Records (future)
+- Web (static HTML catalog)
+- Iceberg metadata catalog (resources as rows)
+
+Data outputs (queryable tables for READY resources):
+- Iceberg (per-resource data tables + static REST catalog)
+- DuckLake (DuckDB catalog)
 """
 
 from __future__ import annotations
@@ -19,74 +24,64 @@ if TYPE_CHECKING:
 
 
 def _normalize_resource(resource: dict) -> dict:
-    """Normalize a resource dict to the common format expected by output generators.
+    """Normalize a Resource dict to the flat format expected by output generators."""
+    metadata = resource.get("metadata", {})
+    user_meta = metadata.get("user", {})
+    derived = metadata.get("derived", {})
 
-    Handles both old format (flat dict with 'type', 'format', 'spatial_extent')
-    and new format (Resource dataclass with 'origin', 'metadata', 'assets').
-    """
-    # Detect new format by checking if origin is a dict (old format has origin as string)
-    if isinstance(resource.get("origin"), dict):
-        # New Resource format
-        metadata = resource.get("metadata", {})
-        user_meta = metadata.get("user", {})
-        derived = metadata.get("derived", {})
-
-        # Build spatial_extent from bbox
-        spatial_extent = None
-        bbox = derived.get("bbox")
-        if bbox and len(bbox) >= 4:
-            spatial_extent = {
-                "west": bbox[0],
-                "south": bbox[1],
-                "east": bbox[2],
-                "north": bbox[3],
-            }
-
-        # Build assets dict for output generators
-        assets = {}
-        resource_assets = resource.get("assets", {})
-        snapshot = resource_assets.get("snapshot")
-        if isinstance(snapshot, dict) and snapshot.get("href"):
-            assets["data"] = {
-                "href": snapshot["href"],
-                "type": snapshot.get("type", "application/vnd.apache.parquet"),
-                "title": "Snapshot data",
-            }
-        iceberg = resource_assets.get("iceberg")
-        if isinstance(iceberg, dict) and iceberg.get("metadata"):
-            assets["iceberg"] = {
-                "href": iceberg["metadata"],
-                "type": "application/json",
-                "title": "Iceberg metadata",
-            }
-
-        user_properties = user_meta.get("properties", {})
-
-        return {
-            "name": resource.get("name", "unknown"),
-            "title": user_meta.get("title", resource.get("name", "unknown")),
-            "abstract": user_meta.get("description", ""),
-            "type": resource.get("kind", "vector"),
-            "format": resource.get("kind", "unknown"),
-            "spatial_extent": spatial_extent,
-            "crs": derived.get("crs"),
-            "temporal_extent": None,
-            "created_at": resource.get("created_at"),
-            "updated_at": resource.get("updated_at"),
-            "assets": assets,
-            "properties": {
-                "row_count": derived.get("row_count"),
-                "column_count": len(derived.get("columns", [])) or derived.get("column_count"),
-            },
-            "columns": derived.get("columns", []),
-            "tags": user_meta.get("tags", []),
-            "license": user_meta.get("license"),
-            "attribution": user_meta.get("attribution"),
-            "user_properties": user_properties,
+    # Build spatial_extent from bbox
+    spatial_extent = None
+    bbox = derived.get("bbox")
+    if bbox and len(bbox) >= 4:
+        spatial_extent = {
+            "west": bbox[0],
+            "south": bbox[1],
+            "east": bbox[2],
+            "north": bbox[3],
         }
 
-    # Old format - pass through unchanged
-    return resource
+    # Build assets dict for output generators
+    assets = {}
+    resource_assets = resource.get("assets", {})
+    snapshot = resource_assets.get("snapshot")
+    if isinstance(snapshot, dict) and snapshot.get("href"):
+        assets["data"] = {
+            "href": snapshot["href"],
+            "type": snapshot.get("type", "application/vnd.apache.parquet"),
+            "title": "Snapshot data",
+        }
+    iceberg = resource_assets.get("iceberg")
+    if isinstance(iceberg, dict) and iceberg.get("metadata"):
+        assets["iceberg"] = {
+            "href": iceberg["metadata"],
+            "type": "application/json",
+            "title": "Iceberg metadata",
+        }
+
+    user_properties = user_meta.get("properties", {})
+
+    return {
+        "name": resource.get("name", "unknown"),
+        "title": user_meta.get("title", resource.get("name", "unknown")),
+        "abstract": user_meta.get("description", ""),
+        "type": resource.get("kind", "vector"),
+        "format": resource.get("kind", "unknown"),
+        "spatial_extent": spatial_extent,
+        "crs": derived.get("crs"),
+        "temporal_extent": None,
+        "created_at": resource.get("created_at"),
+        "updated_at": resource.get("updated_at"),
+        "assets": assets,
+        "properties": {
+            "row_count": derived.get("row_count"),
+            "column_count": len(derived.get("columns", [])) or derived.get("column_count"),
+        },
+        "columns": derived.get("columns", []),
+        "tags": user_meta.get("tags", []),
+        "license": user_meta.get("license"),
+        "attribution": user_meta.get("attribution"),
+        "user_properties": user_properties,
+    }
 
 
 # =============================================================================
@@ -391,7 +386,7 @@ def _resource_to_stac_item(resource: dict, collection: str, depth: int = 1) -> d
         if k not in skip_keys:
             properties[f"portolan:{k}"] = v
 
-    # Add temporal if available (from old format)
+    # Add temporal if available
     temporal = resource.get("temporal_extent", {}) or {}
     if temporal.get("start") and "start_datetime" not in properties:
         properties["start_datetime"] = temporal["start"]
@@ -1148,11 +1143,11 @@ def _generate_web_html(resources: list[dict], namespaces: dict, catalog: Catalog
 
     # Check which outputs are enabled
     outputs_enabled = []
-    if catalog.outputs.get("stac"):
+    if catalog.outputs.is_enabled("metadata", "stac"):
         outputs_enabled.append('<a href="../stac/catalog.json" class="output-link">STAC</a>')
-    if catalog.outputs.get("iso19139"):
+    if catalog.outputs.is_enabled("metadata", "iso19139"):
         outputs_enabled.append('<a href="../iso19139/" class="output-link">ISO 19139</a>')
-    if catalog.outputs.get("ducklake"):
+    if catalog.outputs.is_enabled("data", "ducklake"):
         outputs_enabled.append('<span class="output-link">DuckLake</span>')
     outputs_html = " | ".join(outputs_enabled) if outputs_enabled else "None"
 
@@ -1555,8 +1550,314 @@ def update_web_for_resource(catalog: CatalogConfig, resource: dict, namespace: s
 
 
 # =============================================================================
+# Iceberg Metadata Catalog Generator
+# =============================================================================
+
+def generate_iceberg_metadata_catalog(catalog: CatalogConfig, verbose: bool = False) -> Path | None:
+    """Generate a single Iceberg table with all resources as rows.
+
+    This is a metadata output: a discovery catalog of ALL resources (including
+    registered-only ones). Resources become rows in one Parquet/Iceberg table.
+
+    Returns the Path to the generated v1.metadata.json, or None if no resources.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    from iceberg_catalog import (
+        IcebergTable,
+        _arrow_schema_to_iceberg,
+        add_iceberg_field_ids,
+    )
+
+    resources_dir = catalog.path / "resources"
+    if not resources_dir.exists():
+        return None
+
+    # Collect all resources
+    resources = []
+    for namespace_dir in resources_dir.iterdir():
+        if not namespace_dir.is_dir():
+            continue
+        namespace = namespace_dir.name
+        for resource_file in namespace_dir.glob("*.json"):
+            if resource_file.name.startswith("_"):
+                continue
+            try:
+                with open(resource_file) as f:
+                    resource = _normalize_resource(json.load(f))
+                resource["namespace"] = namespace
+                resources.append(resource)
+            except Exception as e:
+                if verbose:
+                    print(f"  Error reading {resource_file}: {e}")
+
+    if not resources:
+        return None
+
+    # Flatten resources to tabular format
+    rows = []
+    for r in resources:
+        spatial = r.get("spatial_extent", {}) or {}
+        temporal = r.get("temporal_extent", {}) or {}
+        row = {
+            "namespace": r.get("namespace", ""),
+            "name": r.get("name", ""),
+            "type": r.get("type", "external"),
+            "format": r.get("format", "unknown"),
+            "origin": r.get("origin", ""),
+            "title": r.get("title", ""),
+            "abstract": r.get("abstract", ""),
+            "bbox_west": spatial.get("west"),
+            "bbox_south": spatial.get("south"),
+            "bbox_east": spatial.get("east"),
+            "bbox_north": spatial.get("north"),
+            "crs": r.get("crs", ""),
+            "temporal_start": temporal.get("start", ""),
+            "temporal_end": temporal.get("end", ""),
+            "stac_collection": r.get("stac_collection", ""),
+            "stac_item_url": r.get("stac_item_url", ""),
+            "created_at": r.get("created_at", ""),
+            "updated_at": r.get("updated_at", ""),
+            "assets": json.dumps(r.get("assets", {})),
+            "properties": json.dumps(r.get("properties", {})),
+        }
+        rows.append(row)
+
+    # Create PyArrow table and write Parquet
+    pa_table = pa.Table.from_pylist(rows)
+    data_dir = catalog.path / "data" / "_meta" / "resources"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    parquet_path = data_dir / "resources.parquet"
+    pq.write_table(pa_table, parquet_path, compression="zstd")
+
+    # Add Iceberg field IDs and re-read for updated schema
+    add_iceberg_field_ids(parquet_path)
+    pa_table = pq.read_table(parquet_path)
+
+    # Create Iceberg metadata
+    iceberg_table = IcebergTable(
+        name="resources",
+        parquet_path="_meta/resources/resources.parquet",
+        schema=_arrow_schema_to_iceberg(pa_table.schema),
+        arrow_schema=pa_table.schema,
+        num_rows=len(rows),
+        file_size_bytes=parquet_path.stat().st_size,
+    )
+
+    from iceberg_catalog import create_table_metadata, generate_manifest_files
+    import uuid
+
+    metadata_dir = data_dir / "metadata"
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    table_uuid = str(uuid.uuid4())
+    data_base_url = f"file://{catalog.path.absolute()}"
+    table_path = "_meta/resources"
+
+    generate_manifest_files(
+        table=iceberg_table,
+        data_base_url=data_base_url,
+        metadata_dir=metadata_dir,
+        arrow_schema=pa_table.schema,
+        snapshot_id=1,
+        sequence_number=1,
+        table_path=table_path,
+        data_file_path=f"file://{parquet_path.absolute()}",
+    )
+
+    metadata = create_table_metadata(iceberg_table, data_base_url, table_uuid, table_path=table_path)
+    metadata_path = metadata_dir / "v1.metadata.json"
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+
+    if verbose:
+        print(f"  Iceberg metadata catalog: {len(resources)} resources → {metadata_path}")
+
+    return metadata_path
+
+
+def regenerate_iceberg_data_catalog(catalog: CatalogConfig, verbose: bool = False) -> int:
+    """Regenerate per-resource Iceberg data tables and the static REST catalog.
+
+    This is a data output: registers each READY resource with Parquet data as
+    a queryable Iceberg table, then generates the full static catalog structure.
+
+    Returns the number of data tables registered.
+    """
+    import shutil
+
+    import pyarrow.parquet as pq
+
+    from iceberg_catalog import (
+        IcebergTable,
+        _arrow_schema_to_iceberg,
+        add_iceberg_field_ids,
+        generate_static_catalog,
+    )
+    from namespace_utils import namespace_to_iceberg
+
+    resources_dir = catalog.path / "resources"
+    if not resources_dir.exists():
+        return 0
+
+    # Collect all resources
+    resources = []
+    for namespace_dir in resources_dir.iterdir():
+        if not namespace_dir.is_dir():
+            continue
+        namespace = namespace_dir.name
+        for resource_file in namespace_dir.glob("*.json"):
+            if resource_file.name.startswith("_"):
+                continue
+            try:
+                with open(resource_file) as f:
+                    resource = _normalize_resource(json.load(f))
+                resource["namespace"] = namespace
+                resources.append(resource)
+            except Exception as e:
+                if verbose:
+                    print(f"  Error reading {resource_file}: {e}")
+
+    if not resources:
+        return 0
+
+    # Also generate the metadata resources table for _meta namespace
+    meta_table = None
+    if catalog.outputs.is_enabled("metadata", "iceberg"):
+        meta_path = generate_iceberg_metadata_catalog(catalog, verbose=verbose)
+        if meta_path:
+            import pyarrow as pa
+            meta_parquet = catalog.path / "data" / "_meta" / "resources" / "resources.parquet"
+            if meta_parquet.exists():
+                meta_pa = pq.read_table(meta_parquet)
+                meta_table = IcebergTable(
+                    name="resources",
+                    parquet_path="_meta/resources/resources.parquet",
+                    schema=_arrow_schema_to_iceberg(meta_pa.schema),
+                    arrow_schema=meta_pa.schema,
+                    num_rows=meta_pa.num_rows,
+                    file_size_bytes=meta_parquet.stat().st_size,
+                )
+
+    tables_by_ns: dict[str, list] = {}
+    if meta_table:
+        tables_by_ns["_meta"] = [meta_table]
+
+    direct_count = 0
+    direct_table_formats = {"geoparquet", "raquet"}
+
+    for r in resources:
+        fmt = r.get("format", "")
+        rtype = r.get("type", "external")
+        name = r.get("name", "")
+        ns = r.get("namespace", "default")
+        assets = r.get("assets", {})
+
+        if fmt not in direct_table_formats:
+            continue
+
+        data_asset = assets.get("data", {}) or assets.get("cache", {})
+        data_url = data_asset.get("href", "")
+        if not data_url:
+            if verbose:
+                print(f"  Skipping {name}: no data URL")
+            continue
+
+        try:
+            iceberg_ns = namespace_to_iceberg(ns)
+            table_data_dir = catalog.path / "data" / iceberg_ns / name
+            table_data_dir.mkdir(parents=True, exist_ok=True)
+            table_parquet_path = table_data_dir / f"{name}.parquet"
+
+            if rtype == "managed" and data_url.startswith("gs://"):
+                local_file = catalog.path / "sample_cities.parquet" if "cities" in name else None
+                if local_file and local_file.exists():
+                    shutil.copy(local_file, table_parquet_path)
+                else:
+                    if verbose:
+                        print(f"  Skipping {name}: managed file not found locally")
+                    continue
+            elif data_url.startswith(("http://", "https://", "gs://")):
+                if verbose:
+                    print(f"  Downloading {name}...")
+                import httpx
+                https_url = data_url.replace("gs://", "https://storage.googleapis.com/") if data_url.startswith("gs://") else data_url
+                response = httpx.get(https_url, follow_redirects=True, timeout=60)
+                response.raise_for_status()
+                with open(table_parquet_path, "wb") as f:
+                    f.write(response.content)
+            else:
+                if verbose:
+                    print(f"  Skipping {name}: unsupported URL scheme")
+                continue
+
+            add_iceberg_field_ids(table_parquet_path)
+            table_pa = pq.read_table(table_parquet_path)
+
+            direct_table = IcebergTable(
+                name=name,
+                parquet_path=f"{iceberg_ns}/{name}/{name}.parquet",
+                schema=_arrow_schema_to_iceberg(table_pa.schema),
+                arrow_schema=table_pa.schema,
+                num_rows=table_pa.num_rows,
+                file_size_bytes=table_parquet_path.stat().st_size,
+            )
+            tables_by_ns.setdefault(ns, []).append(direct_table)
+            direct_count += 1
+
+            if verbose:
+                print(f"  Registered {iceberg_ns}.{name} ({fmt}, {table_pa.num_rows} rows)")
+        except Exception as e:
+            if verbose:
+                print(f"  Error registering {name}: {e}")
+            continue
+
+    # Generate the full static Iceberg catalog
+    if tables_by_ns:
+        data_base_url = f"file://{catalog.path.absolute()}"
+        generate_static_catalog(
+            tables=tables_by_ns,
+            output_dir=str(catalog.path),
+            prefix="catalog",
+            data_base_url=data_base_url,
+            verbose=verbose,
+        )
+
+    return direct_count
+
+
+# =============================================================================
 # Main Update Function
 # =============================================================================
+
+def update_metadata_outputs(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
+    """
+    Incrementally update all enabled metadata outputs for a resource.
+
+    Called after adding/refreshing a resource.
+    """
+    if catalog.outputs.is_enabled("metadata", "stac"):
+        update_stac_for_resource(catalog, resource, namespace, verbose=verbose)
+
+    if catalog.outputs.is_enabled("metadata", "iso19139"):
+        update_iso19139_for_resource(catalog, resource, namespace, verbose=verbose)
+
+    if catalog.outputs.is_enabled("metadata", "web"):
+        update_web_for_resource(catalog, resource, namespace, verbose=verbose)
+
+    # Iceberg metadata catalog is updated during rebuild (batch operation)
+
+
+def update_data_outputs(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
+    """
+    Incrementally update all enabled data outputs for a resource.
+
+    Called after adding/refreshing a resource (Iceberg data is handled inline by the caller).
+    """
+    if catalog.outputs.is_enabled("data", "ducklake"):
+        update_ducklake_for_resource(catalog, resource, namespace, verbose=verbose)
+
 
 def update_all_outputs(catalog: CatalogConfig, resource: dict, namespace: str, verbose: bool = False):
     """
@@ -1564,21 +1865,48 @@ def update_all_outputs(catalog: CatalogConfig, resource: dict, namespace: str, v
 
     Called when a new resource is added via `dataset add` or `import`.
     """
-    outputs = catalog.outputs
+    update_metadata_outputs(catalog, resource, namespace, verbose=verbose)
+    update_data_outputs(catalog, resource, namespace, verbose=verbose)
 
-    # Iceberg is always updated by the main code
 
-    if outputs.get("stac"):
-        update_stac_for_resource(catalog, resource, namespace, verbose=verbose)
+def regenerate_metadata_outputs(catalog: CatalogConfig, verbose: bool = False):
+    """
+    Regenerate all enabled metadata outputs from scratch.
+    """
+    if catalog.outputs.is_enabled("metadata", "stac"):
+        if verbose:
+            print("Regenerating STAC catalog...")
+        generate_stac_catalog(catalog, verbose=verbose)
 
-    if outputs.get("iso19139"):
-        update_iso19139_for_resource(catalog, resource, namespace, verbose=verbose)
+    if catalog.outputs.is_enabled("metadata", "iso19139"):
+        if verbose:
+            print("Regenerating ISO 19139 metadata...")
+        generate_iso19139_catalog(catalog, verbose=verbose)
 
-    if outputs.get("ducklake"):
-        update_ducklake_for_resource(catalog, resource, namespace, verbose=verbose)
+    if catalog.outputs.is_enabled("metadata", "web"):
+        if verbose:
+            print("Regenerating web UI...")
+        generate_web_catalog(catalog, verbose=verbose)
 
-    if outputs.get("web"):
-        update_web_for_resource(catalog, resource, namespace, verbose=verbose)
+    if catalog.outputs.is_enabled("metadata", "iceberg"):
+        if verbose:
+            print("Regenerating Iceberg metadata catalog...")
+        generate_iceberg_metadata_catalog(catalog, verbose=verbose)
+
+
+def regenerate_data_outputs(catalog: CatalogConfig, verbose: bool = False):
+    """
+    Regenerate all enabled data outputs from scratch.
+    """
+    if catalog.outputs.is_enabled("data", "iceberg"):
+        if verbose:
+            print("Regenerating Iceberg data catalog...")
+        regenerate_iceberg_data_catalog(catalog, verbose=verbose)
+
+    if catalog.outputs.is_enabled("data", "ducklake"):
+        if verbose:
+            print("Regenerating DuckLake catalog...")
+        generate_ducklake_catalog(catalog, verbose=verbose)
 
 
 def regenerate_all_outputs(catalog: CatalogConfig, verbose: bool = False):
@@ -1587,24 +1915,5 @@ def regenerate_all_outputs(catalog: CatalogConfig, verbose: bool = False):
 
     Called by `portolan rebuild`.
     """
-    outputs = catalog.outputs
-
-    if outputs.get("stac"):
-        if verbose:
-            print("Regenerating STAC catalog...")
-        generate_stac_catalog(catalog, verbose=verbose)
-
-    if outputs.get("iso19139"):
-        if verbose:
-            print("Regenerating ISO 19139 metadata...")
-        generate_iso19139_catalog(catalog, verbose=verbose)
-
-    if outputs.get("ducklake"):
-        if verbose:
-            print("Regenerating DuckLake catalog...")
-        generate_ducklake_catalog(catalog, verbose=verbose)
-
-    if outputs.get("web"):
-        if verbose:
-            print("Regenerating web UI...")
-        generate_web_catalog(catalog, verbose=verbose)
+    regenerate_metadata_outputs(catalog, verbose=verbose)
+    regenerate_data_outputs(catalog, verbose=verbose)
