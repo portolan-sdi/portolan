@@ -334,13 +334,91 @@ class TestRemoteStore:
         assert isinstance(store, LocalFilesystemStore)
 
     def test_get_remote_store_gs(self):
-        """Test factory creates GCS store for gs:// URL."""
-        from catalog_state import GCSStore
+        """Test factory creates obstore store for gs:// URL."""
+        from catalog_state import ObstoreRemoteStore
         store = get_remote_store("gs://bucket/path")
-        assert isinstance(store, GCSStore)
+        assert isinstance(store, ObstoreRemoteStore)
 
     def test_get_remote_store_s3(self):
-        """Test factory creates S3 store for s3:// URL."""
-        from catalog_state import S3Store
+        """Test factory creates obstore store for s3:// URL."""
+        from catalog_state import ObstoreRemoteStore
         store = get_remote_store("s3://bucket/path")
-        assert isinstance(store, S3Store)
+        assert isinstance(store, ObstoreRemoteStore)
+
+    def test_get_remote_store_az(self):
+        """Test factory creates obstore store for az:// URL."""
+        from catalog_state import ObstoreRemoteStore
+        store = get_remote_store("az://container/path", {"account_name": "test"})
+        assert isinstance(store, ObstoreRemoteStore)
+
+    def test_get_remote_store_gcs_https(self):
+        """Test factory creates obstore store for GCS HTTPS URL."""
+        from catalog_state import ObstoreRemoteStore
+        store = get_remote_store("https://storage.googleapis.com/bucket/path")
+        assert isinstance(store, ObstoreRemoteStore)
+
+    def test_obstore_remote_store_memory(self):
+        """Test ObstoreRemoteStore operations using in-memory store."""
+        from obstore.store import MemoryStore
+        from catalog_state import ObstoreRemoteStore
+
+        mem = MemoryStore()
+        store = ObstoreRemoteStore("memory://test", _store=mem)
+
+        # Initially empty
+        manifest, hash_ = store.get_manifest()
+        assert manifest is None
+        assert hash_ is None
+        assert store.get_resource("foo.json") is None
+
+        # Put and get resource
+        store.put_resource("resources/test/item.json", b'{"name":"test"}')
+        data = store.get_resource("resources/test/item.json")
+        assert data == b'{"name":"test"}'
+
+        # Put and get manifest
+        m = Manifest(resources=[ResourceEntry(path="resources/test/item.json", sha256="abc")])
+        h = store.put_manifest(m)
+        loaded, loaded_h = store.get_manifest()
+        assert loaded is not None
+        assert len(loaded.resources) == 1
+        assert h == loaded_h
+
+        # Delete
+        store.delete_resource("resources/test/item.json")
+        assert store.get_resource("resources/test/item.json") is None
+
+        # Exists (memory store always "exists")
+        assert store.exists()
+
+    def test_parse_bucket_prefix(self):
+        """Test _parse_bucket_prefix helper."""
+        from catalog_state import _parse_bucket_prefix
+        assert _parse_bucket_prefix("bucket/some/prefix") == ("bucket", "some/prefix")
+        assert _parse_bucket_prefix("bucket") == ("bucket", "")
+        assert _parse_bucket_prefix("bucket/") == ("bucket", "")
+
+    def test_s3_kwargs_mapping(self):
+        """Test _s3_kwargs maps options correctly for S3-compatible services."""
+        from catalog_state import _s3_kwargs
+        opts = {
+            "region": "eu-west-1",
+            "endpoint_url": "https://minio.example.com",
+            "access_key_id": "AKID",
+            "secret_access_key": "SECRET",
+        }
+        kwargs = _s3_kwargs(opts)
+        assert kwargs["region"] == "eu-west-1"
+        assert kwargs["endpoint"] == "https://minio.example.com"
+        assert kwargs["access_key_id"] == "AKID"
+        assert kwargs["secret_access_key"] == "SECRET"
+        assert kwargs["virtual_hosted_style_request"] is False
+
+    def test_s3_kwargs_no_endpoint(self):
+        """Test _s3_kwargs without endpoint_url doesn't set virtual_hosted_style_request."""
+        from catalog_state import _s3_kwargs
+        opts = {"region": "us-east-1"}
+        kwargs = _s3_kwargs(opts)
+        assert kwargs["region"] == "us-east-1"
+        assert "virtual_hosted_style_request" not in kwargs
+        assert "endpoint" not in kwargs

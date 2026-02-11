@@ -426,8 +426,8 @@ class TestChangeDetection:
 class TestTilesKind:
     """Test suite for tiles kind (PMTiles)."""
 
-    def test_pmtiles_detected_as_tiles(self, initialized_catalog):
-        """PMTiles URL should be detected as tiles kind and catalog-only."""
+    def test_remote_pmtiles_detected_as_catalog_only(self, initialized_catalog):
+        """Remote PMTiles URL should be detected as tiles kind and catalog-only."""
         runner = CliRunner()
         with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
             result = runner.invoke(
@@ -436,14 +436,15 @@ class TestTilesKind:
                  "--name", "test_tiles", "--namespace", "demo", "-v"],
             )
             assert result.exit_code == 0
-            assert "pmtiles" in result.output.lower()
+            assert "tiles" in result.output.lower()
 
             # Check resource was created with kind=tiles
             resource_path = initialized_catalog.path / "resources" / "demo" / "test_tiles.json"
             with open(resource_path) as f:
                 data = json.load(f)
             assert data["kind"] == "tiles"
-            # Should be registered (catalog-only, no snapshot/iceberg)
+            assert data["origin"]["type"] == "tiles"
+            # Remote tiles should be registered (catalog-only, no snapshot/iceberg)
             assert "snapshot" not in data.get("assets", {}) or data["assets"].get("snapshot") is None
 
     def test_pointcloud_kind_schema_valid(self):
@@ -454,6 +455,41 @@ class TestTilesKind:
             data = {"name": "test", "kind": kind}
             errors = validate_resource(data)
             assert errors == [], f"kind='{kind}' should be valid"
+
+
+class TestTiles3dKind:
+    """Test suite for 3D Tiles kind."""
+
+    def test_tiles3d_explicit_type(self, initialized_catalog):
+        """--type tiles3d should register as tiles kind with tiles3d origin."""
+        runner = CliRunner()
+        with runner.isolated_filesystem(temp_dir=initialized_catalog.path.parent):
+            result = runner.invoke(
+                cli,
+                ["add", "https://example.com/buildings/tileset.json",
+                 "--type", "tiles3d",
+                 "--name", "test_3dtiles", "--namespace", "demo",
+                 "--catalog-only", "-v"],
+            )
+            assert result.exit_code == 0
+
+            resource_path = initialized_catalog.path / "resources" / "demo" / "test_3dtiles.json"
+            with open(resource_path) as f:
+                data = json.load(f)
+            assert data["kind"] == "tiles"
+            assert data["origin"]["type"] == "tiles3d"
+
+    def test_tiles3d_schema_valid(self):
+        """tiles3d should be a valid origin type in schema."""
+        from schemas import validate_resource
+
+        data = {
+            "name": "test",
+            "kind": "tiles",
+            "origin": {"type": "tiles3d", "url": "https://example.com/tileset.json"},
+        }
+        errors = validate_resource(data)
+        assert errors == [], f"tiles3d origin type should be valid: {errors}"
 
 
 class TestMetadataCommands:
@@ -590,6 +626,14 @@ class TestParseRemoteUrl:
         scheme, path = _parse_remote_url("https://example.com/data/file.parquet")
         assert scheme == "https"
         assert path == "https://example.com/data/file.parquet"
+
+    def test_az_url(self):
+        """Test parsing az:// URLs."""
+        from portolan import _parse_remote_url
+
+        scheme, path = _parse_remote_url("az://mycontainer/data/file.parquet")
+        assert scheme == "az"
+        assert path == "mycontainer/data/file.parquet"
 
     def test_local_file(self):
         """Test parsing local file paths."""

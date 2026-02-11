@@ -303,252 +303,179 @@ class LocalFilesystemStore(RemoteStore):
         return self.root.exists()
 
 
-class GCSStore(RemoteStore):
-    """Remote store using Google Cloud Storage."""
+def _parse_bucket_prefix(path: str) -> tuple[str, str]:
+    """Split 'bucket/some/prefix' into ('bucket', 'some/prefix')."""
+    parts = path.split("/", 1)
+    bucket = parts[0]
+    prefix = parts[1].rstrip("/") if len(parts) > 1 else ""
+    return bucket, prefix
 
-    def __init__(self, url: str, options: dict | None = None):
-        # Parse gs://bucket/prefix
-        if url.startswith("gs://"):
-            url = url[5:]
-        parts = url.split("/", 1)
-        self.bucket = parts[0]
-        self.prefix = parts[1] if len(parts) > 1 else ""
+
+def _s3_kwargs(options: dict) -> dict:
+    """Map user options to obstore S3Store kwargs."""
+    kwargs = {}
+    if "region" in options:
+        kwargs["region"] = options["region"]
+    if "endpoint_url" in options:
+        kwargs["endpoint"] = options["endpoint_url"]
+        # S3-compatible services default to path-style requests
+        kwargs["virtual_hosted_style_request"] = options.get(
+            "virtual_hosted_style_request", False
+        )
+    if "access_key_id" in options:
+        kwargs["access_key_id"] = options["access_key_id"]
+    if "secret_access_key" in options:
+        kwargs["secret_access_key"] = options["secret_access_key"]
+    if options.get("anonymous"):
+        kwargs["skip_signature"] = True
+    # Allow HTTP for local S3-compatible services (e.g., MinIO)
+    if options.get("allow_http"):
+        kwargs["client_options"] = {"allow_http": True}
+    return kwargs
+
+
+def _gcs_kwargs(options: dict) -> dict:
+    """Map user options to obstore GCSStore kwargs."""
+    kwargs = {}
+    if "service_account_path" in options:
+        kwargs["service_account_path"] = options["service_account_path"]
+    if options.get("anonymous"):
+        kwargs["skip_signature"] = True
+    return kwargs
+
+
+def _azure_kwargs(options: dict) -> dict:
+    """Map user options to obstore AzureStore kwargs."""
+    kwargs = {}
+    if "account_name" in options:
+        kwargs["account_name"] = options["account_name"]
+    if "account_key" in options:
+        kwargs["account_key"] = options["account_key"]
+    if "sas_token" in options:
+        kwargs["sas_token"] = options["sas_token"]
+    if options.get("anonymous"):
+        kwargs["skip_signature"] = True
+    return kwargs
+
+
+def _build_obstore(url: str, options: dict):
+    """Create an obstore store instance from a URL and options dict.
+
+    Supports:
+    - s3://bucket/prefix (and S3-compatible via endpoint_url option)
+    - gs://bucket/prefix
+    - az://container/prefix
+    - https://storage.googleapis.com/bucket/prefix (auto-detected as GCS)
+    """
+    from obstore.store import AzureStore as ObAzure
+    from obstore.store import GCSStore as ObGCS
+    from obstore.store import S3Store as ObS3
+
+    if url.startswith("s3://"):
+        bucket, prefix = _parse_bucket_prefix(url[5:])
+        kwargs = _s3_kwargs(options)
+        return ObS3(bucket, prefix=prefix or None, **kwargs)
+
+    if url.startswith("gs://"):
+        bucket, prefix = _parse_bucket_prefix(url[5:])
+        kwargs = _gcs_kwargs(options)
+        return ObGCS(bucket, prefix=prefix or None, **kwargs)
+
+    if url.startswith("az://"):
+        container, prefix = _parse_bucket_prefix(url[5:])
+        kwargs = _azure_kwargs(options)
+        return ObAzure(container, prefix=prefix or None, **kwargs)
+
+    if url.startswith("https://storage.googleapis.com/"):
+        bucket_path = url.replace("https://storage.googleapis.com/", "")
+        bucket, prefix = _parse_bucket_prefix(bucket_path)
+        kwargs = _gcs_kwargs(options)
+        return ObGCS(bucket, prefix=prefix or None, **kwargs)
+
+    raise ValueError(f"Unsupported remote URL for obstore: {url}")
+
+
+class ObstoreRemoteStore(RemoteStore):
+    """Remote store backed by obstore (S3, GCS, Azure, and S3-compatible services).
+
+    Works with AWS S3, Google Cloud Storage, Azure Blob Storage,
+    and any S3-compatible service (Cloudflare R2, MinIO, OVH, Wasabi,
+    DigitalOcean Spaces, Backblaze B2, etc.) via the endpoint_url option.
+    """
+
+    def __init__(self, url: str, options: dict | None = None, _store=None):
+        self.url = url
         self.options = options or {}
-
-        # Convert to HTTPS URL for fetching
-        self.base_url = f"https://storage.googleapis.com/{self.bucket}"
-        if self.prefix:
-            self.base_url += f"/{self.prefix}"
-
-    def _get_path(self, path: str) -> str:
-        """Get full path with prefix."""
-        if self.prefix:
-            return f"{self.prefix}/{path}"
-        return path
+        self._store = _store or _build_obstore(url, self.options)
 
     def get_manifest(self) -> tuple[Manifest | None, str | None]:
-        import time
+        import obstore as obs
 
-        import httpx
-
-        # Add cache-busting query param to avoid stale cached responses
-        url = f"{self.base_url}/manifest.json?_t={int(time.time())}"
-        headers = {"Cache-Control": "no-cache"}
         try:
-            response = httpx.get(url, follow_redirects=True, timeout=30, headers=headers)
-            if response.status_code == 404:
-                return None, None
-            response.raise_for_status()
-            content = response.text
+            result = obs.get(self._store, "manifest.json")
+            content = result.bytes().to_bytes().decode("utf-8")
             manifest = Manifest.from_json(content)
-            manifest_hash = compute_hash(content.encode('utf-8'))
+            manifest_hash = compute_hash(content.encode("utf-8"))
             return manifest, manifest_hash
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return None, None
-            raise
-
-    def put_manifest(self, manifest: Manifest) -> str:
-        import subprocess
-        import tempfile
-
-        content = manifest.to_json()
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(content)
-            temp_path = f.name
-
-        try:
-            gcs_path = f"gs://{self.bucket}/{self._get_path('manifest.json')}"
-            subprocess.run(
-                ["gsutil", "cp", temp_path, gcs_path],
-                capture_output=True,
-                check=True
-            )
-        finally:
-            Path(temp_path).unlink()
-
-        return compute_hash(content.encode('utf-8'))
-
-    def get_resource(self, path: str) -> bytes | None:
-        import time
-
-        import httpx
-
-        # Add cache-busting query param
-        url = f"{self.base_url}/{path}?_t={int(time.time())}"
-        headers = {"Cache-Control": "no-cache"}
-        try:
-            response = httpx.get(url, follow_redirects=True, timeout=30, headers=headers)
-            if response.status_code == 404:
-                return None
-            response.raise_for_status()
-            return response.content
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
-                return None
-            raise
-
-    def put_resource(self, path: str, data: bytes):
-        import subprocess
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            f.write(data)
-            temp_path = f.name
-
-        try:
-            gcs_path = f"gs://{self.bucket}/{self._get_path(path)}"
-            subprocess.run(
-                ["gsutil", "cp", temp_path, gcs_path],
-                capture_output=True,
-                check=True
-            )
-        finally:
-            Path(temp_path).unlink()
-
-    def delete_resource(self, path: str):
-        import subprocess
-
-        gcs_path = f"gs://{self.bucket}/{self._get_path(path)}"
-        subprocess.run(
-            ["gsutil", "rm", "-f", gcs_path],
-            capture_output=True,
-            check=False  # Don't fail if file doesn't exist
-        )
-
-    def exists(self) -> bool:
-        import subprocess
-
-        result = subprocess.run(
-            ["gsutil", "ls", f"gs://{self.bucket}"],
-            capture_output=True
-        )
-        return result.returncode == 0
-
-
-class S3Store(RemoteStore):
-    """Remote store using Amazon S3."""
-
-    def __init__(self, url: str, options: dict | None = None):
-        # Parse s3://bucket/prefix
-        if url.startswith("s3://"):
-            url = url[5:]
-        parts = url.split("/", 1)
-        self.bucket = parts[0]
-        self.prefix = parts[1] if len(parts) > 1 else ""
-        self.options = options or {}
-        self.region = options.get("region", "us-east-1") if options else "us-east-1"
-
-    def _get_path(self, path: str) -> str:
-        if self.prefix:
-            return f"{self.prefix}/{path}"
-        return path
-
-    def get_manifest(self) -> tuple[Manifest | None, str | None]:
-        import subprocess
-
-        s3_path = f"s3://{self.bucket}/{self._get_path('manifest.json')}"
-        result = subprocess.run(
-            ["aws", "s3", "cp", s3_path, "-"],
-            capture_output=True
-        )
-
-        if result.returncode != 0:
+        except FileNotFoundError:
             return None, None
 
-        content = result.stdout.decode('utf-8')
-        manifest = Manifest.from_json(content)
-        manifest_hash = compute_hash(content.encode('utf-8'))
-        return manifest, manifest_hash
-
     def put_manifest(self, manifest: Manifest) -> str:
-        import subprocess
-        import tempfile
+        import obstore as obs
 
         content = manifest.to_json()
-
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(content)
-            temp_path = f.name
-
-        try:
-            s3_path = f"s3://{self.bucket}/{self._get_path('manifest.json')}"
-            subprocess.run(
-                ["aws", "s3", "cp", temp_path, s3_path],
-                capture_output=True,
-                check=True
-            )
-        finally:
-            Path(temp_path).unlink()
-
-        return compute_hash(content.encode('utf-8'))
+        obs.put(self._store, "manifest.json", content.encode("utf-8"))
+        return compute_hash(content.encode("utf-8"))
 
     def get_resource(self, path: str) -> bytes | None:
-        import subprocess
-
-        s3_path = f"s3://{self.bucket}/{self._get_path(path)}"
-        result = subprocess.run(
-            ["aws", "s3", "cp", s3_path, "-"],
-            capture_output=True
-        )
-
-        if result.returncode != 0:
-            return None
-        return result.stdout
-
-    def put_resource(self, path: str, data: bytes):
-        import subprocess
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(mode='wb', delete=False) as f:
-            f.write(data)
-            temp_path = f.name
+        import obstore as obs
 
         try:
-            s3_path = f"s3://{self.bucket}/{self._get_path(path)}"
-            subprocess.run(
-                ["aws", "s3", "cp", temp_path, s3_path],
-                capture_output=True,
-                check=True
-            )
-        finally:
-            Path(temp_path).unlink()
+            result = obs.get(self._store, path)
+            return result.bytes().to_bytes()
+        except FileNotFoundError:
+            return None
+
+    def put_resource(self, path: str, data: bytes):
+        import obstore as obs
+
+        obs.put(self._store, path, data)
 
     def delete_resource(self, path: str):
-        import subprocess
+        import obstore as obs
 
-        s3_path = f"s3://{self.bucket}/{self._get_path(path)}"
-        subprocess.run(
-            ["aws", "s3", "rm", s3_path],
-            capture_output=True,
-            check=False
-        )
+        try:
+            obs.delete(self._store, path)
+        except FileNotFoundError:
+            pass  # Already gone
 
     def exists(self) -> bool:
-        import subprocess
+        import obstore as obs
 
-        result = subprocess.run(
-            ["aws", "s3", "ls", f"s3://{self.bucket}"],
-            capture_output=True
-        )
-        return result.returncode == 0
+        try:
+            # Try listing root — if bucket/container doesn't exist, this raises
+            list(obs.list(self._store, prefix=""))
+            return True
+        except Exception:
+            return False
 
 
 def get_remote_store(url: str, options: dict | None = None) -> RemoteStore:
-    """Factory function to create appropriate remote store for URL."""
+    """Factory function to create appropriate remote store for URL.
+
+    Supports:
+    - file:// or absolute paths → LocalFilesystemStore
+    - s3://, gs://, az:// → ObstoreRemoteStore (native support)
+    - https://storage.googleapis.com/ → ObstoreRemoteStore (auto-detected as GCS)
+
+    For S3-compatible services (R2, MinIO, OVH, etc.), pass endpoint_url in options:
+        options={"endpoint_url": "https://<account>.r2.cloudflarestorage.com"}
+    """
     if url.startswith("file://") or url.startswith("/"):
         return LocalFilesystemStore(url)
-    elif url.startswith("gs://"):
-        return GCSStore(url, options)
-    elif url.startswith("s3://"):
-        return S3Store(url, options)
-    elif url.startswith("https://storage.googleapis.com/"):
-        # Convert to gs:// format
-        bucket_path = url.replace("https://storage.googleapis.com/", "")
-        return GCSStore(f"gs://{bucket_path}", options)
-    else:
-        raise ValueError(f"Unsupported remote URL: {url}")
+    if url.startswith(("gs://", "s3://", "az://", "https://storage.googleapis.com/")):
+        return ObstoreRemoteStore(url, options)
+    raise ValueError(f"Unsupported remote URL: {url}")
 
 
 # =============================================================================

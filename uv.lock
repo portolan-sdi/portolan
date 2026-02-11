@@ -935,7 +935,7 @@ requires-dist = [
     { name = "geopandas", specifier = ">=1.1.2" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "jsonschema", specifier = ">=4.0" },
-    { name = "obstore", specifier = ">=0.3.0" },
+    { name = "obstore", specifier = ">=0.4.0" },
     { name = "pyarrow", specifier = ">=14.0.0" },
     { name = "pyiceberg", specifier = ">=0.10.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },

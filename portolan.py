@@ -13,13 +13,15 @@ Local-first workflow:
     portolan rebuild                        # Rebuild all output formats
 
 Supported storage backends:
+    - s3://bucket/path          (AWS S3 and S3-compatible: R2, MinIO, OVH, Wasabi, etc.)
     - gs://bucket/path          (Google Cloud Storage)
-    - s3://bucket/path          (AWS S3)
+    - az://container/path       (Azure Blob Storage)
     - file:///local/path        (Local filesystem)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from dataclasses import dataclass, field
@@ -154,6 +156,7 @@ def _parse_remote_url(url: str) -> tuple[str, str]:
     Supports:
     - s3://bucket/path
     - gs://bucket/path
+    - az://container/path
     - https://host/path (including S3/GCS public URLs)
 
     Returns:
@@ -163,6 +166,8 @@ def _parse_remote_url(url: str) -> tuple[str, str]:
         return "s3", url[5:]
     if url.startswith("gs://"):
         return "gs", url[5:]
+    if url.startswith("az://"):
+        return "az", url[5:]
     if url.startswith("https://") or url.startswith("http://"):
         # Detect S3 public URLs: https://bucket.s3.amazonaws.com/path
         # or https://bucket.s3.region.amazonaws.com/path
@@ -185,30 +190,39 @@ def _parse_remote_url(url: str) -> tuple[str, str]:
     return "file", url
 
 
+def _get_obstore_fsspec(scheme: str, region: str | None = None):
+    """Create an obstore FsspecStore for anonymous read access.
+
+    Returns an fsspec-compatible filesystem backed by obstore.
+    """
+    import os
+
+    from obstore.fsspec import FsspecStore
+
+    if scheme == "s3":
+        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+        return FsspecStore("s3", skip_signature=True, region=s3_region)
+    if scheme == "gs":
+        return FsspecStore("gcs", skip_signature=True)
+    if scheme == "az":
+        return FsspecStore("az", skip_signature=True)
+    raise ValueError(f"Unsupported scheme for obstore filesystem: {scheme}")
+
+
 def _open_remote_parquet(url: str, region: str | None = None):
     """
     Open a remote Parquet file and return a ParquetFile object.
 
     Only reads the metadata footer (range request), not the full file.
-    Supports s3://, gs://, and https:// URLs.
+    Supports s3://, gs://, az://, and https:// URLs.
     """
-    import os
-
     import pyarrow.parquet as pq
 
     scheme, path = _parse_remote_url(url)
 
-    if scheme == "s3":
-        from pyarrow.fs import S3FileSystem
-        # Try to infer region from bucket name or use provided/env value
-        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-        s3fs = S3FileSystem(anonymous=True, region=s3_region)
-        return pq.ParquetFile(path, filesystem=s3fs)
-
-    if scheme == "gs":
-        from pyarrow.fs import GcsFileSystem
-        gcsfs = GcsFileSystem(anonymous=True)
-        return pq.ParquetFile(path, filesystem=gcsfs)
+    if scheme in ("s3", "gs", "az"):
+        fs = _get_obstore_fsspec(scheme, region=region)
+        return pq.ParquetFile(path, filesystem=fs)
 
     if scheme == "https":
         import fsspec
@@ -227,6 +241,7 @@ def _list_remote_files(glob_url: str, region: str | None = None, verbose: bool =
     """
     import os
 
+    import obstore as obs
     import pyarrow.parquet as pq
 
     scheme, path = _parse_remote_url(glob_url)
@@ -240,49 +255,45 @@ def _list_remote_files(glob_url: str, region: str | None = None, verbose: bool =
         prefix = path
 
     files = []
+    scheme_prefix_map = {"s3": "s3://", "gs": "gs://", "az": "az://"}
 
-    if scheme == "s3":
-        from pyarrow.fs import S3FileSystem, FileSelector
-        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
-        s3fs = S3FileSystem(anonymous=True, region=s3_region)
-        selector = FileSelector(prefix, recursive=False)
-        file_infos = s3fs.get_file_info(selector)
+    if scheme in ("s3", "gs", "az"):
+        from obstore.store import AzureStore as ObAzure
+        from obstore.store import GCSStore as ObGCS
+        from obstore.store import S3Store as ObS3
 
-        for fi in file_infos:
-            if fi.is_file and fi.path.endswith(".parquet"):
+        bucket, obj_prefix = prefix.split("/", 1) if "/" in prefix else (prefix, "")
+
+        if scheme == "s3":
+            s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-west-2")
+            store = ObS3(bucket, skip_signature=True, region=s3_region)
+        elif scheme == "gs":
+            store = ObGCS(bucket, skip_signature=True)
+        else:
+            store = ObAzure(bucket, skip_signature=True)
+
+        fs = _get_obstore_fsspec(scheme, region=region)
+
+        for chunk in obs.list(store, prefix=obj_prefix):
+            for meta in chunk:
+                obj_path = meta["path"]
+                if not obj_path.endswith(".parquet"):
+                    continue
+                full_path = f"{bucket}/{obj_path}"
                 entry = {
-                    "path": f"s3://{fi.path}",
-                    "size": fi.size,
+                    "path": f"{scheme_prefix_map[scheme]}{full_path}",
+                    "size": meta["size"],
                 }
-                # Read row count from Parquet footer (range request only)
                 try:
-                    pf = pq.ParquetFile(fi.path, filesystem=s3fs)
+                    pf = pq.ParquetFile(full_path, filesystem=fs)
                     entry["record_count"] = pf.metadata.num_rows
                 except Exception:
                     entry["record_count"] = 0
                 files.append(entry)
                 if verbose:
-                    name = fi.path.split("/")[-1]
-                    print(f"    {name}: {fi.size / 1024 / 1024:.0f} MB, {entry['record_count']:,} rows")
-
-    elif scheme == "gs":
-        from pyarrow.fs import GcsFileSystem, FileSelector
-        gcsfs = GcsFileSystem(anonymous=True)
-        selector = FileSelector(prefix, recursive=False)
-        file_infos = gcsfs.get_file_info(selector)
-
-        for fi in file_infos:
-            if fi.is_file and fi.path.endswith(".parquet"):
-                entry = {
-                    "path": f"gs://{fi.path}",
-                    "size": fi.size,
-                }
-                try:
-                    pf = pq.ParquetFile(fi.path, filesystem=gcsfs)
-                    entry["record_count"] = pf.metadata.num_rows
-                except Exception:
-                    entry["record_count"] = 0
-                files.append(entry)
+                    name = obj_path.split("/")[-1]
+                    print(f"    {name}: {meta['size'] / 1024 / 1024:.0f} MB, "
+                          f"{entry['record_count']:,} rows")
 
     return files
 
@@ -291,20 +302,27 @@ def _get_remote_file_size(url: str, region: str | None = None) -> int:
     """Get the file size of a remote file via HEAD request or filesystem info."""
     import os
 
+    import obstore as obs
+
     scheme, path = _parse_remote_url(url)
 
-    if scheme == "s3":
-        from pyarrow.fs import S3FileSystem
-        s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-        s3fs = S3FileSystem(anonymous=True, region=s3_region)
-        info = s3fs.get_file_info(path)
-        return info.size
+    if scheme in ("s3", "gs", "az"):
+        from obstore.store import AzureStore as ObAzure
+        from obstore.store import GCSStore as ObGCS
+        from obstore.store import S3Store as ObS3
 
-    if scheme == "gs":
-        from pyarrow.fs import GcsFileSystem
-        gcsfs = GcsFileSystem(anonymous=True)
-        info = gcsfs.get_file_info(path)
-        return info.size
+        bucket, key = path.split("/", 1) if "/" in path else (path, "")
+
+        if scheme == "s3":
+            s3_region = region or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+            store = ObS3(bucket, skip_signature=True, region=s3_region)
+        elif scheme == "gs":
+            store = ObGCS(bucket, skip_signature=True)
+        else:
+            store = ObAzure(bucket, skip_signature=True)
+
+        meta = obs.head(store, key)
+        return meta["size"]
 
     if scheme == "https":
         import httpx
@@ -501,13 +519,13 @@ def _detect_source_type(source: str) -> str:
         ext = Path(source).suffix.lower()
         if ext in (".laz", ".las", ".copc"):
             return "pointcloud"
-        if ext == ".pmtiles":
-            return "pmtiles"
+        if ext in (".pmtiles", ".mbtiles"):
+            return "tiles"
         return "file"
 
-    # PMTiles (cloud-native tiles)
-    if source_lower.endswith(".pmtiles"):
-        return "pmtiles"
+    # Tile formats (PMTiles, MBTiles)
+    if source_lower.endswith((".pmtiles", ".mbtiles")):
+        return "tiles"
 
     # Remote GeoParquet / Parquet
     if source_lower.endswith((".parquet", ".geoparquet")):
@@ -562,9 +580,13 @@ def _detect_default_action(origin_type: str, source_url: str, catalog_only: bool
     if catalog_only:
         return "catalog_only"
 
-    # Tiles are catalog-only by design (discoverable, not queryable)
-    if origin_type == "pmtiles":
-        return "catalog_only"
+    # Remote tiles are catalog-only by default (too large to download)
+    # Local tiles go through tilequet-io extraction
+    # 3D Tiles are always remote and go through tilequet-io conversion
+    if origin_type == "tiles":
+        is_remote = source_url.startswith(("s3://", "gs://", "http://", "https://")) if source_url else False
+        if is_remote and not cache_data:
+            return "catalog_only"
 
     is_remote = source_url.startswith(("s3://", "gs://", "http://", "https://")) if source_url else False
     is_cloud_native = is_remote and _is_parquet_or_copc(source_url)
@@ -585,8 +607,6 @@ def _detect_default_action(origin_type: str, source_url: str, catalog_only: bool
 def _normalize_origin_type(origin_type: str) -> str:
     """Map unified type names to internal origin types."""
     if origin_type == "geoparquet":
-        return "file"
-    if origin_type == "pmtiles":
         return "file"
     return origin_type
 
@@ -613,7 +633,7 @@ def _register_resource(catalog, origin_type, url, name, namespace,
         kind = "raster"
     elif origin_type == "pointcloud":
         kind = "pointcloud"
-    elif origin_type == "pmtiles":
+    elif origin_type in ("tiles", "tiles3d"):
         kind = "tiles"
 
     # Normalize origin type for internal storage
@@ -627,7 +647,7 @@ def _register_resource(catalog, origin_type, url, name, namespace,
         url = None
 
     # Resolve path for local files
-    if internal_type in ("file", "pointcloud") and url and not any(url.startswith(p) for p in ("s3://", "gs://", "https://", "http://")):
+    if internal_type in ("file", "pointcloud", "tiles", "tiles3d") and url and not any(url.startswith(p) for p in ("s3://", "gs://", "https://", "http://")):
         resolved_url = str(Path(url).resolve())
     elif internal_type in ("postgres", "oracle"):
         resolved_url = None
@@ -1044,19 +1064,26 @@ def add_resource(ctx, source: str, origin_type: str | None, name: str | None,
         # Capture source fingerprint for future change detection
         source_fp = _get_source_fingerprint(origin_type, url)
 
+        # Determine snapshot format based on kind
+        snapshot_format = {
+            "raster": "raquet",
+            "tiles": "tilequet",
+            "pointcloud": "parquet",
+        }.get(resource.kind, "geoparquet")
+
         # Update resource with snapshot
         resource.assets.snapshot = SnapshotAsset(
             href=str(output_path.relative_to(catalog.path)),
             type="application/vnd.apache.parquet",
             taken_at=datetime.now(timezone.utc).isoformat(),
-            format="geoparquet",
+            format=snapshot_format,
             source_fingerprint=source_fp,
         )
         resource.metadata.derived = derived
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
         # Auto-create Iceberg for all parquet-based formats
-        parquet_formats = {"geoparquet", "raquet", "parquet"}
+        parquet_formats = {"geoparquet", "raquet", "parquet", "tilequet"}
         if resource.assets.snapshot.format in parquet_formats:
             _create_iceberg_metadata(resource, name, catalog, namespace,
                                       parquet_path=output_path, verbose=verbose)
@@ -1222,17 +1249,23 @@ def refresh_resource(ctx, resource_name: str | None, namespace: str, all_resourc
         # Store fingerprint for future change detection
         new_fp = _get_source_fingerprint(resource.origin.type, url)
 
+        snapshot_format = {
+            "raster": "raquet",
+            "tiles": "tilequet",
+            "pointcloud": "parquet",
+        }.get(resource.kind, "geoparquet")
+
         resource.assets.snapshot = SnapshotAsset(
             href=str(output_path.relative_to(catalog.path)),
             type="application/vnd.apache.parquet",
             taken_at=datetime.now(timezone.utc).isoformat(),
-            format="geoparquet",
+            format=snapshot_format,
             source_fingerprint=new_fp,
         )
         resource.metadata.derived = derived
         resource.updated_at = datetime.now(timezone.utc).isoformat()
 
-        parquet_formats = {"geoparquet", "raquet", "parquet"}
+        parquet_formats = {"geoparquet", "raquet", "parquet", "tilequet"}
         if resource.assets.snapshot.format in parquet_formats:
             _create_iceberg_metadata(resource, resource_name, catalog, namespace,
                                       parquet_path=output_path, verbose=verbose)
@@ -1995,72 +2028,203 @@ def control_export(ctx, output: str):
 
 # ============== CORS HELPER ==============
 
-def setup_cors_for_url(url: str):
-    """Configure CORS for a storage URL to enable browser access."""
-    import subprocess
-    import tempfile
+def _aws_sigv4_sign(method: str, url: str, headers: dict, payload: bytes,
+                     region: str, access_key: str, secret_key: str, service: str = "s3") -> dict:
+    """Sign an HTTP request using AWS Signature V4.
+
+    Returns dict of authorization headers to merge into the request.
+    """
+    import hmac
+    from datetime import datetime, timezone
+    from urllib.parse import urlparse
+
+    now = datetime.now(timezone.utc)
+    datestamp = now.strftime("%Y%m%d")
+    amzdate = now.strftime("%Y%m%dT%H%M%SZ")
+
+    parsed = urlparse(url)
+    host = parsed.hostname
+    canonical_uri = parsed.path or "/"
+    canonical_querystring = parsed.query or ""
+
+    payload_hash = hashlib.sha256(payload).hexdigest()
+
+    # Build canonical headers
+    sign_headers = {
+        "host": host,
+        "x-amz-content-sha256": payload_hash,
+        "x-amz-date": amzdate,
+    }
+    for k, v in headers.items():
+        sign_headers[k.lower()] = v
+
+    sorted_header_keys = sorted(sign_headers.keys())
+    canonical_headers = "".join(f"{k}:{sign_headers[k]}\n" for k in sorted_header_keys)
+    signed_headers = ";".join(sorted_header_keys)
+
+    canonical_request = "\n".join([
+        method, canonical_uri, canonical_querystring,
+        canonical_headers, signed_headers, payload_hash,
+    ])
+
+    credential_scope = f"{datestamp}/{region}/{service}/aws4_request"
+    string_to_sign = "\n".join([
+        "AWS4-HMAC-SHA256", amzdate, credential_scope,
+        hashlib.sha256(canonical_request.encode("utf-8")).hexdigest(),
+    ])
+
+    def _sign(key, msg):
+        return hmac.new(key, msg.encode("utf-8"), hashlib.sha256).digest()
+
+    signing_key = _sign(
+        _sign(_sign(_sign(f"AWS4{secret_key}".encode("utf-8"), datestamp), region), service),
+        "aws4_request",
+    )
+    signature = hmac.new(signing_key, string_to_sign.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    authorization = (
+        f"AWS4-HMAC-SHA256 Credential={access_key}/{credential_scope}, "
+        f"SignedHeaders={signed_headers}, Signature={signature}"
+    )
+
+    return {
+        "Authorization": authorization,
+        "x-amz-date": amzdate,
+        "x-amz-content-sha256": payload_hash,
+    }
+
+
+def setup_cors_for_url(url: str, options: dict | None = None):
+    """Configure CORS for a storage URL to enable browser access.
+
+    For S3-compatible services (AWS S3, R2, MinIO, OVH, etc.), uses the S3
+    PutBucketCors API via httpx with AWS SigV4 signing.
+    For GCS, uses the GCS JSON API via httpx.
+    For Azure, skips (CORS is configured at the storage account level).
+    """
+    import base64
+    import os
+
+    import httpx
+
+    opts = options or {}
 
     if url.startswith("gs://"):
-        # Google Cloud Storage
+        # Google Cloud Storage — use GCS JSON API
         bucket = url[5:].split("/")[0]
-
-        cors_config = [
-            {
+        cors_config = {
+            "cors": [{
                 "origin": ["*"],
                 "method": ["GET", "HEAD", "OPTIONS"],
-                "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Access-Control-Allow-Origin"],
-                "maxAgeSeconds": 3600
-            }
-        ]
+                "responseHeader": [
+                    "Content-Type", "Content-Length", "Content-Range",
+                    "Access-Control-Allow-Origin",
+                ],
+                "maxAgeSeconds": 3600,
+            }]
+        }
+        # Try to get an access token from gcloud
+        import subprocess
+        result = subprocess.run(
+            ["gcloud", "auth", "print-access-token"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            # Fallback to gsutil if gcloud not available
+            import tempfile
+            gcs_cors = [{
+                "origin": ["*"],
+                "method": ["GET", "HEAD", "OPTIONS"],
+                "responseHeader": [
+                    "Content-Type", "Content-Length", "Content-Range",
+                    "Access-Control-Allow-Origin",
+                ],
+                "maxAgeSeconds": 3600,
+            }]
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(gcs_cors, f)
+                cors_file = f.name
+            try:
+                subprocess.run(
+                    ["gsutil", "cors", "set", cors_file, f"gs://{bucket}"],
+                    capture_output=True, text=True, check=True,
+                )
+            finally:
+                Path(cors_file).unlink()
+            return
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(cors_config, f)
-            cors_file = f.name
-
-        try:
-            subprocess.run(
-                ["gsutil", "cors", "set", cors_file, f"gs://{bucket}"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-        finally:
-            Path(cors_file).unlink()
+        token = result.stdout.strip()
+        api_url = f"https://storage.googleapis.com/storage/v1/b/{bucket}"
+        response = httpx.patch(
+            api_url,
+            json=cors_config,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=30,
+        )
+        response.raise_for_status()
 
     elif url.startswith("s3://"):
-        # Amazon S3
+        # S3-compatible (AWS S3, R2, MinIO, OVH, Wasabi, etc.)
         bucket = url[5:].split("/")[0]
 
-        cors_config = {
-            "CORSRules": [
-                {
-                    "AllowedOrigins": ["*"],
-                    "AllowedMethods": ["GET", "HEAD"],
-                    "AllowedHeaders": ["*"],
-                    "MaxAgeSeconds": 3600
-                }
-            ]
-        }
+        # Compatible XML body — explicit headers, no ID element, single origin per rule
+        cors_xml = b"""<?xml version="1.0" encoding="UTF-8"?>
+<CORSConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+  <CORSRule>
+    <AllowedOrigin>*</AllowedOrigin>
+    <AllowedMethod>GET</AllowedMethod>
+    <AllowedMethod>HEAD</AllowedMethod>
+    <AllowedMethod>OPTIONS</AllowedMethod>
+    <AllowedHeader>content-type</AllowedHeader>
+    <AllowedHeader>range</AllowedHeader>
+    <ExposeHeader>ETag</ExposeHeader>
+    <ExposeHeader>Content-Length</ExposeHeader>
+    <ExposeHeader>Content-Range</ExposeHeader>
+    <MaxAgeSeconds>3600</MaxAgeSeconds>
+  </CORSRule>
+</CORSConfiguration>"""
 
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            json.dump(cors_config, f)
-            cors_file = f.name
+        # Get credentials from options or environment
+        access_key = opts.get("access_key_id") or os.environ.get("AWS_ACCESS_KEY_ID", "")
+        secret_key = opts.get("secret_access_key") or os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+        region = opts.get("region") or os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+        endpoint_url = opts.get("endpoint_url")
 
-        try:
-            subprocess.run(
-                ["aws", "s3api", "put-bucket-cors", "--bucket", bucket, "--cors-configuration", f"file://{cors_file}"],
-                capture_output=True,
-                text=True,
-                check=True
-            )
-        finally:
-            Path(cors_file).unlink()
+        if not access_key or not secret_key:
+            return  # Can't sign without credentials
+
+        content_md5 = base64.b64encode(hashlib.md5(cors_xml).digest()).decode()
+
+        # Build the request URL
+        if endpoint_url:
+            # S3-compatible: use path-style
+            req_url = f"{endpoint_url.rstrip('/')}/{bucket}/?cors"
+        else:
+            # AWS S3: use virtual-hosted style
+            req_url = f"https://{bucket}.s3.{region}.amazonaws.com/?cors"
+
+        headers = {"Content-MD5": content_md5, "Content-Type": "application/xml"}
+        auth_headers = _aws_sigv4_sign(
+            "PUT", req_url, headers, cors_xml, region, access_key, secret_key,
+        )
+        headers.update(auth_headers)
+
+        response = httpx.put(req_url, headers=headers, content=cors_xml, timeout=30)
+        response.raise_for_status()
 
     elif url.startswith("az://"):
-        # Azure Blob Storage - skip for now, needs account name
+        # Azure — CORS is configured at storage account level, not per-container
         pass
 
     # Local/file URLs don't need CORS
+
+
+def _get_remote_options(catalog: CatalogConfig, remote_url: str) -> dict:
+    """Find options for a remote URL from catalog config."""
+    for remote in catalog.remotes.values():
+        if remote.url == remote_url:
+            return remote.options
+    return {}
 
 
 # ============== SYNC ==============
@@ -2111,7 +2275,8 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
                 "  portolan remote add origin gs://your-bucket/path"
             )
 
-    store = get_remote_store(state.remote_url)
+    remote_options = _get_remote_options(catalog, state.remote_url)
+    store = get_remote_store(state.remote_url, remote_options)
     status = compute_status(catalog.path, state, store)
 
     if status.error:
@@ -2229,7 +2394,7 @@ def sync(ctx, verbose: bool, dry_run: bool, force_with_lease: bool):
         # Setup CORS automatically for cloud storage
         if state.remote_url and (state.remote_url.startswith("gs://") or state.remote_url.startswith("s3://")):
             try:
-                setup_cors_for_url(state.remote_url)
+                setup_cors_for_url(state.remote_url, remote_options)
             except Exception:
                 pass  # CORS setup is best-effort
 
@@ -2291,7 +2456,8 @@ def status(ctx, verbose: bool):
 
         # Compute status with remote
         try:
-            store = get_remote_store(state.remote_url)
+            remote_options = _get_remote_options(catalog, state.remote_url)
+            store = get_remote_store(state.remote_url, remote_options)
             cat_status = compute_status(catalog.path, state, store)
 
             # Show sync status like git
@@ -2597,7 +2763,8 @@ def pull(ctx, force: bool, verbose: bool):
         raise click.ClickException("No remote configured. Run 'portolan clone' or set remote URL.")
 
     # Compute current status
-    store = get_remote_store(state.remote_url)
+    remote_options = _get_remote_options(catalog, state.remote_url)
+    store = get_remote_store(state.remote_url, remote_options)
     status = compute_status(catalog.path, state, store)
 
     if status.error:

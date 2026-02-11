@@ -11,7 +11,7 @@ dependencies = [
     "geopandas>=1.1.2",
     "httpx>=0.25.0",
     "jsonschema>=4.0",
-    "obstore>=0.3.0",
+    "obstore>=0.4.0",
     "pyarrow>=14.0.0",
     "pyiceberg>=0.10.0",
 ]
