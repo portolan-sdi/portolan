@@ -10,9 +10,9 @@ interface BtnProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const sizeClasses: Record<BtnSize, string> = {
-  sm: "px-3.5 py-2 text-[13px]",
-  md: "px-5 py-[11px] text-sm",
-  lg: "px-6 py-3.5 text-[15px]",
+  sm: "px-4 py-2 text-[13px]",
+  md: "px-5 py-2.5 text-sm",
+  lg: "px-7 py-3.5 text-[15px]",
 };
 
 const variantClasses: Record<BtnVariant, string> = {

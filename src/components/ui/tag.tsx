@@ -23,9 +23,9 @@ export function Tag({
   return (
     <span
       className={`
-        inline-flex items-center gap-1.5
-        text-[11.5px] font-mono
-        px-2 py-[3px] rounded-full
+        inline-flex items-center gap-2
+        text-xs font-mono
+        px-3 py-1.5 rounded-full
         tracking-[0.02em] uppercase
         border
         ${toneClasses[tone]}

@@ -93,16 +93,16 @@ export function HomePage() {
               <Tag tone="primary" className="mb-6">
                 {t("hero.tagline")}
               </Tag>
-              <h1 className="text-[clamp(40px,5vw,64px)] leading-none font-semibold tracking-[-0.03em] mb-5">
+              <h1 className="text-[clamp(40px,5vw,64px)] leading-[1.1] font-semibold tracking-[-0.03em] mb-6">
                 {t("hero.title")} <br />
                 <span className="bg-gradient-to-r from-p-grad-a to-p-grad-b bg-clip-text text-transparent">
                   {t("hero.titleHighlight")}
                 </span>
               </h1>
-              <p className="text-[17px] leading-relaxed mb-7">
+              <p className="text-[17px] leading-relaxed mb-10">
                 {t("hero.description")}
               </p>
-              <div className="flex gap-2.5 mb-8 items-center flex-wrap">
+              <div className="flex gap-4 mb-12 items-center flex-wrap">
                 <Btn variant="primary" size="lg">
                   {t("hero.quickstart")} →
                 </Btn>
@@ -112,14 +112,14 @@ export function HomePage() {
                   </Btn>
                 </a>
               </div>
-              <div className="grid grid-cols-3 gap-7 pt-4 border-t border-dashed border-p-line max-w-[420px]">
+              <div className="grid grid-cols-3 gap-8 pt-6 border-t border-dashed border-p-line max-w-[480px]">
                 {[
                   { k: "47", d: t("hero.stats.activeNodes") },
                   { k: "142", d: t("hero.stats.collections") },
                   { k: "38 TB", d: t("hero.stats.indexed") },
                 ].map((s) => (
                   <div key={s.k}>
-                    <div className="text-2xl font-semibold tracking-[-0.02em]">{s.k}</div>
+                    <div className="text-2xl font-semibold tracking-[-0.02em] mb-1">{s.k}</div>
                     <div className="text-xs text-p-ink-3 font-mono">{s.d}</div>
                   </div>
                 ))}
@@ -136,12 +136,12 @@ export function HomePage() {
       {/* Why Portolan */}
       <section id="how" className="px-[var(--p-pad-xl)] py-[var(--p-pad-xl)]">
         <div className="max-w-[1240px] mx-auto">
-          <div className="flex items-baseline justify-between mb-7">
+          <div className="flex items-baseline justify-between mb-8">
             <div>
               <span className="font-mono text-[11px] text-p-ink-3 tracking-[0.08em]">
                 {t("why.eyebrow")}
               </span>
-              <h2 className="text-4xl mt-2 font-semibold tracking-[-0.02em]">
+              <h2 className="text-4xl mt-1.5 font-semibold tracking-[-0.02em]">
                 {t("why.title")}
               </h2>
             </div>
@@ -150,7 +150,7 @@ export function HomePage() {
             {whyCards.map((card) => (
               <div
                 key={card.key}
-                className="bg-p-paper p-7 flex flex-col gap-3"
+                className="bg-p-paper p-6 flex flex-col gap-3"
               >
                 <div className="flex justify-between items-center">
                   <span className="font-mono text-[11px] text-p-ink-3">{card.id}</span>
@@ -178,12 +178,12 @@ export function HomePage() {
       >
         <RhumbBackdrop opacity={0.08} originX={15} originY={50} />
         <div className="max-w-[1240px] mx-auto relative">
-          <div className="flex justify-between items-end mb-12">
+          <div className="flex justify-between items-end mb-10">
             <div>
               <span className="font-mono text-[11px] text-p-ink-3 tracking-[0.08em]">
                 {t("toolkit.eyebrow")}
               </span>
-              <h2 className="text-[44px] mt-2 font-semibold leading-tight max-w-[720px] tracking-[-0.02em]">
+              <h2 className="text-[44px] mt-1.5 font-semibold leading-tight max-w-[720px] tracking-[-0.02em]">
                 {t("toolkit.title")}
               </h2>
             </div>
@@ -191,12 +191,12 @@ export function HomePage() {
               {t("toolkit.allProjects")} →
             </Btn>
           </div>
-          <div className="grid grid-cols-[3fr_2fr] gap-4 items-stretch">
+          <div className="grid grid-cols-[3fr_2fr] gap-5 items-stretch">
             {/* CLI Card */}
-            <Card className="!p-7 flex flex-col gap-4">
+            <Card className="!p-6 flex flex-col gap-4">
               <div className="flex items-start justify-between">
                 <div>
-                  <div className="font-mono text-xs text-p-primary-ink mb-1.5">
+                  <div className="font-mono text-xs text-p-primary-ink mb-1">
                     {t("toolkit.cli.name")}
                   </div>
                   <h3 className="text-[26px]">{t("toolkit.cli.title")}</h3>
@@ -211,8 +211,8 @@ export function HomePage() {
             </Card>
 
             {/* Side Cards */}
-            <div className="grid grid-rows-2 gap-4 min-h-0">
-              <Card className="!p-6 flex flex-col gap-3">
+            <div className="grid grid-rows-2 gap-5 min-h-0">
+              <Card className="!p-5 flex flex-col gap-3">
                 <div className="flex justify-between items-start">
                   <div className="font-mono text-xs text-p-primary-ink">
                     {t("toolkit.viewer.name")}
@@ -227,7 +227,7 @@ export function HomePage() {
                   {t("toolkit.readMore")} →
                 </a>
               </Card>
-              <Card className="!p-6 flex flex-col gap-3">
+              <Card className="!p-5 flex flex-col gap-3">
                 <div className="flex justify-between items-start">
                   <div className="font-mono text-xs text-p-primary-ink">
                     {t("toolkit.validator.name")}
@@ -253,20 +253,20 @@ export function HomePage() {
           <span className="font-mono text-[11px] text-p-ink-3 tracking-[0.08em]">
             {t("catalogs.eyebrow")}
           </span>
-          <h2 className="text-4xl mt-2 mb-9 font-semibold tracking-[-0.02em]">
+          <h2 className="text-4xl mt-1.5 mb-10 font-semibold tracking-[-0.02em]">
             <LiveCount target={142} /> {t("catalogs.title", { count: "" })}
           </h2>
-          <div className="grid grid-cols-[1.5fr_1fr_1fr] gap-4">
+          <div className="grid grid-cols-[1.5fr_1fr_1fr] gap-6">
             {/* Featured Card */}
             <Card className="!p-0 overflow-hidden">
               <MapPreview height={320} className="!rounded-none !border-none !shadow-none" />
-              <div className="p-5">
-                <div className="flex justify-between items-center mb-2">
-                  <h3 className="text-[17px]">{t("catalogs.featured.title")}</h3>
+              <div className="p-7">
+                <div className="flex justify-between items-center mb-5">
+                  <h3 className="text-lg">{t("catalogs.featured.title")}</h3>
                   <Tag tone="accent">{t("catalogs.featured.tag")}</Tag>
                 </div>
-                <p className="text-[13px] mb-3">{t("catalogs.featured.description")}</p>
-                <div className="font-mono text-[11.5px] text-p-ink-3 flex gap-3.5">
+                <p className="text-sm leading-relaxed mb-6">{t("catalogs.featured.description")}</p>
+                <div className="font-mono text-xs text-p-ink-3 flex gap-6">
                   <span>{t("catalogs.featured.size")}</span>
                   <span>{t("catalogs.featured.collections")}</span>
                   <span>{t("catalogs.featured.cost")}</span>
@@ -276,19 +276,21 @@ export function HomePage() {
 
             {/* Example Cards */}
             {catalogExamples.map((ex) => (
-              <Card key={ex.key} className="!p-5 flex flex-col gap-2.5">
-                <div className="flex items-center gap-2.5">
-                  <PortolanLogo size={26} withWordmark={false} />
-                  <h4 className="text-[15px]">{t(`catalogs.examples.${ex.key}.name`)}</h4>
+              <Card key={ex.key} className="!p-7 flex flex-col gap-5">
+                <div className="flex items-center gap-3">
+                  <PortolanLogo size={28} withWordmark={false} />
+                  <h4 className="text-base font-medium">{t(`catalogs.examples.${ex.key}.name`)}</h4>
                 </div>
-                <p className="text-[13px] leading-normal">
+                <p className="text-sm leading-relaxed">
                   {t(`catalogs.examples.${ex.key}.description`)}
                 </p>
-                <div className="mt-auto font-mono text-[11px] text-p-ink-3">
-                  {t(`catalogs.examples.${ex.key}.stats`)}
-                </div>
-                <div className="font-mono text-[11.5px] text-p-success">
-                  ~{t(`catalogs.examples.${ex.key}.cost`)}
+                <div className="mt-auto pt-3 flex flex-col gap-2">
+                  <div className="font-mono text-xs text-p-ink-3">
+                    {t(`catalogs.examples.${ex.key}.stats`)}
+                  </div>
+                  <div className="font-mono text-xs text-p-success">
+                    ~{t(`catalogs.examples.${ex.key}.cost`)}
+                  </div>
                 </div>
               </Card>
             ))}

@@ -133,13 +133,11 @@ h4,
 h5 {
   font-family: var(--p-sans);
   letter-spacing: -0.02em;
-  margin: 0;
   color: var(--p-ink);
   font-weight: 600;
 }
 
 p {
-  margin: 0;
   color: var(--p-ink-2);
 }
 
