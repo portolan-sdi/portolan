@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none" aria-label="Portolan mark">
+  
+  <defs>
+    <linearGradient id="pg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#395eca"></stop>
+      <stop offset="1" stop-color="#848bd8"></stop>
+    </linearGradient>
+  </defs>
+  <circle cx="32" cy="32" r="29" stroke="url(#pg)" stroke-width="1.25" opacity="0.45"></circle>
+  <circle cx="32" cy="32" r="21" stroke="url(#pg)" stroke-width="1" opacity="0.3"></circle>
+  
+  <path d="M32 4 L34 30 L60 32 L34 34 L32 60 L30 34 L4 32 L30 30 Z" fill="url(#pg)"></path>
+  <path d="M32 12 L36 28 L52 32 L36 36 L32 52 L28 36 L12 32 L28 28 Z" fill="#202a4f" opacity="0.85"></path>
+  
+  <path d="M32 32 L51 13 L34 31 Z" fill="url(#pg)" opacity="0.7"></path>
+  <path d="M32 32 L13 51 L30 33 Z" fill="url(#pg)" opacity="0.7"></path>
+  <path d="M32 32 L51 51 L33 34 Z" fill="url(#pg)" opacity="0.55"></path>
+  <path d="M32 32 L13 13 L31 30 Z" fill="url(#pg)" opacity="0.55"></path>
+  <circle cx="32" cy="32" r="2.4" fill="#eaedf9"></circle>
+</svg>

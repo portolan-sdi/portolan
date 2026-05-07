@@ -1,0 +1,128 @@
+@import "tailwindcss";
+
+:root {
+  /* Brand palette */
+  --p-bg: #eaedf9;
+  --p-bg-soft: #f4f6fc;
+  --p-paper: #ffffff;
+  --p-ink: #202a4f;
+  --p-ink-2: #343e63;
+  --p-ink-3: #5a6585;
+  --p-line: #d8def0;
+  --p-line-soft: #e7ebf6;
+  --p-primary: #4163cc;
+  --p-primary-ink: #2d4aa8;
+  --p-grad-a: #395eca;
+  --p-grad-b: #848bd8;
+  --p-accent: #f4b860;
+  --p-accent-ink: #b67c1f;
+  --p-success: #2f8a6a;
+  --p-warn: #c97a2b;
+
+  /* Type */
+  --p-sans: var(--font-archivo), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, sans-serif;
+  --p-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
+    monospace;
+
+  /* Radii */
+  --p-r-xs: 4px;
+  --p-r-sm: 6px;
+  --p-r-md: 10px;
+  --p-r-lg: 16px;
+  --p-r-xl: 24px;
+
+  /* Spacing */
+  --p-pad-xs: 8px;
+  --p-pad-sm: 12px;
+  --p-pad-md: 20px;
+  --p-pad-lg: 32px;
+  --p-pad-xl: 56px;
+
+  /* Shadows */
+  --p-shadow-sm: 0 1px 2px rgba(32, 42, 79, 0.06),
+    0 1px 0 rgba(32, 42, 79, 0.04);
+  --p-shadow-md: 0 6px 24px -8px rgba(32, 42, 79, 0.18),
+    0 1px 2px rgba(32, 42, 79, 0.06);
+  --p-shadow-lg: 0 24px 60px -20px rgba(32, 42, 79, 0.25),
+    0 2px 6px rgba(32, 42, 79, 0.08);
+}
+
+@theme inline {
+  --color-p-bg: var(--p-bg);
+  --color-p-bg-soft: var(--p-bg-soft);
+  --color-p-paper: var(--p-paper);
+  --color-p-ink: var(--p-ink);
+  --color-p-ink-2: var(--p-ink-2);
+  --color-p-ink-3: var(--p-ink-3);
+  --color-p-line: var(--p-line);
+  --color-p-line-soft: var(--p-line-soft);
+  --color-p-primary: var(--p-primary);
+  --color-p-primary-ink: var(--p-primary-ink);
+  --color-p-grad-a: var(--p-grad-a);
+  --color-p-grad-b: var(--p-grad-b);
+  --color-p-accent: var(--p-accent);
+  --color-p-accent-ink: var(--p-accent-ink);
+  --color-p-success: var(--p-success);
+  --color-p-warn: var(--p-warn);
+
+  --font-sans: var(--p-sans);
+  --font-mono: var(--p-mono);
+
+  --radius-xs: var(--p-r-xs);
+  --radius-sm: var(--p-r-sm);
+  --radius-md: var(--p-r-md);
+  --radius-lg: var(--p-r-lg);
+  --radius-xl: var(--p-r-xl);
+
+  --shadow-sm: var(--p-shadow-sm);
+  --shadow-md: var(--p-shadow-md);
+  --shadow-lg: var(--p-shadow-lg);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--p-sans);
+  background: var(--p-bg);
+  color: var(--p-ink);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "ss01", "cv11";
+}
+
+h1,
+h2,
+h3,
+h4,
+h5 {
+  font-family: var(--p-sans);
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--p-ink);
+  font-weight: 600;
+}
+
+p {
+  margin: 0;
+  color: var(--p-ink-2);
+}
+
+a {
+  color: var(--p-primary);
+  text-decoration: none;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}

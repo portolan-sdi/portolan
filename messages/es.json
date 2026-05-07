@@ -1,0 +1,143 @@
+{
+  "meta": {
+    "title": "Portolan — Publish geospatial data without the portal",
+    "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right."
+  },
+  "nav": {
+    "tools": "Tools",
+    "howItWorks": "How it works",
+    "catalogs": "Catalogs",
+    "docs": "Docs"
+  },
+  "hero": {
+    "tagline": "A better spatial data infrastructure",
+    "title": "Publish geospatial data",
+    "titleHighlight": "without the portal.",
+    "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right, for governments and open data publishers.",
+    "quickstart": "Quickstart",
+    "browseCatalogs": "Browse catalogs",
+    "stats": {
+      "activeNodes": "active nodes",
+      "collections": "collections",
+      "indexed": "indexed"
+    },
+    "mapCaption": "catalogs published from 9 jurisdictions",
+    "submitNode": "Submit a node"
+  },
+  "why": {
+    "eyebrow": "// WHY PORTOLAN",
+    "title": "Open, cheap, sovereign, AI-native.",
+    "cards": {
+      "open": {
+        "title": "Open",
+        "description": "100% open source, open formats. Apache-2.0 license, open governance, open specs. If Portolan disappeared tomorrow, your data would still work everywhere.",
+        "tag": "GeoParquet · COG · STAC"
+      },
+      "aiReady": {
+        "title": "AI-ready",
+        "description": "STAC metadata is structured for retrieval. Catalogs are queryable by LLM agents and ready for semantic search — not just humans clicking through a portal.",
+        "tag": "STAC + RAG-friendly"
+      },
+      "cheap": {
+        "title": "Cheap",
+        "description": "Pay only for storage and egress. No servers to run, no database to license, no portal seats to buy. A small government catalog: dollars a month.",
+        "tag": "storage + egress, that's it"
+      },
+      "sovereign": {
+        "title": "Sovereign",
+        "description": "Your data lives in your bucket, on your cloud, in your jurisdiction. Host on AWS, GCS, Azure, MinIO, Cloudflare R2 — anywhere S3-compatible.",
+        "tag": "bring your own bucket"
+      },
+      "scales": {
+        "title": "Scales to petabytes",
+        "description": "Cloud object storage handles the scale. Cloud-native formats serve range requests — a 100 GB COG opens in ~80ms, faster than most tile servers.",
+        "tag": "p95 < 120ms · global"
+      },
+      "breaks": {
+        "title": "Breaks the GIS silo",
+        "description": "Query with DuckDB, Snowflake, BigQuery, Databricks, Pandas — not just GIS tools. Every layer is a file at a stable URL, same bytes for everyone.",
+        "tag": "one URL · every tool"
+      }
+    }
+  },
+  "toolkit": {
+    "eyebrow": "// THE TOOLKIT",
+    "title": "The toolkit.",
+    "allProjects": "All projects",
+    "cli": {
+      "name": "portolan-cli",
+      "title": "The CLI",
+      "version": "v0.7.0",
+      "description": "Convert, validate, and sync. One command from a folder of shapefiles to a live STAC catalog on S3.",
+      "compatibility": "Works with AWS · GCS · Azure · R2 · MinIO · Source.coop"
+    },
+    "viewer": {
+      "name": "portolan-viewer",
+      "tag": "In design",
+      "title": "Browser-native viewer",
+      "description": "A lightweight viewer that reads STAC + cloud-native files directly."
+    },
+    "validator": {
+      "name": "portolan-validator",
+      "tag": "Stable",
+      "title": "Catalog validator",
+      "description": "CI-friendly checks for STAC, GeoParquet, COG conventions."
+    },
+    "readMore": "Read more"
+  },
+  "catalogs": {
+    "eyebrow": "// LIVE NODES",
+    "title": "{count} catalogs running today.",
+    "featured": {
+      "title": "Coastal Bathymetry · Taiwan",
+      "tag": "Featured",
+      "description": "Nearshore bathymetric coverage in COG. Hosted on Source Cooperative.",
+      "size": "1.2 TB",
+      "collections": "4 collections",
+      "cost": "$0/mo"
+    },
+    "examples": {
+      "madrid": {
+        "name": "Madrid Open Data",
+        "description": "Vector base layers · GeoParquet",
+        "stats": "14 collections · 80 GB",
+        "cost": "$2.40/mo"
+      },
+      "andean": {
+        "name": "Andean Glacier Atlas",
+        "description": "Multi-temporal imagery + DEM",
+        "stats": "6 collections · 2.4 TB",
+        "cost": "$54/mo"
+      },
+      "pacific": {
+        "name": "Pacific NW Lidar",
+        "description": "COPC point clouds",
+        "stats": "9 collections · 11 TB",
+        "cost": "$0/mo"
+      },
+      "noaa": {
+        "name": "NOAA Marine Sanctuaries",
+        "description": "Habitat + species occurrence",
+        "stats": "22 collections · 340 GB",
+        "cost": "$8.20/mo"
+      }
+    }
+  },
+  "footer": {
+    "openGovernance": "Open governance",
+    "license": "Apache-2.0",
+    "repo": "portolan-sdi/portolan"
+  },
+  "publishMap": {
+    "header": "// PUBLISHED CATALOGS · WORLD",
+    "live": "live · updated 4m ago",
+    "nodes": {
+      "pacificNw": "Pacific NW Lidar",
+      "andean": "Andean Glaciers",
+      "madrid": "Madrid Open Data",
+      "nordic": "Nordic Hydro",
+      "redSea": "Red Sea Reefs",
+      "taiwan": "Coastal Bathymetry"
+    }
+  }
+}

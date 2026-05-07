@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="currentColor" aria-label="Portolan mark">
+  <circle cx="32" cy="32" r="29" stroke="currentColor" stroke-width="1.25" fill="none" opacity="0.4"></circle>
+  <circle cx="32" cy="32" r="21" stroke="currentColor" stroke-width="1" fill="none" opacity="0.28"></circle>
+  <path d="M32 4 L34 30 L60 32 L34 34 L32 60 L30 34 L4 32 L30 30 Z"></path>
+  <path d="M32 12 L36 28 L52 32 L36 36 L32 52 L28 36 L12 32 L28 28 Z" opacity="0.5"></path>
+  <path d="M32 32 L51 13 L34 31 Z" opacity="0.7"></path>
+  <path d="M32 32 L13 51 L30 33 Z" opacity="0.7"></path>
+  <path d="M32 32 L51 51 L33 34 Z" opacity="0.55"></path>
+  <path d="M32 32 L13 13 L31 30 Z" opacity="0.55"></path>
+</svg>
