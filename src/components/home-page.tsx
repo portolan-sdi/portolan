@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { PortolanLogo } from "./portolan-logo";
 import { RhumbBackdrop } from "./rhumb-backdrop";
-import { PublishMap } from "./publish-map";
+import { DitherMap } from "./dither-map";
 import { MapPreview } from "./map-preview";
 import { LiveCount } from "./live-count";
 import { ThemeToggle } from "./theme-toggle";
@@ -84,54 +84,52 @@ export function HomePage() {
       </header>
 
       {/* Hero */}
-      <section className="px-[var(--p-pad-xl)] py-[calc(var(--p-pad-xl)*1.1)] relative border-b border-p-line-soft">
-        <RhumbBackdrop opacity={0.1} originX={75} originY={75} />
-        <div className="max-w-[1240px] mx-auto grid grid-cols-2 gap-14 items-center relative">
-          <div>
-            <Tag tone="primary" className="mb-6">
-              {t("hero.tagline")}
-            </Tag>
-            <h1 className="text-[clamp(40px,5vw,64px)] leading-none font-semibold tracking-[-0.03em] mb-5">
-              {t("hero.title")} <br />
-              <span className="bg-gradient-to-r from-p-grad-a to-p-grad-b bg-clip-text text-transparent">
-                {t("hero.titleHighlight")}
-              </span>
-            </h1>
-            <p className="text-[17px] leading-relaxed mb-7 max-w-[520px]">
-              {t("hero.description")}
-            </p>
-            <div className="flex gap-2.5 mb-8 items-center flex-wrap">
-              <Btn variant="primary" size="lg">
-                {t("hero.quickstart")} →
-              </Btn>
-              <a href="#examples">
-                <Btn variant="secondary" size="lg">
-                  {t("hero.browseCatalogs")}
+      <section className="relative min-h-[85vh] flex items-center border-b border-p-line-soft overflow-hidden">
+        <DitherMap className="absolute inset-0 w-full h-full opacity-80 dark:opacity-60" />
+        <div className="absolute inset-0 bg-gradient-to-r from-p-bg via-p-bg/85 via-50% to-p-bg/40" />
+        <div className="relative z-10 px-[var(--p-pad-xl)] py-[var(--p-pad-xl)] w-full">
+          <div className="max-w-[1240px] mx-auto">
+            <div className="max-w-[640px]">
+              <Tag tone="primary" className="mb-6">
+                {t("hero.tagline")}
+              </Tag>
+              <h1 className="text-[clamp(40px,5vw,64px)] leading-none font-semibold tracking-[-0.03em] mb-5">
+                {t("hero.title")} <br />
+                <span className="bg-gradient-to-r from-p-grad-a to-p-grad-b bg-clip-text text-transparent">
+                  {t("hero.titleHighlight")}
+                </span>
+              </h1>
+              <p className="text-[17px] leading-relaxed mb-7">
+                {t("hero.description")}
+              </p>
+              <div className="flex gap-2.5 mb-8 items-center flex-wrap">
+                <Btn variant="primary" size="lg">
+                  {t("hero.quickstart")} →
                 </Btn>
-              </a>
-            </div>
-            <div className="grid grid-cols-3 gap-7 pt-4 border-t border-dashed border-p-line">
-              {[
-                { k: "47", d: t("hero.stats.activeNodes") },
-                { k: "142", d: t("hero.stats.collections") },
-                { k: "38 TB", d: t("hero.stats.indexed") },
-              ].map((s) => (
-                <div key={s.k}>
-                  <div className="text-2xl font-semibold tracking-[-0.02em]">{s.k}</div>
-                  <div className="text-xs text-p-ink-3 font-mono">{s.d}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div>
-            <PublishMap height={460} />
-            <div className="mt-3 flex gap-3 justify-between font-mono text-xs text-p-ink-3">
-              <span>↓ {t("hero.mapCaption")}</span>
-              <a href="#" className="hover:text-p-ink transition-colors">
-                {t("hero.submitNode")} →
-              </a>
+                <a href="#examples">
+                  <Btn variant="secondary" size="lg">
+                    {t("hero.browseCatalogs")}
+                  </Btn>
+                </a>
+              </div>
+              <div className="grid grid-cols-3 gap-7 pt-4 border-t border-dashed border-p-line max-w-[420px]">
+                {[
+                  { k: "47", d: t("hero.stats.activeNodes") },
+                  { k: "142", d: t("hero.stats.collections") },
+                  { k: "38 TB", d: t("hero.stats.indexed") },
+                ].map((s) => (
+                  <div key={s.k}>
+                    <div className="text-2xl font-semibold tracking-[-0.02em]">{s.k}</div>
+                    <div className="text-xs text-p-ink-3 font-mono">{s.d}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
+        </div>
+        <div className="absolute bottom-4 right-6 z-10 font-mono text-xs text-p-ink-3 flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-p-accent shadow-[0_0_8px_var(--p-accent)]" />
+          {t("hero.mapCaption")}
         </div>
       </section>
 

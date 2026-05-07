@@ -1,6 +1,9 @@
 @import "tailwindcss";
 
 :root {
+  /* Dither map: #848BD8 (light blue) in light mode */
+  --dither-filter: brightness(0.6) sepia(1) saturate(2) hue-rotate(190deg);
+
   /* Brand palette */
   --p-bg: #eaedf9;
   --p-bg-soft: #f4f6fc;
@@ -49,6 +52,9 @@
 }
 
 [data-theme="dark"] {
+  /* Dither map: #202A4F (dark blue) in dark mode - higher contrast */
+  --dither-filter: brightness(0.4) sepia(1) saturate(3) hue-rotate(200deg);
+
   --p-bg: #0d1230;
   --p-bg-soft: #131a3d;
   --p-paper: #161e47;
@@ -145,4 +151,15 @@ a {
 button {
   font-family: inherit;
   cursor: pointer;
+}
+
+@keyframes dither-pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
 }
