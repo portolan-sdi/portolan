@@ -6,6 +6,7 @@ import { RhumbBackdrop } from "./rhumb-backdrop";
 import { PublishMap } from "./publish-map";
 import { MapPreview } from "./map-preview";
 import { LiveCount } from "./live-count";
+import { ThemeToggle } from "./theme-toggle";
 import { Btn, Tag, Card, Terminal } from "./ui";
 
 const terminalLines = [
@@ -69,6 +70,7 @@ export function HomePage() {
           </a>
         </nav>
         <div className="flex gap-2">
+          <ThemeToggle />
           <a
             href="https://github.com/portolan-sdi"
             aria-label="GitHub"
