@@ -5,5 +5,6 @@ export { DitherMap } from "./dither-map";
 export { MapPreview } from "./map-preview";
 export { LiveCount } from "./live-count";
 export { HomePage } from "./home-page";
+export { QuickstartPage } from "./quickstart-page";
 export { ThemeToggle } from "./theme-toggle";
 export * from "./ui";

@@ -4,8 +4,6 @@ import { useTranslations } from "next-intl";
 import { PortolanLogo } from "./portolan-logo";
 import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
-import { MapPreview } from "./map-preview";
-import { LiveCount } from "./live-count";
 import { ThemeToggle } from "./theme-toggle";
 import { Btn, Tag, Card, Terminal } from "./ui";
 
@@ -40,27 +38,29 @@ export function HomePage() {
     { key: "breaks", id: "06" },
   ] as const;
 
-  const catalogExamples = [
-    { key: "madrid" },
-    { key: "andean" },
-    { key: "pacific" },
-    { key: "noaa" },
+  const howSteps = [
+    "convert",
+    "catalog",
+    "publish",
+    "browse",
   ] as const;
 
   return (
     <div className="bg-p-bg min-h-full font-sans">
       {/* Header */}
       <header className="flex items-center justify-between px-[var(--p-pad-xl)] py-5 border-b border-p-line-soft">
-        <PortolanLogo size={28} />
+        <a href="/">
+          <PortolanLogo size={28} />
+        </a>
         <nav className="flex gap-7 text-sm text-p-ink-2">
-          <a href="#tools" className="text-inherit hover:text-p-ink transition-colors">
-            {t("nav.tools")}
+          <a href="#why" className="text-inherit hover:text-p-ink transition-colors">
+            {t("nav.why")}
           </a>
           <a href="#how" className="text-inherit hover:text-p-ink transition-colors">
             {t("nav.howItWorks")}
           </a>
-          <a href="#examples" className="text-inherit hover:text-p-ink transition-colors">
-            {t("nav.catalogs")}
+          <a href="#tools" className="text-inherit hover:text-p-ink transition-colors">
+            {t("nav.tools")}
           </a>
           <a
             href="https://portolan-sdi.github.io/portolan-cli"
@@ -102,39 +102,25 @@ export function HomePage() {
               <p className="text-[17px] leading-relaxed mb-10">
                 {t("hero.description")}
               </p>
-              <div className="flex gap-4 mb-12 items-center flex-wrap">
-                <Btn variant="primary" size="lg">
-                  {t("hero.quickstart")} →
-                </Btn>
-                <a href="#examples">
+              <div className="flex gap-4 items-center flex-wrap">
+                <a href="/quickstart">
+                  <Btn variant="primary" size="lg">
+                    {t("hero.quickstart")} →
+                  </Btn>
+                </a>
+                <a href="https://browser.portolan-sdi.org/">
                   <Btn variant="secondary" size="lg">
                     {t("hero.browseCatalogs")}
                   </Btn>
                 </a>
               </div>
-              <div className="grid grid-cols-3 gap-8 pt-6 border-t border-dashed border-p-line max-w-[480px]">
-                {[
-                  { k: "47", d: t("hero.stats.activeNodes") },
-                  { k: "142", d: t("hero.stats.collections") },
-                  { k: "38 TB", d: t("hero.stats.indexed") },
-                ].map((s) => (
-                  <div key={s.k}>
-                    <div className="text-2xl font-semibold tracking-[-0.02em] mb-1">{s.k}</div>
-                    <div className="text-xs text-p-ink-3 font-mono">{s.d}</div>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
-        </div>
-        <div className="absolute bottom-4 right-6 z-10 font-mono text-xs text-p-ink-3 flex items-center gap-2">
-          <span className="w-1.5 h-1.5 rounded-full bg-p-accent shadow-[0_0_8px_var(--p-accent)]" />
-          {t("hero.mapCaption")}
         </div>
       </section>
 
       {/* Why Portolan */}
-      <section id="how" className="px-[var(--p-pad-xl)] py-[var(--p-pad-xl)]">
+      <section id="why" className="px-[var(--p-pad-xl)] py-[var(--p-pad-xl)]">
         <div className="max-w-[1240px] mx-auto">
           <div className="flex items-baseline justify-between mb-8">
             <div>
@@ -171,10 +157,43 @@ export function HomePage() {
         </div>
       </section>
 
+      {/* How it works */}
+      <section id="how" className="px-[var(--p-pad-xl)] py-[var(--p-pad-xl)] bg-p-bg-soft border-y border-p-line-soft">
+        <div className="max-w-[1240px] mx-auto">
+          <span className="font-mono text-[11px] text-p-ink-3 tracking-[0.08em]">
+            {t("howItWorks.eyebrow")}
+          </span>
+          <h2 className="text-4xl mt-1.5 mb-3 font-semibold tracking-[-0.02em]">
+            {t("howItWorks.title")}
+          </h2>
+          <p className="text-[15px] leading-relaxed max-w-[720px] mb-10">
+            {t("howItWorks.subtitle")}
+          </p>
+          <div className="grid grid-cols-4 gap-5">
+            {howSteps.map((step) => (
+              <Card key={step} className="!p-6 flex flex-col gap-3">
+                <div className="flex justify-between items-center">
+                  <span className="font-mono text-[11px] text-p-ink-3">
+                    {t(`howItWorks.steps.${step}.id`)}
+                  </span>
+                  <span className="w-2 h-2 rounded-full bg-p-accent" />
+                </div>
+                <h3 className="text-lg font-semibold">
+                  {t(`howItWorks.steps.${step}.title`)}
+                </h3>
+                <p className="text-[13.5px] leading-relaxed">
+                  {t(`howItWorks.steps.${step}.description`)}
+                </p>
+              </Card>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* Toolkit */}
       <section
         id="tools"
-        className="px-[var(--p-pad-xl)] py-[calc(var(--p-pad-xl)*1.4)] bg-p-bg-soft relative overflow-hidden border-y border-p-line-soft"
+        className="px-[var(--p-pad-xl)] py-[calc(var(--p-pad-xl)*1.4)] relative overflow-hidden"
       >
         <RhumbBackdrop opacity={0.08} originX={15} originY={50} />
         <div className="max-w-[1240px] mx-auto relative">
@@ -187,113 +206,70 @@ export function HomePage() {
                 {t("toolkit.title")}
               </h2>
             </div>
-            <Btn variant="secondary" size="md">
-              {t("toolkit.allProjects")} →
-            </Btn>
+            <a href="https://github.com/portolan-sdi/">
+              <Btn variant="secondary" size="md">
+                {t("toolkit.allProjects")} →
+              </Btn>
+            </a>
           </div>
           <div className="grid grid-cols-[3fr_2fr] gap-5 items-stretch">
             {/* CLI Card */}
-            <Card className="!p-6 flex flex-col gap-4">
-              <div className="flex items-start justify-between">
-                <div>
-                  <div className="font-mono text-xs text-p-primary-ink mb-1">
-                    {t("toolkit.cli.name")}
+            <a href="https://cli.portolan-sdi.org/" className="contents">
+              <Card className="!p-6 flex flex-col gap-4 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="font-mono text-xs text-p-primary-ink mb-1">
+                      {t("toolkit.cli.name")}
+                    </div>
+                    <h3 className="text-[26px]">{t("toolkit.cli.title")}</h3>
                   </div>
-                  <h3 className="text-[26px]">{t("toolkit.cli.title")}</h3>
+                  <Tag tone="accent">{t("toolkit.cli.version")}</Tag>
                 </div>
-                <Tag tone="accent">{t("toolkit.cli.version")}</Tag>
-              </div>
-              <p className="text-sm leading-relaxed">{t("toolkit.cli.description")}</p>
-              <Terminal title="my-catalog · zsh" lines={terminalLines} />
-              <div className="font-mono text-[11.5px] text-p-ink-3 mt-auto">
-                {t("toolkit.cli.compatibility")}
-              </div>
-            </Card>
+                <p className="text-sm leading-relaxed">{t("toolkit.cli.description")}</p>
+                <Terminal title="my-catalog · zsh" lines={terminalLines} />
+                <div className="font-mono text-[11.5px] text-p-ink-3 mt-auto">
+                  {t("toolkit.cli.compatibility")}
+                </div>
+              </Card>
+            </a>
 
             {/* Side Cards */}
             <div className="grid grid-rows-2 gap-5 min-h-0">
-              <Card className="!p-5 flex flex-col gap-3">
-                <div className="flex justify-between items-start">
-                  <div className="font-mono text-xs text-p-primary-ink">
-                    {t("toolkit.viewer.name")}
+              <a href="https://github.com/portolan-sdi/portolan-browser" className="contents">
+                <Card className="!p-5 flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+                  <div className="flex justify-between items-start">
+                    <div className="font-mono text-xs text-p-primary-ink">
+                      {t("toolkit.viewer.name")}
+                    </div>
+                    <Tag tone="default">{t("toolkit.viewer.tag")}</Tag>
                   </div>
-                  <Tag tone="default">{t("toolkit.viewer.tag")}</Tag>
-                </div>
-                <h3 className="text-xl">{t("toolkit.viewer.title")}</h3>
-                <p className="text-[13.5px] leading-relaxed">
-                  {t("toolkit.viewer.description")}
-                </p>
-                <a href="#" className="mt-auto text-[13px] hover:underline">
-                  {t("toolkit.readMore")} →
-                </a>
-              </Card>
-              <Card className="!p-5 flex flex-col gap-3">
-                <div className="flex justify-between items-start">
-                  <div className="font-mono text-xs text-p-primary-ink">
-                    {t("toolkit.validator.name")}
+                  <h3 className="text-xl">{t("toolkit.viewer.title")}</h3>
+                  <p className="text-[13.5px] leading-relaxed">
+                    {t("toolkit.viewer.description")}
+                  </p>
+                  <span className="mt-auto text-[13px] text-p-primary hover:underline">
+                    {t("toolkit.readMore")} →
+                  </span>
+                </Card>
+              </a>
+              <a href="https://github.com/portolan-sdi/portolan-validator" className="contents">
+                <Card className="!p-5 flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+                  <div className="flex justify-between items-start">
+                    <div className="font-mono text-xs text-p-primary-ink">
+                      {t("toolkit.validator.name")}
+                    </div>
+                    <Tag tone="default">{t("toolkit.validator.tag")}</Tag>
                   </div>
-                  <Tag tone="default">{t("toolkit.validator.tag")}</Tag>
-                </div>
-                <h3 className="text-xl">{t("toolkit.validator.title")}</h3>
-                <p className="text-[13.5px] leading-relaxed">
-                  {t("toolkit.validator.description")}
-                </p>
-                <a href="#" className="mt-auto text-[13px] hover:underline">
-                  {t("toolkit.readMore")} →
-                </a>
-              </Card>
+                  <h3 className="text-xl">{t("toolkit.validator.title")}</h3>
+                  <p className="text-[13.5px] leading-relaxed">
+                    {t("toolkit.validator.description")}
+                  </p>
+                  <span className="mt-auto text-[13px] text-p-primary hover:underline">
+                    {t("toolkit.readMore")} →
+                  </span>
+                </Card>
+              </a>
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Catalogs */}
-      <section id="examples" className="px-[var(--p-pad-xl)] py-[var(--p-pad-xl)] bg-p-bg-soft">
-        <div className="max-w-[1240px] mx-auto">
-          <span className="font-mono text-[11px] text-p-ink-3 tracking-[0.08em]">
-            {t("catalogs.eyebrow")}
-          </span>
-          <h2 className="text-4xl mt-1.5 mb-10 font-semibold tracking-[-0.02em]">
-            <LiveCount target={142} /> {t("catalogs.title", { count: "" })}
-          </h2>
-          <div className="grid grid-cols-[1.5fr_1fr_1fr] gap-6">
-            {/* Featured Card */}
-            <Card className="!p-0 overflow-hidden">
-              <MapPreview height={320} className="!rounded-none !border-none !shadow-none" />
-              <div className="p-7">
-                <div className="flex justify-between items-center mb-5">
-                  <h3 className="text-lg">{t("catalogs.featured.title")}</h3>
-                  <Tag tone="accent">{t("catalogs.featured.tag")}</Tag>
-                </div>
-                <p className="text-sm leading-relaxed mb-6">{t("catalogs.featured.description")}</p>
-                <div className="font-mono text-xs text-p-ink-3 flex gap-6">
-                  <span>{t("catalogs.featured.size")}</span>
-                  <span>{t("catalogs.featured.collections")}</span>
-                  <span>{t("catalogs.featured.cost")}</span>
-                </div>
-              </div>
-            </Card>
-
-            {/* Example Cards */}
-            {catalogExamples.map((ex) => (
-              <Card key={ex.key} className="!p-7 flex flex-col gap-5">
-                <div className="flex items-center gap-3">
-                  <PortolanLogo size={28} withWordmark={false} />
-                  <h4 className="text-base font-medium">{t(`catalogs.examples.${ex.key}.name`)}</h4>
-                </div>
-                <p className="text-sm leading-relaxed">
-                  {t(`catalogs.examples.${ex.key}.description`)}
-                </p>
-                <div className="mt-auto pt-3 flex flex-col gap-2">
-                  <div className="font-mono text-xs text-p-ink-3">
-                    {t(`catalogs.examples.${ex.key}.stats`)}
-                  </div>
-                  <div className="font-mono text-xs text-p-success">
-                    ~{t(`catalogs.examples.${ex.key}.cost`)}
-                  </div>
-                </div>
-              </Card>
-            ))}
           </div>
         </div>
       </section>
