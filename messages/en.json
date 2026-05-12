@@ -4,10 +4,11 @@
     "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right."
   },
   "nav": {
-    "tools": "Tools",
+    "why": "Why",
     "howItWorks": "How it works",
-    "catalogs": "Catalogs",
-    "docs": "Docs"
+    "tools": "Tools",
+    "docs": "Docs",
+    "quickstart": "Quickstart"
   },
   "hero": {
     "tagline": "A better spatial data infrastructure",
@@ -15,14 +16,7 @@
     "titleHighlight": "without the portal.",
     "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right, for governments and open data publishers.",
     "quickstart": "Quickstart",
-    "browseCatalogs": "Browse catalogs",
-    "stats": {
-      "activeNodes": "active nodes",
-      "collections": "collections",
-      "indexed": "indexed"
-    },
-    "mapCaption": "catalogs published from 9 jurisdictions",
-    "submitNode": "Submit a node"
+    "browseCatalogs": "Browse catalogs"
   },
   "why": {
     "eyebrow": "// WHY PORTOLAN",
@@ -60,6 +54,33 @@
       }
     }
   },
+  "howItWorks": {
+    "eyebrow": "// HOW IT WORKS",
+    "title": "Files on storage, not servers.",
+    "subtitle": "Portolan replaces traditional SDI servers with cloud-native files on object storage. No databases, no tile servers, no portal software — just files that browsers and AI agents read directly.",
+    "steps": {
+      "convert": {
+        "id": "01",
+        "title": "Convert",
+        "description": "Transform shapefiles, GeoTIFFs, and other formats into cloud-native equivalents — GeoParquet for vectors, COG for rasters, PMTiles for map tiles."
+      },
+      "catalog": {
+        "id": "02",
+        "title": "Catalog",
+        "description": "Generate a STAC catalog that describes every asset with structured metadata, rich descriptions, and links that AI agents and tools can follow."
+      },
+      "publish": {
+        "id": "03",
+        "title": "Publish",
+        "description": "Push files to any S3-compatible object storage — AWS, GCS, Azure, R2, MinIO, or Source Cooperative for free open data hosting."
+      },
+      "browse": {
+        "id": "04",
+        "title": "Browse",
+        "description": "Data is instantly accessible through any STAC-compatible viewer, queryable via DuckDB, and ready for AI agents — no servers to run."
+      }
+    }
+  },
   "toolkit": {
     "eyebrow": "// THE TOOLKIT",
     "title": "The toolkit.",
@@ -77,51 +98,13 @@
       "title": "Browser-native viewer",
       "description": "A lightweight viewer that reads STAC + cloud-native files directly."
     },
-    "validator": {
-      "name": "portolan-validator",
+    "skills": {
+      "name": "portolan-skills",
       "tag": "Stable",
-      "title": "Catalog validator",
-      "description": "CI-friendly checks for STAC, GeoParquet, COG conventions."
+      "title": "AI agent skills",
+      "description": "Ready-made skills that let Claude, Gemini, and Codex agents publish catalogs and query cloud-native geospatial data."
     },
     "readMore": "Read more"
-  },
-  "catalogs": {
-    "eyebrow": "// LIVE NODES",
-    "title": "{count} catalogs running today.",
-    "featured": {
-      "title": "Coastal Bathymetry · Taiwan",
-      "tag": "Featured",
-      "description": "Nearshore bathymetric coverage in COG. Hosted on Source Cooperative.",
-      "size": "1.2 TB",
-      "collections": "4 collections",
-      "cost": "$0/mo"
-    },
-    "examples": {
-      "madrid": {
-        "name": "Madrid Open Data",
-        "description": "Vector base layers · GeoParquet",
-        "stats": "14 collections · 80 GB",
-        "cost": "$2.40/mo"
-      },
-      "andean": {
-        "name": "Andean Glacier Atlas",
-        "description": "Multi-temporal imagery + DEM",
-        "stats": "6 collections · 2.4 TB",
-        "cost": "$54/mo"
-      },
-      "pacific": {
-        "name": "Pacific NW Lidar",
-        "description": "COPC point clouds",
-        "stats": "9 collections · 11 TB",
-        "cost": "$0/mo"
-      },
-      "noaa": {
-        "name": "NOAA Marine Sanctuaries",
-        "description": "Habitat + species occurrence",
-        "stats": "22 collections · 340 GB",
-        "cost": "$8.20/mo"
-      }
-    }
   },
   "footer": {
     "openGovernance": "Open governance",
@@ -138,6 +121,49 @@
       "nordic": "Nordic Hydro",
       "redSea": "Red Sea Reefs",
       "taiwan": "Coastal Bathymetry"
+    }
+  },
+  "quickstart": {
+    "title": "Quickstart",
+    "intro": "Get started with Portolan in minutes. Browse existing catalogs, then publish your own data.",
+    "browse": {
+      "eyebrow": "// STEP 1",
+      "title": "Browse a catalog",
+      "description": "Portolan catalogs are live on the web. Open the Portolan Browser to explore published datasets — view metadata, preview maps, and inspect data tables. Everything you see is served directly from cloud-native files on object storage, with zero servers.",
+      "cta": "Open the browser",
+      "duckdb": {
+        "title": "Query with DuckDB",
+        "description": "Any GeoParquet file in a Portolan catalog can be queried directly with DuckDB — no download needed. Just point at the URL."
+      }
+    },
+    "publish": {
+      "eyebrow": "// STEP 2",
+      "title": "Publish your data",
+      "description": "Two paths to get your data into a Portolan catalog."
+    },
+    "cli": {
+      "title": "With the CLI",
+      "description": "Install the portolan-cli, then init, add, convert, and push.",
+      "install": "Install",
+      "steps": {
+        "init": "Initialize a new catalog in your data directory",
+        "add": "Add your data files to the catalog",
+        "check": "Convert to cloud-native formats (GeoParquet, COG)",
+        "push": "Push to any S3-compatible storage"
+      }
+    },
+    "claude": {
+      "title": "With Claude",
+      "description": "If you have Claude Code, install the Portolan skill and point Claude at your data. It handles format conversion, metadata generation, and publishing.",
+      "steps": {
+        "install": "Install the Portolan CLI skill",
+        "run": "Then ask Claude to publish your data"
+      }
+    },
+    "next": {
+      "title": "What's next",
+      "docs": "Read the full CLI docs",
+      "github": "Browse the source on GitHub"
     }
   }
 }
