@@ -252,17 +252,17 @@ export function HomePage() {
                   </span>
                 </Card>
               </a>
-              <a href="https://github.com/portolan-sdi/portolan-validator" className="contents">
+              <a href="https://github.com/portolan-sdi/portolan-skills" className="contents">
                 <Card className="!p-5 flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                   <div className="flex justify-between items-start">
                     <div className="font-mono text-xs text-p-primary-ink">
-                      {t("toolkit.validator.name")}
+                      {t("toolkit.skills.name")}
                     </div>
-                    <Tag tone="default">{t("toolkit.validator.tag")}</Tag>
+                    <Tag tone="default">{t("toolkit.skills.tag")}</Tag>
                   </div>
-                  <h3 className="text-xl">{t("toolkit.validator.title")}</h3>
+                  <h3 className="text-xl">{t("toolkit.skills.title")}</h3>
                   <p className="text-[13.5px] leading-relaxed">
-                    {t("toolkit.validator.description")}
+                    {t("toolkit.skills.description")}
                   </p>
                   <span className="mt-auto text-[13px] text-p-primary hover:underline">
                     {t("toolkit.readMore")} →

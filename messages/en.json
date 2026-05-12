@@ -98,11 +98,11 @@
       "title": "Browser-native viewer",
       "description": "A lightweight viewer that reads STAC + cloud-native files directly."
     },
-    "validator": {
-      "name": "portolan-validator",
+    "skills": {
+      "name": "portolan-skills",
       "tag": "Stable",
-      "title": "Catalog validator",
-      "description": "CI-friendly checks for STAC, GeoParquet, COG conventions."
+      "title": "AI agent skills",
+      "description": "Ready-made skills that let Claude, Gemini, and Codex agents publish catalogs and query cloud-native geospatial data."
     },
     "readMore": "Read more"
   },
