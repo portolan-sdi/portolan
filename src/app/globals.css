@@ -49,6 +49,20 @@
     0 1px 2px rgba(32, 42, 79, 0.06);
   --p-shadow-lg: 0 24px 60px -20px rgba(32, 42, 79, 0.25),
     0 2px 6px rgba(32, 42, 79, 0.08);
+
+  /* Fluid section padding (mobile-first) */
+  --p-pad-section-x: clamp(20px, 5vw, 56px);
+  --p-pad-section-y: clamp(40px, 6vw, 80px);
+
+  /* Terminal (fixed-dark block, centralized) */
+  --term-bg: #0e1230;
+  --term-header: #161c44;
+  --term-border: #1c2452;
+  --term-title: #8d96bd;
+  --term-text: #c5cce8;
+  --term-dot-red: #ff5f57;
+  --term-dot-yellow: #febc2e;
+  --term-dot-green: #28c840;
 }
 
 [data-theme="dark"] {
@@ -104,6 +118,34 @@
   --shadow-sm: var(--p-shadow-sm);
   --shadow-md: var(--p-shadow-md);
   --shadow-lg: var(--p-shadow-lg);
+
+  /* Type scale (auto-generates text-* utilities) */
+  --text-eyebrow: 11px;
+  --text-eyebrow--line-height: 1.4;
+  --text-micro: 11.5px;
+  --text-micro--line-height: 1.5;
+  --text-small: 13px;
+  --text-small--line-height: 1.5;
+  --text-body: 13.5px;
+  --text-body--line-height: 1.6;
+  --text-body-lg: clamp(14px, 0.4vw + 13px, 15px);
+  --text-body-lg--line-height: 1.6;
+  --text-lead: clamp(15px, 0.6vw + 13.5px, 17px);
+  --text-lead--line-height: 1.6;
+  --text-card-title: 18px;
+  --text-card-title--line-height: 1.3;
+  --text-card-title-lg: 20px;
+  --text-card-title-lg--line-height: 1.3;
+  --text-feature: clamp(22px, 2.2vw + 14px, 26px);
+  --text-feature--line-height: 1.2;
+  --text-section-sm: clamp(24px, 1.5vw + 18px, 30px);
+  --text-section-sm--line-height: 1.15;
+  --text-section: clamp(28px, 4vw + 8px, 44px);
+  --text-section--line-height: 1.1;
+  --text-hero: clamp(32px, 5vw + 10px, 64px);
+  --text-hero--line-height: 1.1;
+  --text-hero-sm: clamp(30px, 4vw + 10px, 52px);
+  --text-hero-sm--line-height: 1.1;
 }
 
 *,
