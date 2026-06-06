@@ -211,7 +211,9 @@ export default function DitherMapCanvas({
       };
     } catch (err) {
       console.error("WebGL initialization failed:", err);
-      setError(true);
+      // One-shot fallback when imperative WebGL init throws; defer out of the
+      // effect body so it isn't a synchronous set-state-in-effect.
+      queueMicrotask(() => setError(true));
     }
   }, [panSpeed]);
 

@@ -82,7 +82,7 @@ export function PublishMap({ height = 460 }: PublishMapProps) {
       {/* Header strip */}
       <div className="absolute top-0 left-0 right-0 z-10 px-4 py-3 flex justify-between items-center text-[11px] text-p-ink-3 border-b border-p-line-soft bg-gradient-to-b from-p-paper to-transparent">
         <span className="tracking-[0.08em] uppercase">
-          // PUBLISHED CATALOGS · WORLD
+          {"// PUBLISHED CATALOGS · WORLD"}
         </span>
         <span className="flex items-center gap-1.5">
           <span className="w-1.5 h-1.5 rounded-full bg-p-accent shadow-[0_0_8px_var(--p-accent)]" />

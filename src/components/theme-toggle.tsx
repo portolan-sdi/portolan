@@ -1,38 +1,55 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark" | "system";
 
+// Persisted theme lives in localStorage; we read it through an external store
+// so React handles hydration without a set-state-in-effect mount flag.
+const listeners = new Set<() => void>();
+
+function subscribe(callback: () => void) {
+  listeners.add(callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    listeners.delete(callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+function getStoredTheme(): Theme {
+  return (localStorage.getItem("theme") as Theme | null) ?? "system";
+}
+
+function getServerTheme(): Theme {
+  return "system";
+}
+
+function setStoredTheme(theme: Theme) {
+  if (theme === "system") {
+    localStorage.removeItem("theme");
+  } else {
+    localStorage.setItem("theme", theme);
+  }
+  for (const listener of listeners) listener();
+}
+
 export function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("system");
-  const [mounted, setMounted] = useState(false);
+  const theme = useSyncExternalStore(subscribe, getStoredTheme, getServerTheme);
 
   useEffect(() => {
-    setMounted(true);
-    const stored = localStorage.getItem("theme") as Theme | null;
-    if (stored) {
-      setTheme(stored);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!mounted) return;
-
     const root = document.documentElement;
 
     if (theme === "system") {
-      localStorage.removeItem("theme");
       const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
       root.setAttribute("data-theme", prefersDark ? "dark" : "light");
     } else {
-      localStorage.setItem("theme", theme);
       root.setAttribute("data-theme", theme);
     }
-  }, [theme, mounted]);
+  }, [theme]);
 
   useEffect(() => {
-    if (!mounted || theme !== "system") return;
+    if (theme !== "system") return;
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
     const handleChange = (e: MediaQueryListEvent) => {
@@ -41,26 +58,13 @@ export function ThemeToggle() {
 
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
-  }, [mounted, theme]);
+  }, [theme]);
 
   const cycleTheme = () => {
-    setTheme((current) => {
-      if (current === "light") return "dark";
-      if (current === "dark") return "system";
-      return "light";
-    });
+    if (theme === "light") return setStoredTheme("dark");
+    if (theme === "dark") return setStoredTheme("system");
+    return setStoredTheme("light");
   };
-
-  if (!mounted) {
-    return (
-      <button
-        className="inline-flex items-center justify-center w-8 h-8 rounded-lg text-p-ink-2"
-        aria-label="Toggle theme"
-      >
-        <SunIcon />
-      </button>
-    );
-  }
 
   return (
     <button
