@@ -1,169 +1,169 @@
 {
   "meta": {
-    "title": "Portolan — Publish geospatial data without the portal",
-    "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right."
+    "title": "Portolan, publica datos geoespaciales sin el portal",
+    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos en la nube en almacenamiento de objetos. STAC + GeoParquet + COG, bien hechos."
   },
   "nav": {
-    "why": "Why",
-    "howItWorks": "How it works",
-    "tools": "Tools",
+    "why": "Por qué",
+    "howItWorks": "Cómo funciona",
+    "tools": "Herramientas",
     "docs": "Docs",
-    "quickstart": "Quickstart"
+    "quickstart": "Inicio rápido"
   },
   "hero": {
-    "tagline": "A better spatial data infrastructure",
-    "title": "Publish geospatial data",
-    "titleHighlight": "without the portal.",
-    "description": "Portolan is a toolkit and set of conventions for publishing geospatial data as cloud-native files on object storage. STAC + GeoParquet + COG, done right, for governments and open data publishers.",
-    "quickstart": "Quickstart",
-    "browseCatalogs": "Browse catalogs"
+    "tagline": "Una mejor infraestructura de datos espaciales",
+    "title": "Publica datos geoespaciales",
+    "titleHighlight": "sin el portal.",
+    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos en la nube en almacenamiento de objetos. STAC + GeoParquet + COG, bien hechos, para gobiernos y publicadores de datos abiertos.",
+    "quickstart": "Inicio rápido",
+    "browseCatalogs": "Explorar catálogos"
   },
   "why": {
-    "eyebrow": "// WHY PORTOLAN",
-    "title": "Open, cheap, sovereign, AI-native.",
+    "eyebrow": "// POR QUÉ PORTOLAN",
+    "title": "Abierto, económico, soberano, nativo de IA.",
     "cards": {
       "open": {
-        "title": "Open",
-        "description": "100% open source, open formats. Apache-2.0 license, open governance, open specs. If Portolan disappeared tomorrow, your data would still work everywhere.",
+        "title": "Abierto",
+        "description": "100% código abierto, formatos abiertos. Licencia Apache-2.0, gobernanza abierta, especificaciones abiertas. Si Portolan desapareciera mañana, tus datos seguirían funcionando en todas partes.",
         "tag": "GeoParquet · COG · STAC"
       },
       "aiReady": {
-        "title": "AI-ready",
-        "description": "STAC metadata is structured for retrieval. Catalogs are queryable by LLM agents and ready for semantic search — not just humans clicking through a portal.",
-        "tag": "STAC + RAG-friendly"
+        "title": "Listo para IA",
+        "description": "Los metadatos STAC están estructurados para la recuperación. Los catálogos se pueden consultar con agentes LLM y están listos para la búsqueda semántica, no solo para humanos que navegan por un portal.",
+        "tag": "STAC + compatible con RAG"
       },
       "cheap": {
-        "title": "Cheap",
-        "description": "Pay only for storage and egress. No servers to run, no database to license, no portal seats to buy. A small government catalog: dollars a month.",
-        "tag": "storage + egress, that's it"
+        "title": "Económico",
+        "description": "Paga solo por almacenamiento y transferencia de salida. Sin servidores que mantener, sin base de datos que licenciar, sin asientos de portal que comprar. Un catálogo gubernamental pequeño, unos dólares al mes.",
+        "tag": "almacenamiento + salida, eso es todo"
       },
       "sovereign": {
-        "title": "Sovereign",
-        "description": "Your data lives in your bucket, on your cloud, in your jurisdiction. Host on AWS, GCS, Azure, MinIO, Cloudflare R2 — anywhere S3-compatible.",
-        "tag": "bring your own bucket"
+        "title": "Soberano",
+        "description": "Tus datos viven en tu bucket, en tu nube, en tu jurisdicción. Aloja en AWS, GCS, Azure, MinIO, Cloudflare R2, en cualquier lugar compatible con S3.",
+        "tag": "trae tu propio bucket"
       },
       "scales": {
-        "title": "Scales to petabytes",
-        "description": "Cloud object storage handles the scale. Cloud-native formats serve range requests — a 100 GB COG opens in ~80ms, faster than most tile servers.",
-        "tag": "p95 < 120ms · global"
+        "title": "Escala a petabytes",
+        "description": "El almacenamiento de objetos en la nube gestiona la escala. Los formatos nativos en la nube sirven solicitudes por rango, un COG de 100 GB se abre en ~80 ms, más rápido que la mayoría de los servidores de teselas.",
+        "tag": "p95 < 120 ms · global"
       },
       "breaks": {
-        "title": "Breaks the GIS silo",
-        "description": "Query with DuckDB, Snowflake, BigQuery, Databricks, Pandas — not just GIS tools. Every layer is a file at a stable URL, same bytes for everyone.",
-        "tag": "one URL · every tool"
+        "title": "Rompe el silo SIG",
+        "description": "Consulta con DuckDB, Snowflake, BigQuery, Databricks o Pandas, no solo con herramientas SIG. Cada capa es un archivo en una URL estable, los mismos bytes para todos.",
+        "tag": "una URL · todas las herramientas"
       }
     }
   },
   "howItWorks": {
-    "eyebrow": "// HOW IT WORKS",
-    "title": "Files on storage, not servers.",
-    "subtitle": "Portolan replaces traditional SDI servers with cloud-native files on object storage. No databases, no tile servers, no portal software — just files that browsers and AI agents read directly.",
+    "eyebrow": "// CÓMO FUNCIONA",
+    "title": "Archivos en almacenamiento, no servidores.",
+    "subtitle": "Portolan reemplaza los servidores SDI tradicionales con archivos nativos en la nube en almacenamiento de objetos. Sin bases de datos, sin servidores de teselas, sin software de portal, solo archivos que los navegadores y los agentes de IA leen directamente.",
     "steps": {
       "convert": {
         "id": "01",
-        "title": "Convert",
-        "description": "Transform shapefiles, GeoTIFFs, and other formats into cloud-native equivalents — GeoParquet for vectors, COG for rasters, PMTiles for map tiles."
+        "title": "Convertir",
+        "description": "Transforma shapefiles, GeoTIFF y otros formatos en equivalentes nativos en la nube, GeoParquet para vectores, COG para rásteres, PMTiles para teselas de mapa."
       },
       "catalog": {
         "id": "02",
-        "title": "Catalog",
-        "description": "Generate a STAC catalog that describes every asset with structured metadata, rich descriptions, and links that AI agents and tools can follow."
+        "title": "Catalogar",
+        "description": "Genera un catálogo STAC que describe cada activo con metadatos estructurados, descripciones enriquecidas y enlaces que los agentes de IA y las herramientas pueden seguir."
       },
       "publish": {
         "id": "03",
-        "title": "Publish",
-        "description": "Push files to any S3-compatible object storage — AWS, GCS, Azure, R2, MinIO, or Source Cooperative for free open data hosting."
+        "title": "Publicar",
+        "description": "Envía archivos a cualquier almacenamiento de objetos compatible con S3, AWS, GCS, Azure, R2, MinIO o Source Cooperative para alojamiento gratuito de datos abiertos."
       },
       "browse": {
         "id": "04",
-        "title": "Browse",
-        "description": "Data is instantly accessible through any STAC-compatible viewer, queryable via DuckDB, and ready for AI agents — no servers to run."
+        "title": "Explorar",
+        "description": "Los datos son accesibles al instante a través de cualquier visor compatible con STAC, consultables mediante DuckDB y listos para agentes de IA, sin servidores que ejecutar."
       }
     }
   },
   "toolkit": {
-    "eyebrow": "// THE TOOLKIT",
-    "title": "The toolkit.",
-    "allProjects": "All projects",
+    "eyebrow": "// EL CONJUNTO DE HERRAMIENTAS",
+    "title": "El conjunto de herramientas.",
+    "allProjects": "Todos los proyectos",
     "cli": {
       "name": "portolan-cli",
-      "title": "The CLI",
+      "title": "La CLI",
       "version": "v0.7.0",
-      "description": "Convert, validate, and sync. One command from a folder of shapefiles to a live STAC catalog on S3.",
-      "compatibility": "Works with AWS · GCS · Azure · R2 · MinIO · Source.coop"
+      "description": "Convierte, valida y sincroniza. Un comando desde una carpeta de shapefiles hasta un catálogo STAC en vivo en S3.",
+      "compatibility": "Funciona con AWS · GCS · Azure · R2 · MinIO · Source.coop"
     },
     "viewer": {
       "name": "portolan-viewer",
-      "tag": "In design",
-      "title": "Browser-native viewer",
-      "description": "A lightweight viewer that reads STAC + cloud-native files directly."
+      "tag": "En diseño",
+      "title": "Visor nativo del navegador",
+      "description": "Un visor ligero que lee STAC y archivos nativos en la nube directamente."
     },
     "skills": {
       "name": "portolan-skills",
-      "tag": "Stable",
-      "title": "AI agent skills",
-      "description": "Ready-made skills that let Claude, Gemini, and Codex agents publish catalogs and query cloud-native geospatial data."
+      "tag": "Estable",
+      "title": "Skills para agentes de IA",
+      "description": "Skills listas para usar que permiten a los agentes Claude, Gemini y Codex publicar catálogos y consultar datos geoespaciales nativos en la nube."
     },
-    "readMore": "Read more"
+    "readMore": "Leer más"
   },
   "footer": {
-    "openGovernance": "Open governance",
+    "openGovernance": "Gobernanza abierta",
     "license": "Apache-2.0",
     "repo": "portolan-sdi/portolan"
   },
   "publishMap": {
-    "header": "// PUBLISHED CATALOGS · WORLD",
-    "live": "live · updated 4m ago",
+    "header": "// CATÁLOGOS PUBLICADOS · MUNDO",
+    "live": "en vivo · actualizado hace 4 min",
     "nodes": {
-      "pacificNw": "Pacific NW Lidar",
-      "andean": "Andean Glaciers",
-      "madrid": "Madrid Open Data",
-      "nordic": "Nordic Hydro",
-      "redSea": "Red Sea Reefs",
-      "taiwan": "Coastal Bathymetry"
+      "pacificNw": "Lidar del Pacífico NW",
+      "andean": "Glaciares andinos",
+      "madrid": "Datos abiertos de Madrid",
+      "nordic": "Hidrología nórdica",
+      "redSea": "Arrecifes del mar Rojo",
+      "taiwan": "Batimetría costera"
     }
   },
   "quickstart": {
-    "title": "Quickstart",
-    "intro": "Get started with Portolan in minutes. Browse existing catalogs, then publish your own data.",
+    "title": "Inicio rápido",
+    "intro": "Empieza con Portolan en minutos. Explora catálogos existentes y luego publica tus propios datos.",
     "browse": {
-      "eyebrow": "// STEP 1",
-      "title": "Browse a catalog",
-      "description": "Portolan catalogs are live on the web. Open the Portolan Browser to explore published datasets — view metadata, preview maps, and inspect data tables. Everything you see is served directly from cloud-native files on object storage, with zero servers.",
-      "cta": "Open the browser",
+      "eyebrow": "// PASO 1",
+      "title": "Explora un catálogo",
+      "description": "Los catálogos de Portolan están en vivo en la web. Abre el Portolan Browser para explorar conjuntos de datos publicados, ver metadatos, previsualizar mapas e inspeccionar tablas de datos. Todo lo que ves se sirve directamente desde archivos nativos en la nube en almacenamiento de objetos, con cero servidores.",
+      "cta": "Abrir el navegador",
       "duckdb": {
-        "title": "Query with DuckDB",
-        "description": "Any GeoParquet file in a Portolan catalog can be queried directly with DuckDB — no download needed. Just point at the URL."
+        "title": "Consulta con DuckDB",
+        "description": "Cualquier archivo GeoParquet de un catálogo Portolan se puede consultar directamente con DuckDB, sin necesidad de descargar. Solo apunta a la URL."
       }
     },
     "publish": {
-      "eyebrow": "// STEP 2",
-      "title": "Publish your data",
-      "description": "Two paths to get your data into a Portolan catalog."
+      "eyebrow": "// PASO 2",
+      "title": "Publica tus datos",
+      "description": "Dos formas de llevar tus datos a un catálogo Portolan."
     },
     "cli": {
-      "title": "With the CLI",
-      "description": "Install the portolan-cli, then init, add, convert, and push.",
-      "install": "Install",
+      "title": "Con la CLI",
+      "description": "Instala portolan-cli, luego init, add, convert y push.",
+      "install": "Instalar",
       "steps": {
-        "init": "Initialize a new catalog in your data directory",
-        "add": "Add your data files to the catalog",
-        "check": "Convert to cloud-native formats (GeoParquet, COG)",
-        "push": "Push to any S3-compatible storage"
+        "init": "Inicializa un nuevo catálogo en tu directorio de datos",
+        "add": "Añade tus archivos de datos al catálogo",
+        "check": "Convierte a formatos nativos en la nube (GeoParquet, COG)",
+        "push": "Envía a cualquier almacenamiento compatible con S3"
       }
     },
     "claude": {
-      "title": "With Claude",
-      "description": "If you have Claude Code, install the Portolan skill and point Claude at your data. It handles format conversion, metadata generation, and publishing.",
+      "title": "Con Claude",
+      "description": "Si tienes Claude Code, instala la skill de Portolan y apunta Claude a tus datos. Se encarga de la conversión de formatos, la generación de metadatos y la publicación.",
       "steps": {
-        "install": "Install the Portolan CLI skill",
-        "run": "Then ask Claude to publish your data"
+        "install": "Instala la skill de la CLI de Portolan",
+        "run": "Luego pide a Claude que publique tus datos"
       }
     },
     "next": {
-      "title": "What's next",
-      "docs": "Read the full CLI docs",
-      "github": "Browse the source on GitHub"
+      "title": "Qué sigue",
+      "docs": "Lee la documentación completa de la CLI",
+      "github": "Explora el código en GitHub"
     }
   }
 }
