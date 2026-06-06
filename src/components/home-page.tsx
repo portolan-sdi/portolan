@@ -6,7 +6,7 @@ import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
-import { Btn, Tag, Card, Terminal } from "./ui";
+import { Btn, Tag, Card, Terminal, DirArrow, Ltr } from "./ui";
 
 const terminalLines = [
   { text: "# Convert a folder of shapefiles + tiffs to a portable catalog", color: "#5775d6" },
@@ -73,7 +73,7 @@ export function HomePage() {
               <div className="flex gap-4 items-center flex-wrap">
                 <Link href="/quickstart">
                   <Btn variant="primary" size="lg">
-                    {t("hero.quickstart")} →
+                    {t("hero.quickstart")} <DirArrow />
                   </Btn>
                 </Link>
                 <a href="https://browser.portolan-sdi.org/">
@@ -176,7 +176,7 @@ export function HomePage() {
             </div>
             <a href="https://github.com/portolan-sdi/">
               <Btn variant="secondary" size="md">
-                {t("toolkit.allProjects")} →
+                {t("toolkit.allProjects")} <DirArrow />
               </Btn>
             </a>
           </div>
@@ -187,7 +187,7 @@ export function HomePage() {
                 <div className="flex items-start justify-between">
                   <div>
                     <div className="font-mono text-eyebrow text-p-primary-ink mb-1">
-                      {t("toolkit.cli.name")}
+                      <Ltr>{t("toolkit.cli.name")}</Ltr>
                     </div>
                     <h3 className="text-feature">{t("toolkit.cli.title")}</h3>
                   </div>
@@ -207,7 +207,7 @@ export function HomePage() {
                 <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                   <div className="flex justify-between items-start">
                     <div className="font-mono text-eyebrow text-p-primary-ink">
-                      {t("toolkit.viewer.name")}
+                      <Ltr>{t("toolkit.viewer.name")}</Ltr>
                     </div>
                     <Tag tone="default">{t("toolkit.viewer.tag")}</Tag>
                   </div>
@@ -216,7 +216,7 @@ export function HomePage() {
                     {t("toolkit.viewer.description")}
                   </p>
                   <span className="mt-auto text-small text-p-primary hover:underline">
-                    {t("toolkit.readMore")} →
+                    {t("toolkit.readMore")} <DirArrow />
                   </span>
                 </Card>
               </a>
@@ -224,7 +224,7 @@ export function HomePage() {
                 <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                   <div className="flex justify-between items-start">
                     <div className="font-mono text-eyebrow text-p-primary-ink">
-                      {t("toolkit.skills.name")}
+                      <Ltr>{t("toolkit.skills.name")}</Ltr>
                     </div>
                     <Tag tone="default">{t("toolkit.skills.tag")}</Tag>
                   </div>
@@ -233,7 +233,7 @@ export function HomePage() {
                     {t("toolkit.skills.description")}
                   </p>
                   <span className="mt-auto text-small text-p-primary hover:underline">
-                    {t("toolkit.readMore")} →
+                    {t("toolkit.readMore")} <DirArrow />
                   </span>
                 </Card>
               </a>

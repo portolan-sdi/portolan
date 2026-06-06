@@ -11,5 +11,11 @@ export default getRequestConfig(async ({ requestLocale }) => {
   return {
     locale,
     messages: (await import(`../../messages/${locale}.json`)).default,
+    // Latin (Western) digits in every locale, including Arabic, so versions,
+    // stats, and dates stay copy-paste friendly and never shape to ٠١٢٣.
+    formats: {
+      number: { decimal: { numberingSystem: "latn" } },
+      dateTime: { short: { numberingSystem: "latn" } },
+    },
   };
 });

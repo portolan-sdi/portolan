@@ -27,6 +27,7 @@
     "Segoe UI", Roboto, sans-serif;
   --p-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     monospace;
+  --p-arabic: var(--font-cairo), "Segoe UI", Tahoma, sans-serif;
 
   /* Radii */
   --p-r-xs: 4px;
@@ -191,6 +192,26 @@ a {
 button {
   font-family: inherit;
   cursor: pointer;
+}
+
+/* Arabic (RTL): route prose, headings, and mono-styled eyebrow labels to Cairo,
+   which Archivo and JetBrains Mono cannot render. */
+[dir="rtl"] body,
+[dir="rtl"] h1,
+[dir="rtl"] h2,
+[dir="rtl"] h3,
+[dir="rtl"] h4,
+[dir="rtl"] h5,
+[dir="rtl"] .font-mono {
+  font-family: var(--p-arabic);
+}
+
+/* Keep real code/terminal blocks in true monospace even on an RTL page.
+   The Terminal root carries dir="ltr"; this re-assert wins by source order. */
+[dir="ltr"] .font-mono,
+.font-mono[dir="ltr"],
+[dir="ltr"] .font-mono * {
+  font-family: var(--p-mono);
 }
 
 @keyframes dither-pulse-ring {

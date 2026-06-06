@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { PortolanLogo } from "./portolan-logo";
 import { ThemeToggle } from "./theme-toggle";
+import { DirArrow } from "./ui";
 
 const navLinks = [
   { href: "/#why", key: "why" },
@@ -39,14 +40,19 @@ export function SiteHeader() {
           {navLinks.map((link) => {
             const isExternal = "external" in link && link.external;
             const className = "text-inherit hover:text-p-ink transition-colors";
-            const label = `${t(`nav.${link.key}`)}${isExternal ? " ↗" : ""}`;
+            const content = (
+              <>
+                {t(`nav.${link.key}`)}
+                {isExternal ? <> <DirArrow kind="external" /></> : null}
+              </>
+            );
             return isExternal ? (
               <a key={link.key} href={link.href} className={className}>
-                {label}
+                {content}
               </a>
             ) : (
               <Link key={link.key} href={link.href} className={className}>
-                {label}
+                {content}
               </Link>
             );
           })}
@@ -88,7 +94,12 @@ export function SiteHeader() {
             const isExternal = "external" in link && link.external;
             const className =
               "py-2.5 text-body-lg text-p-ink-2 hover:text-p-ink transition-colors";
-            const label = `${t(`nav.${link.key}`)}${isExternal ? " ↗" : ""}`;
+            const content = (
+              <>
+                {t(`nav.${link.key}`)}
+                {isExternal ? <> <DirArrow kind="external" /></> : null}
+              </>
+            );
             return isExternal ? (
               <a
                 key={link.key}
@@ -96,7 +107,7 @@ export function SiteHeader() {
                 onClick={() => setOpen(false)}
                 className={className}
               >
-                {label}
+                {content}
               </a>
             ) : (
               <Link
@@ -105,7 +116,7 @@ export function SiteHeader() {
                 onClick={() => setOpen(false)}
                 className={className}
               >
-                {label}
+                {content}
               </Link>
             );
           })}

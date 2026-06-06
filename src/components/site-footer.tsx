@@ -1,5 +1,6 @@
 import { useTranslations } from "next-intl";
 import { PortolanLogo } from "./portolan-logo";
+import { Ltr } from "./ui";
 
 export function SiteFooter() {
   const t = useTranslations();
@@ -8,8 +9,8 @@ export function SiteFooter() {
       <PortolanLogo size={22} />
       <div className="flex flex-wrap gap-x-6 gap-y-2">
         <span>{t("footer.openGovernance")}</span>
-        <span>{t("footer.license")}</span>
-        <span>{t("footer.repo")}</span>
+        <span><Ltr>{t("footer.license")}</Ltr></span>
+        <span><Ltr>{t("footer.repo")}</Ltr></span>
       </div>
     </footer>
   );
