@@ -23,8 +23,8 @@
   --p-warn: #c97a2b;
 
   /* Type */
-  --p-sans: var(--font-archivo), ui-sans-serif, system-ui, -apple-system,
-    "Segoe UI", Roboto, sans-serif;
+  --p-sans: var(--font-archivo), var(--font-cairo), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, sans-serif;
   --p-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     monospace;
   --p-arabic: var(--font-cairo), "Segoe UI", Tahoma, sans-serif;
@@ -194,14 +194,16 @@ button {
   cursor: pointer;
 }
 
-/* Arabic (RTL): route prose, headings, and mono-styled eyebrow labels to Cairo,
-   which Archivo and JetBrains Mono cannot render. */
-[dir="rtl"] body,
-[dir="rtl"] h1,
-[dir="rtl"] h2,
-[dir="rtl"] h3,
-[dir="rtl"] h4,
-[dir="rtl"] h5,
+/* Arabic (RTL): the whole page renders in Cairo, which Archivo cannot render.
+   Re-pointing the sans token (used by body, headings, and the font-sans utility)
+   keeps prose, headings, and content wrappers in Cairo. Latin product names
+   render in Cairo too. */
+[dir="rtl"] {
+  --p-sans: var(--p-arabic);
+}
+
+/* Mono-styled eyebrow labels use the mono token; route them to Cairo on RTL
+   pages too. Real code/terminal blocks carry dir="ltr" and stay monospace. */
 [dir="rtl"] .font-mono {
   font-family: var(--p-arabic);
 }

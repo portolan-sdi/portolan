@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/navigation";
 import { routing, type Locale } from "@/i18n/routing";
+import { Ltr } from "./ui";
 
 // Native language names are always shown in their own language, so they are not
 // translated. Order follows routing.locales (en, es, ar).
@@ -49,7 +50,6 @@ export function LocaleSwitcher() {
         aria-label={t("nav.languageAria")}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls="locale-menu"
         onClick={() => setOpen((v) => !v)}
         className="inline-flex items-center gap-1 h-8 px-2 rounded-[var(--p-r-md)] text-small text-p-ink-2 transition-colors hover:bg-p-bg-soft hover:text-p-ink"
       >
@@ -58,7 +58,7 @@ export function LocaleSwitcher() {
           <line x1="2" y1="12" x2="22" y2="12" />
           <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
         </svg>
-        <span dir="ltr">{locale.toUpperCase()}</span>
+        <Ltr>{locale.toUpperCase()}</Ltr>
         <svg
           width="12"
           height="12"
@@ -77,7 +77,6 @@ export function LocaleSwitcher() {
 
       {open ? (
         <div
-          id="locale-menu"
           role="menu"
           className="absolute end-0 top-full mt-2 min-w-40 py-1 rounded-[var(--p-r-md)] border border-p-line-soft bg-p-bg shadow-[var(--p-shadow-md)] text-small z-50"
         >
