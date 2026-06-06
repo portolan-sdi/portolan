@@ -11,7 +11,12 @@ any user-facing string, follow this table and keep all three locale files in syn
 - Generic concept words are translated (see table).
 - Digits are always Latin (0-9), including in Arabic prose.
 - Spanish: neutral international Spanish, impersonal register.
-- Arabic: Modern Standard Arabic (MSA). For borderline dev terms lead with Arabic.
+- Arabic: Modern Standard Arabic (MSA). Translate the idea in context, never word by
+  word. When the literal calque reads wrong or unnatural to Arab developers (for example
+  object storage, tile servers, bucket), keep the English term in Latin rather than force
+  an awkward Arabic word. Render "-native" as "مصمّم لـ" (cloud-native = مصمّم للسحابة,
+  AI-native = مصمّم للذكاء الاصطناعي), never "أصيل". A Latin term inside Arabic takes
+  "داخل/فوق", not "في" (داخل Object Storage, not في Object Storage).
 - No em dashes, colons, or semicolons in es or ar copy.
 
 ## Core terms
@@ -27,19 +32,27 @@ any user-facing string, follow this table and keep all three locale files in syn
 | publish | publicar | نشر |
 | catalog | catálogo | كتالوج |
 | metadata | metadatos | البيانات الوصفية |
-| object storage | almacenamiento de objetos | تخزين الكائنات |
-| cloud-native | nativo en la nube | سحابي |
+| object storage | almacenamiento de objetos | Object Storage (Latin) |
+| cloud-native | nativo de la nube | مصمّم للسحابة |
+| geospatial data | datos geoespaciales | البيانات الجيومكانية |
+| spatial data | datos espaciales | البيانات المكانية |
 | spatial data infrastructure | infraestructura de datos espaciales (SDI) | البنية التحتية للبيانات المكانية |
 | sovereign | soberano | سيادي |
+| AI-native | nativo de IA | مصمّم للذكاء الاصطناعي |
 | AI-ready | listo para IA | جاهز للذكاء الاصطناعي |
+| browser-native | nativo del navegador | يعمل داخل المتصفح |
 | cheap | económico | اقتصادي |
+| egress | transferencia de salida | نقل البيانات الصادرة |
+| jurisdiction | jurisdicción | داخل حدود بلدك |
+| bucket | bucket | مساحة التخزين |
 | validator | validador | أداة التحقق |
 | viewer | visor | عارض |
 | browser | navegador | متصفّح |
 | node | nodo | عقدة |
 | GIS | SIG | نظم المعلومات الجغرافية |
-| range request | solicitud por rango | طلب النطاق |
-| map tiles | teselas de mapa | بلاطات الخرائط |
+| range request | solicitud por rango | طلب النطاق الجزئي |
+| tile server | servidor de teselas | خوادم tiles (Latin) |
+| map tiles | teselas de mapa | map tiles (Latin) |
 
 ## Notes
 
