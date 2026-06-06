@@ -10,12 +10,12 @@ interface TerminalProps {
 
 export function Terminal({ lines = [], title = "portolan" }: TerminalProps) {
   return (
-    <div className="bg-[var(--term-bg)] rounded-[var(--p-r-lg)] border border-[var(--term-border)] shadow-[var(--p-shadow-md)] overflow-hidden font-mono text-[11px] sm:text-small">
+    <div className="bg-[var(--term-bg)] rounded-[var(--p-r-lg)] border border-[var(--term-border)] shadow-[var(--p-shadow-md)] overflow-hidden font-mono text-eyebrow sm:text-small">
       <div className="bg-[var(--term-header)] px-4 py-2.5 flex items-center gap-2 border-b border-[var(--term-border)]">
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--term-dot-red)]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--term-dot-yellow)]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--term-dot-green)]" />
-        <span className="ml-3 text-[var(--term-title)] text-xs">{title}</span>
+        <span className="ml-3 text-[var(--term-title)] text-eyebrow">{title}</span>
       </div>
       <div className="px-4 py-4 text-[var(--term-text)] leading-relaxed overflow-x-auto">
         {lines.map((line, i) => {

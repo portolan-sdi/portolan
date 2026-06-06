@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useTranslations } from "next-intl";
+import { Link } from "@/i18n/navigation";
 import { PortolanLogo } from "./portolan-logo";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -80,10 +80,9 @@ export function SiteHeader() {
           </button>
         </div>
       </div>
-      {open && (
-        <nav
+      <nav
           id="mobile-nav"
-          className="md:hidden flex flex-col px-[var(--p-pad-section-x)] pb-4 gap-1 border-t border-p-line-soft bg-p-bg"
+          className={`md:hidden flex-col px-[var(--p-pad-section-x)] pb-4 gap-1 border-t border-p-line-soft bg-p-bg ${open ? "flex" : "hidden"}`}
         >
           {navLinks.map((link) => {
             const isExternal = "external" in link && link.external;
@@ -111,7 +110,6 @@ export function SiteHeader() {
             );
           })}
         </nav>
-      )}
     </header>
   );
 }

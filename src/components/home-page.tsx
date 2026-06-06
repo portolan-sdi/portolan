@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import Link from "next/link";
+import { Link } from "@/i18n/navigation";
 import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
 import { SiteHeader } from "./site-header";
@@ -186,7 +186,7 @@ export function HomePage() {
               <Card className="flex flex-col gap-4 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="font-mono text-xs text-p-primary-ink mb-1">
+                    <div className="font-mono text-eyebrow text-p-primary-ink mb-1">
                       {t("toolkit.cli.name")}
                     </div>
                     <h3 className="text-feature">{t("toolkit.cli.title")}</h3>
@@ -206,7 +206,7 @@ export function HomePage() {
               <a href="https://github.com/portolan-sdi/portolan-browser" className="contents">
                 <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                   <div className="flex justify-between items-start">
-                    <div className="font-mono text-xs text-p-primary-ink">
+                    <div className="font-mono text-eyebrow text-p-primary-ink">
                       {t("toolkit.viewer.name")}
                     </div>
                     <Tag tone="default">{t("toolkit.viewer.tag")}</Tag>
@@ -223,7 +223,7 @@ export function HomePage() {
               <a href="https://github.com/portolan-sdi/portolan-skills" className="contents">
                 <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
                   <div className="flex justify-between items-start">
-                    <div className="font-mono text-xs text-p-primary-ink">
+                    <div className="font-mono text-eyebrow text-p-primary-ink">
                       {t("toolkit.skills.name")}
                     </div>
                     <Tag tone="default">{t("toolkit.skills.tag")}</Tag>
