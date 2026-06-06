@@ -10,7 +10,8 @@
     "docs": "Docs",
     "quickstart": "Inicio rápido",
     "homeAria": "Inicio de Portolan",
-    "menuAria": "Alternar menú"
+    "menuAria": "Alternar menú",
+    "languageAria": "Cambiar idioma"
   },
   "hero": {
     "tagline": "Una mejor infraestructura de datos espaciales",

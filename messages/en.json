@@ -10,7 +10,8 @@
     "docs": "Docs",
     "quickstart": "Quickstart",
     "homeAria": "Portolan home",
-    "menuAria": "Toggle menu"
+    "menuAria": "Toggle menu",
+    "languageAria": "Change language"
   },
   "hero": {
     "tagline": "A better spatial data infrastructure",
