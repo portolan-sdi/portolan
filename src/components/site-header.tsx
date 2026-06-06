@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { PortolanLogo } from "./portolan-logo";
 import { ThemeToggle } from "./theme-toggle";
+import { LocaleSwitcher } from "./locale-switcher";
 import { DirArrow } from "./ui";
 
 const navLinks = [
@@ -59,6 +60,7 @@ export function SiteHeader() {
         </nav>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <LocaleSwitcher />
           <a
             href="https://github.com/portolan-sdi"
             aria-label="GitHub"
