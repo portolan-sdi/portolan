@@ -8,7 +8,9 @@
     "howItWorks": "How it works",
     "tools": "Tools",
     "docs": "Docs",
-    "quickstart": "Quickstart"
+    "quickstart": "Quickstart",
+    "homeAria": "Portolan home",
+    "menuAria": "Toggle menu"
   },
   "hero": {
     "tagline": "A better spatial data infrastructure",

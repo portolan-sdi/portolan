@@ -33,7 +33,7 @@ export function SiteHeader() {
   return (
     <header className="relative border-b border-p-line-soft">
       <div className="flex items-center justify-between px-[var(--p-pad-section-x)] py-4">
-        <Link href="/" aria-label="Portolan home">
+        <Link href="/" aria-label={t("nav.homeAria")}>
           <PortolanLogo size={28} />
         </Link>
         <nav className="hidden md:flex gap-7 text-small text-p-ink-2">
@@ -70,7 +70,7 @@ export function SiteHeader() {
           </a>
           <button
             type="button"
-            aria-label="Toggle menu"
+            aria-label={t("nav.menuAria")}
             aria-expanded={open}
             aria-controls="mobile-nav"
             onClick={() => setOpen((v) => !v)}

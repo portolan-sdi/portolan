@@ -8,7 +8,9 @@
     "howItWorks": "كيف يعمل",
     "tools": "الأدوات",
     "docs": "التوثيق",
-    "quickstart": "البدء السريع"
+    "quickstart": "البدء السريع",
+    "homeAria": "الصفحة الرئيسية لـ Portolan",
+    "menuAria": "تبديل القائمة"
   },
   "hero": {
     "tagline": "بنية تحتية أفضل للبيانات المكانية",
