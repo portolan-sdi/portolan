@@ -49,6 +49,29 @@ Avoid framing Portolan as a SaaS, a portal, a product, or a company.
 ## i18n
 
 - Default locale: English (no URL prefix)
-- Spanish: `/es/` prefix
-- Translation files in `messages/` directory
+- Spanish: `/es/` prefix · Arabic: `/ar/` prefix (RTL)
+- Translation files in `messages/` (`en.json`, `es.json`, `ar.json`)
 - Use `useTranslations` hook in client components
+
+### Translation contract (required)
+
+- Every user-facing string lives in `messages/`. Never hardcode copy in components.
+- When you add or change a string, update **all three** files (`en`, `es`, `ar`) under
+  the **same key**. Key sets must stay identical across locales.
+- Follow `docs/i18n/glossary.md`. Keep product and format names (Portolan, STAC,
+  GeoParquet, COG, S3, ...) in Latin in every locale.
+- Digits are always Latin (0-9), including in Arabic.
+- No em dashes, colons, or semicolons in Spanish or Arabic copy.
+
+### RTL rules (Arabic)
+
+- Use Tailwind **logical** utilities in shared UI (`ps/pe`, `ms/me`, `text-start/end`,
+  `border-s/e`, `rounded-s/e`, `inset-s/e`), never physical `pl/pr/ml/mr/left/right`.
+  Prefer `gap-*` over `space-x-*`.
+- Reserve `rtl:` variants for mirroring directional icons (use `<DirArrow>`).
+- Never mirror the logo, the map/dither canvas, or terminal/code blocks. Terminal and
+  code blocks stay `dir="ltr"`.
+- Wrap pure-Latin standalone values (names, versions, license, repo) in `<Ltr>` so they
+  stay correctly ordered inside Arabic text.
+- `<html lang dir>` is set per locale in `src/app/[locale]/layout.tsx` via
+  `getDirection(locale)`. Do not reintroduce `<html>` into the root layout.

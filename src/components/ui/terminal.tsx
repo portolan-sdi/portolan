@@ -10,7 +10,7 @@ interface TerminalProps {
 
 export function Terminal({ lines = [], title = "portolan" }: TerminalProps) {
   return (
-    <div className="bg-[var(--term-bg)] rounded-[var(--p-r-lg)] border border-[var(--term-border)] shadow-[var(--p-shadow-md)] overflow-hidden font-mono text-eyebrow sm:text-small">
+    <div dir="ltr" className="bg-[var(--term-bg)] rounded-[var(--p-r-lg)] border border-[var(--term-border)] shadow-[var(--p-shadow-md)] overflow-hidden font-mono text-eyebrow sm:text-small">
       <div className="bg-[var(--term-header)] px-4 py-2.5 flex items-center gap-2 border-b border-[var(--term-border)]">
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--term-dot-red)]" />
         <span className="w-2.5 h-2.5 rounded-full bg-[var(--term-dot-yellow)]" />

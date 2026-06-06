@@ -3,7 +3,7 @@
 import { useTranslations } from "next-intl";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
-import { Btn, Card, Terminal } from "./ui";
+import { Btn, Card, Terminal, DirArrow } from "./ui";
 
 const installLines = [
   { text: "$ uv tool install portolan-cli", color: "#c5cce8" },
@@ -86,7 +86,7 @@ export function QuickstartPage() {
           </p>
           <a href="https://browser.portolan-sdi.org/" className="inline-block mb-10">
             <Btn variant="primary" size="md">
-              {t("quickstart.browse.cta")} ↗
+              {t("quickstart.browse.cta")} <DirArrow kind="external" />
             </Btn>
           </a>
 
@@ -150,12 +150,12 @@ export function QuickstartPage() {
           <div className="flex gap-4 flex-wrap">
             <a href="https://portolan-sdi.github.io/portolan-cli">
               <Btn variant="secondary" size="md">
-                {t("quickstart.next.docs")} ↗
+                {t("quickstart.next.docs")} <DirArrow kind="external" />
               </Btn>
             </a>
             <a href="https://github.com/portolan-sdi">
               <Btn variant="secondary" size="md">
-                {t("quickstart.next.github")} ↗
+                {t("quickstart.next.github")} <DirArrow kind="external" />
               </Btn>
             </a>
           </div>
