@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { useTranslations } from "next-intl";
 import { PortolanLogo } from "./portolan-logo";
 import { ThemeToggle } from "./theme-toggle";
@@ -31,20 +32,24 @@ export function SiteHeader() {
   return (
     <header className="relative border-b border-p-line-soft">
       <div className="flex items-center justify-between px-[var(--p-pad-section-x)] py-4">
-        <a href="/" aria-label="Portolan home">
+        <Link href="/" aria-label="Portolan home">
           <PortolanLogo size={28} />
-        </a>
+        </Link>
         <nav className="hidden md:flex gap-7 text-small text-p-ink-2">
-          {navLinks.map((link) => (
-            <a
-              key={link.key}
-              href={link.href}
-              className="text-inherit hover:text-p-ink transition-colors"
-            >
-              {t(`nav.${link.key}`)}
-              {"external" in link && link.external ? " ↗" : ""}
-            </a>
-          ))}
+          {navLinks.map((link) => {
+            const isExternal = "external" in link && link.external;
+            const className = "text-inherit hover:text-p-ink transition-colors";
+            const label = `${t(`nav.${link.key}`)}${isExternal ? " ↗" : ""}`;
+            return isExternal ? (
+              <a key={link.key} href={link.href} className={className}>
+                {label}
+              </a>
+            ) : (
+              <Link key={link.key} href={link.href} className={className}>
+                {label}
+              </Link>
+            );
+          })}
         </nav>
         <div className="flex items-center gap-2">
           <ThemeToggle />
@@ -80,17 +85,31 @@ export function SiteHeader() {
           id="mobile-nav"
           className="md:hidden flex flex-col px-[var(--p-pad-section-x)] pb-4 gap-1 border-t border-p-line-soft bg-p-bg"
         >
-          {navLinks.map((link) => (
-            <a
-              key={link.key}
-              href={link.href}
-              onClick={() => setOpen(false)}
-              className="py-2.5 text-body-lg text-p-ink-2 hover:text-p-ink transition-colors"
-            >
-              {t(`nav.${link.key}`)}
-              {"external" in link && link.external ? " ↗" : ""}
-            </a>
-          ))}
+          {navLinks.map((link) => {
+            const isExternal = "external" in link && link.external;
+            const className =
+              "py-2.5 text-body-lg text-p-ink-2 hover:text-p-ink transition-colors";
+            const label = `${t(`nav.${link.key}`)}${isExternal ? " ↗" : ""}`;
+            return isExternal ? (
+              <a
+                key={link.key}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className={className}
+              >
+                {label}
+              </a>
+            ) : (
+              <Link
+                key={link.key}
+                href={link.href}
+                onClick={() => setOpen(false)}
+                className={className}
+              >
+                {label}
+              </Link>
+            );
+          })}
         </nav>
       )}
     </header>

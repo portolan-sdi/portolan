@@ -1,6 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import Link from "next/link";
 import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
 import { SiteHeader } from "./site-header";
@@ -70,11 +71,11 @@ export function HomePage() {
                 {t("hero.description")}
               </p>
               <div className="flex gap-4 items-center flex-wrap">
-                <a href="/quickstart">
+                <Link href="/quickstart">
                   <Btn variant="primary" size="lg">
                     {t("hero.quickstart")} →
                   </Btn>
-                </a>
+                </Link>
                 <a href="https://browser.portolan-sdi.org/">
                   <Btn variant="secondary" size="lg">
                     {t("hero.browseCatalogs")}
