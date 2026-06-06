@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Portolan, publica datos geoespaciales sin el portal",
-    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos en la nube en almacenamiento de objetos. STAC + GeoParquet + COG, bien hechos."
+    "title": "Portolan, publica datos geoespaciales sin portal",
+    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos de la nube en almacenamiento de objetos. STAC + GeoParquet + COG, como debe ser."
   },
   "nav": {
     "why": "Por qué",
@@ -10,14 +10,14 @@
     "docs": "Docs",
     "quickstart": "Inicio rápido",
     "homeAria": "Inicio de Portolan",
-    "menuAria": "Alternar menú",
+    "menuAria": "Abrir o cerrar menú",
     "languageAria": "Cambiar idioma"
   },
   "hero": {
     "tagline": "Una mejor infraestructura de datos espaciales",
     "title": "Publica datos geoespaciales",
-    "titleHighlight": "sin el portal.",
-    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos en la nube en almacenamiento de objetos. STAC + GeoParquet + COG, bien hechos, para gobiernos y publicadores de datos abiertos.",
+    "titleHighlight": "sin portal.",
+    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos de la nube en almacenamiento de objetos. STAC + GeoParquet + COG, como debe ser, para gobiernos y editores de datos abiertos.",
     "quickstart": "Inicio rápido",
     "browseCatalogs": "Explorar catálogos"
   },
@@ -32,26 +32,26 @@
       },
       "aiReady": {
         "title": "Listo para IA",
-        "description": "Los metadatos STAC están estructurados para la recuperación. Los catálogos se pueden consultar con agentes LLM y están listos para la búsqueda semántica, no solo para humanos que navegan por un portal.",
+        "description": "Los metadatos STAC están estructurados para su recuperación. Los catálogos se pueden consultar con agentes LLM y están listos para la búsqueda semántica, no solo para personas que navegan por un portal.",
         "tag": "STAC + compatible con RAG"
       },
       "cheap": {
         "title": "Económico",
-        "description": "Paga solo por almacenamiento y transferencia de salida. Sin servidores que mantener, sin base de datos que licenciar, sin asientos de portal que comprar. Un catálogo gubernamental pequeño, unos dólares al mes.",
+        "description": "Paga solo por almacenamiento y transferencia de salida. Sin servidores que mantener, sin base de datos que licenciar, sin licencias de portal que comprar. Un catálogo gubernamental pequeño, unos dólares al mes.",
         "tag": "almacenamiento + salida, eso es todo"
       },
       "sovereign": {
         "title": "Soberano",
-        "description": "Tus datos viven en tu bucket, en tu nube, en tu jurisdicción. Aloja en AWS, GCS, Azure, MinIO, Cloudflare R2, en cualquier lugar compatible con S3.",
-        "tag": "trae tu propio bucket"
+        "description": "Tus datos residen en tu bucket, en tu nube, en tu jurisdicción. Alójalos en AWS, GCS, Azure, MinIO, Cloudflare R2, en cualquier lugar compatible con S3.",
+        "tag": "usa tu propio bucket"
       },
       "scales": {
         "title": "Escala a petabytes",
-        "description": "El almacenamiento de objetos en la nube gestiona la escala. Los formatos nativos en la nube sirven solicitudes por rango, un COG de 100 GB se abre en ~80 ms, más rápido que la mayoría de los servidores de teselas.",
+        "description": "El almacenamiento de objetos en la nube gestiona la escala. Los formatos nativos de la nube responden a solicitudes por rango, un COG de 100 GB se abre en ~80 ms, más rápido que la mayoría de los servidores de teselas.",
         "tag": "p95 < 120 ms · global"
       },
       "breaks": {
-        "title": "Rompe el silo SIG",
+        "title": "Acaba con el silo SIG",
         "description": "Consulta con DuckDB, Snowflake, BigQuery, Databricks o Pandas, no solo con herramientas SIG. Cada capa es un archivo en una URL estable, los mismos bytes para todos.",
         "tag": "una URL · todas las herramientas"
       }
@@ -60,12 +60,12 @@
   "howItWorks": {
     "eyebrow": "// CÓMO FUNCIONA",
     "title": "Archivos en almacenamiento, no servidores.",
-    "subtitle": "Portolan reemplaza los servidores SDI tradicionales con archivos nativos en la nube en almacenamiento de objetos. Sin bases de datos, sin servidores de teselas, sin software de portal, solo archivos que los navegadores y los agentes de IA leen directamente.",
+    "subtitle": "Portolan reemplaza los servidores SDI tradicionales con archivos nativos de la nube en almacenamiento de objetos. Sin bases de datos, sin servidores de teselas, sin software de portales, solo archivos que los navegadores y los agentes de IA leen directamente.",
     "steps": {
       "convert": {
         "id": "01",
         "title": "Convertir",
-        "description": "Transforma shapefiles, GeoTIFF y otros formatos en equivalentes nativos en la nube, GeoParquet para vectores, COG para rásteres, PMTiles para teselas de mapa."
+        "description": "Transforma shapefiles, GeoTIFF y otros formatos en equivalentes nativos de la nube, GeoParquet para vectores, COG para rásteres, PMTiles para teselas de mapa."
       },
       "catalog": {
         "id": "02",
@@ -85,27 +85,27 @@
     }
   },
   "toolkit": {
-    "eyebrow": "// EL CONJUNTO DE HERRAMIENTAS",
-    "title": "El conjunto de herramientas.",
+    "eyebrow": "// EL KIT DE HERRAMIENTAS",
+    "title": "El kit de herramientas.",
     "allProjects": "Todos los proyectos",
     "cli": {
       "name": "portolan-cli",
       "title": "La CLI",
       "version": "v0.7.0",
-      "description": "Convierte, valida y sincroniza. Un comando desde una carpeta de shapefiles hasta un catálogo STAC en vivo en S3.",
+      "description": "Convierte, valida y sincroniza. Un comando desde una carpeta de shapefiles hasta un catálogo STAC activo en S3.",
       "compatibility": "Funciona con AWS · GCS · Azure · R2 · MinIO · Source.coop"
     },
     "viewer": {
       "name": "portolan-viewer",
       "tag": "En diseño",
-      "title": "Visor nativo del navegador",
-      "description": "Un visor ligero que lee STAC y archivos nativos en la nube directamente."
+      "title": "Visor que se ejecuta en el navegador",
+      "description": "Un visor ligero que lee STAC y archivos nativos de la nube directamente."
     },
     "skills": {
       "name": "portolan-skills",
       "tag": "Estable",
       "title": "Skills para agentes de IA",
-      "description": "Skills listas para usar que permiten a los agentes Claude, Gemini y Codex publicar catálogos y consultar datos geoespaciales nativos en la nube."
+      "description": "Skills listas para usar que permiten a los agentes Claude, Gemini y Codex publicar catálogos y consultar datos geoespaciales nativos de la nube."
     },
     "readMore": "Leer más"
   },
@@ -116,9 +116,9 @@
   },
   "publishMap": {
     "header": "// CATÁLOGOS PUBLICADOS · MUNDO",
-    "live": "en vivo · actualizado hace 4 min",
+    "live": "activo · actualizado hace 4 min",
     "nodes": {
-      "pacificNw": "Lidar del Pacífico NW",
+      "pacificNw": "LiDAR del Pacífico Noroeste",
       "andean": "Glaciares andinos",
       "madrid": "Datos abiertos de Madrid",
       "nordic": "Hidrología nórdica",
@@ -132,11 +132,11 @@
     "browse": {
       "eyebrow": "// PASO 1",
       "title": "Explora un catálogo",
-      "description": "Los catálogos de Portolan están en vivo en la web. Abre el Portolan Browser para explorar conjuntos de datos publicados, ver metadatos, previsualizar mapas e inspeccionar tablas de datos. Todo lo que ves se sirve directamente desde archivos nativos en la nube en almacenamiento de objetos, con cero servidores.",
+      "description": "Los catálogos de Portolan están publicados en la web. Abre el Portolan Browser para explorar conjuntos de datos publicados, ver metadatos, previsualizar mapas e inspeccionar tablas de datos. Todo lo que ves se sirve directamente desde archivos nativos de la nube en almacenamiento de objetos, sin ningún servidor.",
       "cta": "Abrir el navegador",
       "duckdb": {
         "title": "Consulta con DuckDB",
-        "description": "Cualquier archivo GeoParquet de un catálogo Portolan se puede consultar directamente con DuckDB, sin necesidad de descargar. Solo apunta a la URL."
+        "description": "Cualquier archivo GeoParquet de un catálogo Portolan se puede consultar directamente con DuckDB, sin descargar nada. Solo apunta a la URL."
       }
     },
     "publish": {
@@ -151,13 +151,13 @@
       "steps": {
         "init": "Inicializa un nuevo catálogo en tu directorio de datos",
         "add": "Añade tus archivos de datos al catálogo",
-        "check": "Convierte a formatos nativos en la nube (GeoParquet, COG)",
+        "check": "Convierte a formatos nativos de la nube (GeoParquet, COG)",
         "push": "Envía a cualquier almacenamiento compatible con S3"
       }
     },
     "claude": {
       "title": "Con Claude",
-      "description": "Si tienes Claude Code, instala la skill de Portolan y apunta Claude a tus datos. Se encarga de la conversión de formatos, la generación de metadatos y la publicación.",
+      "description": "Si tienes Claude Code, instala la skill de Portolan y dirige Claude a tus datos. Se encarga de la conversión de formatos, la generación de metadatos y la publicación.",
       "steps": {
         "install": "Instala la skill de la CLI de Portolan",
         "run": "Luego pide a Claude que publique tus datos"
