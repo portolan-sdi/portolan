@@ -12,7 +12,7 @@ Avoid framing Portolan as a SaaS, a portal, a product, or a company.
 
 ## Visual System (non-negotiable)
 
-- **Type:** Archivo (sans, all text) + JetBrains Mono (code, labels, eyebrows). No other fonts in production.
+- **Type:** Archivo (sans, Latin text) + JetBrains Mono (code, labels, eyebrows) + Cairo (all Arabic text). No other fonts in production.
 - **Color tokens:** Use CSS variables from `globals.css`. Never hardcode hex except in SVG gradients and fixed-dark terminal/map blocks.
 - **Primary palette:** `--p-primary: #4163cc`, `--p-grad-a: #395eca`, `--p-grad-b: #848bd8`, `--p-accent: #f4b860`
 - **Type scale (single source of truth):** Use the named utilities generated from `--text-*` tokens in `globals.css`, never arbitrary sizes like `text-[13px]`. Available: `text-eyebrow`, `text-micro`, `text-small`, `text-body`, `text-body-lg`, `text-lead`, `text-card-title`, `text-card-title-lg`, `text-feature`, `text-section-sm`, `text-section`, `text-hero`, `text-hero-sm`. Headings and lead text are fluid via `clamp()`.
@@ -73,5 +73,10 @@ Avoid framing Portolan as a SaaS, a portal, a product, or a company.
   code blocks stay `dir="ltr"`.
 - Wrap pure-Latin standalone values (names, versions, license, repo) in `<Ltr>` so they
   stay correctly ordered inside Arabic text.
+- Arabic always renders in Cairo (Archivo has no Arabic glyphs). On RTL pages the
+  `--p-sans` token re-points to Cairo in `globals.css`, so body, headings, and the
+  `font-sans` utility all resolve to Cairo. Cairo is also the Arabic-glyph fallback in
+  the base sans stack, so stray Arabic on an LTR page (for example the language switcher)
+  still renders Cairo. Never hardcode `font-family`, rely on the tokens.
 - `<html lang dir>` is set per locale in `src/app/[locale]/layout.tsx` via
   `getDirection(locale)`. Do not reintroduce `<html>` into the root layout.
