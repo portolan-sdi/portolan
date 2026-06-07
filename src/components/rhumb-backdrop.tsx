@@ -14,8 +14,10 @@ export function RhumbBackdrop({
   const lines = [];
   for (let i = 0; i < 32; i++) {
     const angle = (i / 32) * Math.PI * 2;
-    const x2 = originX + Math.cos(angle) * 200;
-    const y2 = originY + Math.sin(angle) * 200;
+    // Round to a fixed precision so server and client serialize the same
+    // string and React doesn't flag a hydration mismatch on the last digits.
+    const x2 = Number((originX + Math.cos(angle) * 200).toFixed(3));
+    const y2 = Number((originY + Math.sin(angle) * 200).toFixed(3));
     lines.push(
       <line
         key={i}
