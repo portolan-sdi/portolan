@@ -168,5 +168,53 @@
       "docs": "اقرأ توثيق واجهة سطر الأوامر كاملًا",
       "github": "تصفّح الكود على GitHub"
     }
+  },
+  "registry": {
+    "eyebrow": "// سجل الكتالوجات",
+    "title": "تصفّح {count} كتالوج",
+    "description": "اكتشف واتصل بكتالوجات STAC المتوافقة مع Portolan من جميع أنحاء العالم.",
+    "search": {
+      "placeholder": "ابحث في الكتالوجات...",
+      "noResults": "لا توجد كتالوجات تطابق بحثك",
+      "clearFilters": "مسح عوامل التصفية"
+    },
+    "filters": {
+      "tags": "الوسوم",
+      "access": "الوصول",
+      "validation": "التحقق",
+      "all": "الكل",
+      "bbox": "المنطقة",
+      "bboxLabel": "الإطار المحدد (WGS84)"
+    },
+    "access": {
+      "public": "عام",
+      "authenticated": "مصادق عليه"
+    },
+    "validation": {
+      "unvalidated": "غير موثق",
+      "basic": "أساسي",
+      "full": "كامل"
+    },
+    "card": {
+      "maintainer": "يديره",
+      "submitted": "أُرسل",
+      "viewCatalog": "عرض الكتالوج"
+    },
+    "cta": {
+      "title": "هل لديك كتالوج لمشاركته؟",
+      "description": "أرسل كتالوجك المتوافق مع Portolan إلى السجل.",
+      "button": "أرسل كتالوجك"
+    },
+    "submit": {
+      "title": "إرسال كتالوج",
+      "urlError": "يجب أن ينتهي الرابط بـ catalog.json",
+      "submit": "إرسال",
+      "submitting": "جارٍ الإرسال...",
+      "successTitle": "تم الإرسال!",
+      "successDescription": "سيظهر كتالوجك بعد المراجعة.",
+      "viewPr": "عرض الإرسال",
+      "submitAnother": "إرسال آخر"
+    },
+    "generated": "آخر تحديث: {date}"
   }
 }

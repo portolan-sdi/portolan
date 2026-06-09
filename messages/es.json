@@ -168,5 +168,53 @@
       "docs": "Lee la documentación completa de la CLI",
       "github": "Explora el código en GitHub"
     }
+  },
+  "registry": {
+    "eyebrow": "// REGISTRO DE CATÁLOGOS",
+    "title": "Explora {count} catálogos",
+    "description": "Descubre y conecta con catálogos STAC compatibles con Portolan de todo el mundo.",
+    "search": {
+      "placeholder": "Buscar catálogos...",
+      "noResults": "Ningún catálogo coincide con tu búsqueda",
+      "clearFilters": "Limpiar filtros"
+    },
+    "filters": {
+      "tags": "Etiquetas",
+      "access": "Acceso",
+      "validation": "Validación",
+      "all": "Todos",
+      "bbox": "Región",
+      "bboxLabel": "Caja delimitadora (WGS84)"
+    },
+    "access": {
+      "public": "Público",
+      "authenticated": "Autenticado"
+    },
+    "validation": {
+      "unvalidated": "Sin validar",
+      "basic": "Básico",
+      "full": "Completo"
+    },
+    "card": {
+      "maintainer": "Mantenido por",
+      "submitted": "Enviado",
+      "viewCatalog": "Ver catálogo"
+    },
+    "cta": {
+      "title": "¿Tienes un catálogo para compartir?",
+      "description": "Envía tu catálogo compatible con Portolan al registro.",
+      "button": "Enviar tu catálogo"
+    },
+    "submit": {
+      "title": "Enviar un catálogo",
+      "urlError": "La URL debe terminar en catalog.json",
+      "submit": "Enviar",
+      "submitting": "Enviando...",
+      "successTitle": "¡Enviado!",
+      "successDescription": "Tu catálogo aparecerá después de la revisión.",
+      "viewPr": "Ver envío",
+      "submitAnother": "Enviar otro"
+    },
+    "generated": "Última actualización: {date}"
   }
 }

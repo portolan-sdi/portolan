@@ -168,5 +168,53 @@
       "docs": "Read the full CLI docs",
       "github": "Browse the source on GitHub"
     }
+  },
+  "registry": {
+    "eyebrow": "// CATALOG REGISTRY",
+    "title": "Browse {count} catalogs",
+    "description": "Discover and connect to Portolan-compatible STAC catalogs from around the world.",
+    "search": {
+      "placeholder": "Search catalogs...",
+      "noResults": "No catalogs match your search",
+      "clearFilters": "Clear filters"
+    },
+    "filters": {
+      "tags": "Tags",
+      "access": "Access",
+      "validation": "Validation",
+      "all": "All",
+      "bbox": "Region",
+      "bboxLabel": "Bounding box (WGS84)"
+    },
+    "access": {
+      "public": "Public",
+      "authenticated": "Authenticated"
+    },
+    "validation": {
+      "unvalidated": "Unvalidated",
+      "basic": "Basic",
+      "full": "Full"
+    },
+    "card": {
+      "maintainer": "Maintained by",
+      "submitted": "Submitted",
+      "viewCatalog": "View catalog"
+    },
+    "cta": {
+      "title": "Have a catalog to share?",
+      "description": "Submit your Portolan-compatible catalog to the registry.",
+      "button": "Submit your catalog"
+    },
+    "submit": {
+      "title": "Submit a catalog",
+      "urlError": "URL must end with catalog.json",
+      "submit": "Submit",
+      "submitting": "Submitting...",
+      "successTitle": "Submitted!",
+      "successDescription": "Your catalog will appear after review.",
+      "viewPr": "View submission",
+      "submitAnother": "Submit another"
+    },
+    "generated": "Last updated: {date}"
   }
 }
