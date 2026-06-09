@@ -30,9 +30,14 @@ export interface CatalogsResponse {
 const CATALOGS_URL =
   "https://raw.githubusercontent.com/portolan-sdi/portolan-registry/main/exports/catalogs.json";
 
+// Tag the registry fetch so the registry CI can invalidate it on demand
+// (POST /api/revalidate) the moment a new export is published, instead of
+// waiting out the hourly ISR window.
+export const CATALOGS_CACHE_TAG = "catalogs";
+
 export async function getCatalogs(): Promise<CatalogsResponse> {
   const res = await fetch(CATALOGS_URL, {
-    next: { revalidate: 3600 },
+    next: { revalidate: 3600, tags: [CATALOGS_CACHE_TAG] },
   });
 
   if (!res.ok) {
