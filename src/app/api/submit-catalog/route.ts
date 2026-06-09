@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { SignJWT, importPKCS8 } from "jose";
+import { SignJWT } from "jose";
+import { createPrivateKey } from "crypto";
 
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID;
 const GITHUB_INSTALLATION_ID = process.env.GITHUB_INSTALLATION_ID;
@@ -34,7 +35,12 @@ async function getInstallationToken(): Promise<string> {
     throw new Error("GitHub App credentials not configured");
   }
 
-  const privateKey = await importPKCS8(GITHUB_PRIVATE_KEY, "RS256");
+  // GitHub App keys are issued as PKCS#1 ("BEGIN RSA PRIVATE KEY"); jose's
+  // importPKCS8 only parses PKCS#8. createPrivateKey auto-detects both formats.
+  // Normalize escaped newlines in case the env var was stored with literal \n.
+  const privateKey = createPrivateKey(
+    GITHUB_PRIVATE_KEY.replace(/\\n/g, "\n")
+  );
 
   const now = Math.floor(Date.now() / 1000);
   const jwt = await new SignJWT({})
