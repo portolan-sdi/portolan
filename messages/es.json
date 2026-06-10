@@ -215,6 +215,22 @@
       "viewPr": "Ver envío",
       "submitAnother": "Enviar otro"
     },
+    "view": {
+      "cards": "Tarjetas",
+      "map": "Mapa"
+    },
+    "map": {
+      "searchPlaceholder": "Buscar una región...",
+      "searchLabel": "Buscar regiones",
+      "noSearchResults": "No se encontraron lugares",
+      "zoomIn": "Acercar",
+      "zoomOut": "Alejar",
+      "info": "Información del mapa",
+      "infoBody": "Mapa base © CARTO, © OpenStreetMap y sus colaboradores. Búsqueda proporcionada por Nominatim. Los catálogos aparecen como puntos. Acerca el mapa para ver sus áreas de cobertura.",
+      "closeDetails": "Cerrar detalles",
+      "noLocation": "{count, plural, one {# catálogo sin datos de ubicación} other {# catálogos sin datos de ubicación}}",
+      "loading": "Cargando mapa..."
+    },
     "generated": "Última actualización: {date}"
   }
 }

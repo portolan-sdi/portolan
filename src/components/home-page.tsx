@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
+import dynamic from "next/dynamic";
 import { useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { RhumbBackdrop } from "./rhumb-backdrop";
@@ -13,6 +14,23 @@ import type { Catalog } from "@/lib/catalogs";
 import { getValidationTier } from "@/lib/catalogs";
 
 type SubmitState = "idle" | "submitting" | "success" | "error";
+
+// Placeholder shown while the deck.gl/maplibre chunk loads on first map view.
+function MapSkeleton() {
+  const t = useTranslations("registry");
+  return (
+    <div className="h-[520px] md:h-[600px] rounded-[var(--p-r-lg)] border border-p-line bg-p-bg-soft animate-pulse flex items-center justify-center">
+      <span className="text-micro text-p-ink-3 font-mono">{t("map.loading")}</span>
+    </div>
+  );
+}
+
+// home-page is already a Client Component, so ssr:false is legal here. The
+// chunk only loads the first time the map view renders.
+const CatalogMap = dynamic(() => import("./registry/catalog-map"), {
+  ssr: false,
+  loading: () => <MapSkeleton />,
+});
 
 interface HomePageProps {
   catalogs?: Catalog[];
@@ -47,6 +65,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
     west: "", south: "", east: "", north: ""
   });
   const [showBboxFilter, setShowBboxFilter] = useState(false);
+  const [registryView, setRegistryView] = useState<"cards" | "map">("cards");
 
   const [submitUrl, setSubmitUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
@@ -422,6 +441,28 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                   </svg>
                   {t("registry.filters.bbox")}
                 </button>
+
+                {/* Cards | Map view toggle */}
+                <div className="flex items-center gap-1 p-1 bg-p-paper border border-p-line rounded-[var(--p-r-md)] self-start sm:ms-auto">
+                  {(["cards", "map"] as const).map((view) => {
+                    const isActive = registryView === view;
+                    return (
+                      <button
+                        key={view}
+                        type="button"
+                        onClick={() => setRegistryView(view)}
+                        aria-pressed={isActive}
+                        className={`font-mono text-micro px-3 py-1.5 rounded-[var(--p-r-sm)] transition-colors ${
+                          isActive
+                            ? "bg-[color-mix(in_oklab,var(--p-primary)_12%,transparent)] text-p-primary-ink"
+                            : "text-p-ink-3 hover:text-p-ink-2"
+                        }`}
+                      >
+                        {t(`registry.view.${view}`)}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
               {showBboxFilter && (
@@ -478,8 +519,10 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
               )}
             </div>
 
-            {/* Catalog Grid */}
-            {filteredCatalogs.length > 0 ? (
+            {/* Catalog view: map or grid */}
+            {registryView === "map" ? (
+              <CatalogMap catalogs={filteredCatalogs} />
+            ) : filteredCatalogs.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {filteredCatalogs.map((catalog) => (
                   <CatalogCard

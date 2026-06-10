@@ -215,6 +215,22 @@
       "viewPr": "View submission",
       "submitAnother": "Submit another"
     },
+    "view": {
+      "cards": "Cards",
+      "map": "Map"
+    },
+    "map": {
+      "searchPlaceholder": "Search for a region...",
+      "searchLabel": "Search regions",
+      "noSearchResults": "No places found",
+      "zoomIn": "Zoom in",
+      "zoomOut": "Zoom out",
+      "info": "Map information",
+      "infoBody": "Basemap © CARTO, © OpenStreetMap contributors. Search powered by Nominatim. Catalogs appear as dots; zoom in to see their coverage areas.",
+      "closeDetails": "Close details",
+      "noLocation": "{count, plural, one {# catalog has no location data} other {# catalogs have no location data}}",
+      "loading": "Loading map..."
+    },
     "generated": "Last updated: {date}"
   }
 }
