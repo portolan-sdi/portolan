@@ -226,3 +226,16 @@ button {
     opacity: 0;
   }
 }
+
+/* Catalog map (deck-free MapLibre) hover popup — themed to match Portolan
+   surfaces instead of MapLibre's default white box. */
+.catalog-map-popup .maplibregl-popup-content {
+  background: var(--p-paper);
+  border: 1px solid var(--p-line);
+  border-radius: var(--p-r-sm);
+  padding: 4px 8px;
+  box-shadow: var(--p-shadow-md);
+}
+.catalog-map-popup .maplibregl-popup-tip {
+  display: none;
+}

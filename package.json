@@ -9,9 +9,6 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@deck.gl/core": "^9.3.3",
-    "@deck.gl/layers": "^9.3.3",
-    "@deck.gl/react": "^9.3.3",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "jose": "^6.2.3",
@@ -25,6 +22,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@types/geojson": "^7946.0.16",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
