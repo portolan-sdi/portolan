@@ -215,6 +215,23 @@
       "viewPr": "عرض الإرسال",
       "submitAnother": "إرسال آخر"
     },
+    "view": {
+      "cards": "بطاقات",
+      "map": "خريطة"
+    },
+    "map": {
+      "searchPlaceholder": "ابحث عن منطقة...",
+      "searchLabel": "البحث عن المناطق",
+      "noSearchResults": "لم يتم العثور على أماكن",
+      "zoomIn": "تكبير",
+      "zoomOut": "تصغير",
+      "info": "معلومات الخريطة",
+      "reset": "إعادة ضبط العرض",
+      "infoBody": "خريطة الأساس © CARTO و© OpenStreetMap والمساهمون فيها. البحث مدعوم من Nominatim. تظهر الكتالوجات كنقاط. كبّر الخريطة لرؤية مناطق تغطيتها.",
+      "closeDetails": "إغلاق التفاصيل",
+      "noLocation": "{count, plural, other {# كتالوج بدون بيانات موقع}}",
+      "loading": "جارٍ تحميل الخريطة..."
+    },
     "generated": "آخر تحديث: {date}"
   }
 }
