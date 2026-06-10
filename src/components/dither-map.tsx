@@ -10,12 +10,17 @@ const DitherMapCanvas = dynamic(() => import("./dither-map-canvas"), {
 interface DitherMapProps {
   className?: string;
   panSpeed?: number;
+  points?: { lat: number; lon: number }[];
 }
 
-export function DitherMap({ className = "", panSpeed = 0.00008 }: DitherMapProps) {
+export function DitherMap({ className = "", panSpeed = 0.00008, points }: DitherMapProps) {
   return (
     <div className={className}>
-      <DitherMapCanvas className="absolute inset-0 w-full h-full" panSpeed={panSpeed} />
+      <DitherMapCanvas
+        className="absolute inset-0 w-full h-full"
+        panSpeed={panSpeed}
+        points={points}
+      />
     </div>
   );
 }

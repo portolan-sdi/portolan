@@ -58,4 +58,4 @@ any user-facing string, follow this table and keep all three locale files in syn
 
 - Spanish "SDI" is standardized as "IDE", which collides with "code editor". Keep the
   Latin "SDI" in body copy to avoid confusion.
-- Keep `portolan-cli`, `portolan-viewer`, `portolan-skills`, `v0.7.0` Latin everywhere.
+- Keep `portolan-cli`, `portolan-viewer`, `portolan-skills`, `v1.0.0a0` Latin everywhere.

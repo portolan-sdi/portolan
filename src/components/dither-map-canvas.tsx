@@ -22,6 +22,7 @@ import { DitherShader } from "./dither-shader";
 interface DitherMapCanvasProps {
   className?: string;
   panSpeed?: number;
+  points?: { lat: number; lon: number }[];
 }
 
 function latLonToXY(lat: number, lon: number): { x: number; y: number } {
@@ -34,27 +35,35 @@ function latLonToXY(lat: number, lon: number): { x: number; y: number } {
 const LIGHT_MODE_COLOR = new Color(0x848bd8);
 const DARK_MODE_COLOR = new Color(0xd8def0);
 
-const NODES = [
-  { ...latLonToXY(40.4168, -3.7038), label: "Madrid" },
-  { ...latLonToXY(55.6761, 12.5683), label: "Copenhagen" },
-  { ...latLonToXY(24.4539, 54.3773), label: "Abu Dhabi" },
-  { ...latLonToXY(1.3521, 103.8198), label: "Singapore" },
-  { ...latLonToXY(-23.5505, -46.6333), label: "São Paulo" },
-  { ...latLonToXY(38.9072, -77.0369), label: "Washington DC" },
-  { ...latLonToXY(-33.8688, 151.2093), label: "Sydney" },
-  { ...latLonToXY(35.6762, 139.6503), label: "Tokyo" },
-  { ...latLonToXY(-1.2921, 36.8219), label: "Nairobi" },
+// Fallback dots (anonymous city centroids) shown when no located registry
+// catalogs are available.
+const FALLBACK_NODES = [
+  latLonToXY(40.4168, -3.7038), // Madrid
+  latLonToXY(55.6761, 12.5683), // Copenhagen
+  latLonToXY(24.4539, 54.3773), // Abu Dhabi
+  latLonToXY(1.3521, 103.8198), // Singapore
+  latLonToXY(-23.5505, -46.6333), // São Paulo
+  latLonToXY(38.9072, -77.0369), // Washington DC
+  latLonToXY(-33.8688, 151.2093), // Sydney
+  latLonToXY(35.6762, 139.6503), // Tokyo
+  latLonToXY(-1.2921, 36.8219), // Nairobi
 ];
 
 export default function DitherMapCanvas({
   className = "",
   panSpeed = 0.00008,
+  points,
 }: DitherMapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dotsRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
+
+  const nodes =
+    points && points.length > 0
+      ? points.map((p) => latLonToXY(p.lat, p.lon))
+      : FALLBACK_NODES;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -241,7 +250,7 @@ export default function DitherMapCanvas({
           style={{ left: 0 }}
         >
           {[0, 100].map((offsetPct) =>
-            NODES.map((node, i) => (
+            nodes.map((node, i) => (
               <div
                 key={`${offsetPct}-${i}`}
                 className="absolute pointer-events-none"

@@ -12,6 +12,7 @@ const navLinks = [
   { href: "/#why", key: "why" },
   { href: "/#how", key: "howItWorks" },
   { href: "/#tools", key: "tools" },
+  { href: "/#quickstart", key: "quickstart" },
   {
     href: "https://portolan-sdi.github.io/portolan-cli",
     key: "docs",

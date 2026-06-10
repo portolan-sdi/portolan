@@ -8,6 +8,8 @@ import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
+import { QuickstartSection } from "./quickstart-section";
+import { ResourcesSection } from "./resources-section";
 import { Btn, Tag, Card, Terminal, DirArrow, Ltr } from "./ui";
 import { CatalogCard } from "./registry/catalog-card";
 import type { Catalog } from "@/lib/catalogs";
@@ -55,6 +57,13 @@ const terminalLines = [
   { text: "  done · 0:48 elapsed", color: "#28c840" },
 ];
 
+// External references linked inline from the "why" cards. Keyed by card key;
+// cards without an entry render their description as plain text.
+const whyCardLinks: Record<string, string> = {
+  aiReady: "https://jatorre.github.io/carto-ogc-helsinki/webapp/",
+  cheap: "https://cholmes.github.io/open-geodag-presentation/calculator.html",
+};
+
 export function HomePage({ catalogs = [] }: HomePageProps) {
   const t = useTranslations();
 
@@ -73,6 +82,17 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isValidSubmitUrl = submitUrl.trim().endsWith("catalog.json");
+
+  // Centroids of located registry catalogs, drawn as dots on the hero map.
+  const heroPoints = useMemo(() => {
+    return catalogs
+      .filter((c) => c.bbox !== null && c.bbox[0] <= c.bbox[2])
+      .slice(0, 9)
+      .map((c) => {
+        const [west, south, east, north] = c.bbox!;
+        return { lat: (south + north) / 2, lon: (west + east) / 2 };
+      });
+  }, [catalogs]);
 
   const allTags = useMemo(() => {
     return Array.from(new Set(catalogs.flatMap((c) => c.keywords ?? []))).sort();
@@ -157,13 +177,13 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Submission failed");
+        throw new Error(data.error || t("registry.submit.failedError"));
       }
 
       setSubmitPrUrl(data.pr_url);
       setSubmitState("success");
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Something went wrong");
+      setSubmitError(err instanceof Error ? err.message : t("registry.submit.genericError"));
       setSubmitState("error");
     }
   };
@@ -198,7 +218,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
 
       {/* Hero */}
       <section className="relative min-h-[88svh] md:min-h-[85vh] flex items-center border-b border-p-line-soft overflow-hidden">
-        <DitherMap className="absolute inset-0 w-full h-full opacity-80 dark:opacity-60" />
+        <DitherMap points={heroPoints} className="absolute inset-0 w-full h-full opacity-80 dark:opacity-60" />
         <div className="absolute inset-0 bg-gradient-to-r from-p-bg via-p-bg/85 via-50% to-p-bg/40" />
         <div className="relative z-10 px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] w-full">
           <div className="max-w-[1240px] mx-auto">
@@ -216,7 +236,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                 {t("hero.description")}
               </p>
               <div className="flex gap-4 items-center flex-wrap">
-                <Link href="/quickstart">
+                <Link href="/#quickstart">
                   <Btn variant="primary" size="lg">
                     {t("hero.quickstart")} <DirArrow />
                   </Btn>
@@ -259,7 +279,21 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                   {t(`why.cards.${card.key}.title`)}
                 </h3>
                 <p className="text-body leading-relaxed">
-                  {t(`why.cards.${card.key}.description`)}
+                  {t.rich(`why.cards.${card.key}.description`, {
+                    link: (chunks) =>
+                      whyCardLinks[card.key] ? (
+                        <a
+                          href={whyCardLinks[card.key]}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-p-primary hover:underline"
+                        >
+                          {chunks}
+                        </a>
+                      ) : (
+                        <>{chunks}</>
+                      ),
+                  })}
                 </p>
                 <div className="mt-auto font-mono text-micro text-p-primary-ink px-2.5 py-1.5 bg-p-bg-soft rounded-[var(--p-r-sm)] border border-p-line-soft self-start">
                   {t(`why.cards.${card.key}.tag`)}
@@ -387,9 +421,12 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
         </div>
       </section>
 
+      {/* Quickstart */}
+      <QuickstartSection />
+
       {/* Registry */}
       {catalogs.length > 0 && (
-        <section id="registry" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] bg-p-bg-soft border-t border-p-line-soft">
+        <section id="registry" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)]">
           <div className="max-w-[1240px] mx-auto">
             <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
               {t("registry.eyebrow")}
@@ -473,13 +510,13 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                   <div className="flex flex-wrap gap-2">
                     {(["west", "south", "east", "north"] as const).map((dir) => (
                       <div key={dir} className="flex items-center gap-1">
-                        <label className="text-micro text-p-ink-3 uppercase w-6">{dir[0]}</label>
+                        <label className="text-micro text-p-ink-3 uppercase w-6">{t(`registry.compass.${dir}`)}</label>
                         <input
                           type="number"
                           step="any"
                           value={bboxFilter[dir]}
                           onChange={(e) => setBboxFilter((prev) => ({ ...prev, [dir]: e.target.value }))}
-                          placeholder={dir === "west" || dir === "east" ? "lon" : "lat"}
+                          placeholder={dir === "west" || dir === "east" ? t("registry.filters.lonPlaceholder") : t("registry.filters.latPlaceholder")}
                           className="w-20 px-2 py-1.5 text-micro bg-p-bg border border-p-line rounded-[var(--p-r-sm)] text-p-ink placeholder:text-p-ink-3 focus:outline-none focus:border-p-primary"
                         />
                       </div>
@@ -620,6 +657,9 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
           </div>
         </section>
       )}
+
+      {/* Talks & demos */}
+      <ResourcesSection />
 
       {/* Footer */}
       <SiteFooter />

@@ -10,16 +10,18 @@ interface CatalogCardProps {
   onTagClick?: (tag: string) => void;
 }
 
-function getRegionFromBbox(bbox: [number, number, number, number] | null): string | null {
+function getRegionFromBbox(bbox: [number, number, number, number] | null) {
   if (!bbox) return null;
   const [west, south, east, north] = bbox;
   const centerLat = (south + north) / 2;
   const centerLon = (west + east) / 2;
 
-  const latDir = centerLat >= 0 ? "N" : "S";
-  const lonDir = centerLon >= 0 ? "E" : "W";
-
-  return `${Math.abs(centerLat).toFixed(0)}${latDir}, ${Math.abs(centerLon).toFixed(0)}${lonDir}`;
+  return {
+    lat: Math.abs(centerLat).toFixed(0),
+    latDir: centerLat >= 0 ? ("north" as const) : ("south" as const),
+    lon: Math.abs(centerLon).toFixed(0),
+    lonDir: centerLon >= 0 ? ("east" as const) : ("west" as const),
+  };
 }
 
 export function CatalogCard({ catalog, onTagClick }: CatalogCardProps) {
@@ -42,13 +44,17 @@ export function CatalogCard({ catalog, onTagClick }: CatalogCardProps) {
       <p className="text-body text-p-ink-2 line-clamp-2">{catalog.description}</p>
 
       <div className="flex flex-wrap gap-2 text-micro text-p-ink-3 font-mono">
-        <span>{catalog.collection_count} collections</span>
+        <span>{t("card.collections", { count: catalog.collection_count })}</span>
         <span>·</span>
         <span>STAC {catalog.stac_version}</span>
         {region && (
           <>
             <span>·</span>
-            <span>{region}</span>
+            <span>
+              {region.lat}
+              {t(`compass.${region.latDir}`)}, {region.lon}
+              {t(`compass.${region.lonDir}`)}
+            </span>
           </>
         )}
       </div>
