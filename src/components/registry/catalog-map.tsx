@@ -2,14 +2,10 @@
 
 import "maplibre-gl/dist/maplibre-gl.css";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import DeckGL from "@deck.gl/react";
-import {
-  FlyToInterpolator,
-  LinearInterpolator,
-  WebMercatorViewport,
-} from "@deck.gl/core";
+import { FlyToInterpolator, WebMercatorViewport } from "@deck.gl/core";
 import { ScatterplotLayer, PolygonLayer } from "@deck.gl/layers";
 import { Map } from "react-map-gl/maplibre";
 import type { Catalog } from "@/lib/catalogs";
@@ -28,12 +24,11 @@ const INITIAL_VIEW = { longitude: 0, latitude: 20, zoom: 1.3 };
 
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 16;
+const FIT_PADDING = 60;
+const FIT_MAX_ZOOM = 6;
 
-// Portolan primary, matching portolan-browser STAC footprint styling.
-const DOT_FILL: [number, number, number, number] = [65, 99, 204, 230];
-const DOT_FILL_SELECTED: [number, number, number, number] = [244, 184, 96, 255]; // accent
-const BBOX_FILL: [number, number, number, number] = [65, 99, 204, 26];
-const BBOX_LINE: [number, number, number, number] = [65, 99, 204, 255];
+// One reused interpolator instance; recreating it per call is unnecessary.
+const FLY = new FlyToInterpolator();
 
 // Deck/maplibre render the world at 512px per tile; this converts a span in
 // degrees to on-screen pixels at a given zoom so we can flip dots <-> rectangles.
@@ -41,12 +36,12 @@ const TILE_SIZE = 512;
 const RECT_PX_THRESHOLD = 30;
 const DEGENERATE_EPS = 1e-4;
 
-interface ViewState {
+type RGB = [number, number, number];
+
+interface Coords {
   longitude: number;
   latitude: number;
   zoom: number;
-  transitionDuration?: number;
-  transitionInterpolator?: FlyToInterpolator | LinearInterpolator;
 }
 
 interface LocatedCatalog {
@@ -72,6 +67,23 @@ function clampZoom(zoom: number, max = MAX_ZOOM): number {
   return Math.min(Math.max(zoom, MIN_ZOOM), max);
 }
 
+function hexToRgb(hex: string): RGB | null {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return null;
+  const n = parseInt(m[1], 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// Read a Portolan color token from the live DOM so map colors track whatever
+// the active light/dark theme defines (e.g. --p-primary differs per theme).
+function readThemeColor(varName: string, fallback: RGB): RGB {
+  if (typeof window === "undefined") return fallback;
+  const raw = getComputedStyle(document.documentElement)
+    .getPropertyValue(varName)
+    .trim();
+  return hexToRgb(raw) ?? fallback;
+}
+
 // A located catalog renders as a rectangle once its bbox is large enough on
 // screen, but never when degenerate or antimeridian-crossing (we never feed a
 // west > east ring to PolygonLayer).
@@ -91,10 +103,14 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
   const t = useTranslations("registry");
   const theme = useResolvedTheme();
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const didFit = useRef(false);
 
-  const [viewState, setViewState] = useState<ViewState>(INITIAL_VIEW);
+  const [view, setView] = useState<Coords>(INITIAL_VIEW);
+  // When set, deck animates to `view` over this many ms; cleared when the
+  // transition ends. Gating the transition props in state (rather than storing
+  // them with the view) is what keeps flyTo/zoom transitions from stuttering.
+  const [transitionMs, setTransitionMs] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [infoOpen, setInfoOpen] = useState(false);
 
@@ -145,8 +161,7 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
     return { located, unlocatedCount };
   }, [catalogs]);
 
-  // Derived so a selection that filtering has removed simply resolves to null,
-  // no effect needed.
+  // Derived so a selection that filtering has removed simply resolves to null.
   const selected = useMemo(
     () => catalogs.find((c) => c.id === selectedId) ?? null,
     [catalogs, selectedId],
@@ -156,11 +171,25 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
     const dots: LocatedCatalog[] = [];
     const rects: LocatedCatalog[] = [];
     for (const lc of located) {
-      if (showsRectangle(lc, viewState.zoom)) rects.push(lc);
+      if (showsRectangle(lc, view.zoom)) rects.push(lc);
       else dots.push(lc);
     }
     return { dots, rects };
-  }, [located, viewState.zoom]);
+  }, [located, view.zoom]);
+
+  // Map feature colors pulled from the active theme's tokens.
+  const colors = useMemo(() => {
+    const primary = readThemeColor("--p-primary", [65, 99, 204]);
+    const accent = readThemeColor("--p-accent", [244, 184, 96]);
+    const stroke: RGB = theme === "dark" ? [22, 30, 71] : [255, 255, 255]; // --p-paper-ish
+    return {
+      dotFill: [...primary, 235] as [number, number, number, number],
+      dotSelected: [...accent, 255] as [number, number, number, number],
+      dotStroke: [...stroke, 255] as [number, number, number, number],
+      bboxFill: [...primary, 40] as [number, number, number, number],
+      bboxLine: [...primary, 255] as [number, number, number, number],
+    };
+  }, [theme]);
 
   const layers = useMemo(
     () => [
@@ -169,84 +198,62 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
         data: rects,
         getPolygon: (d) => d.ring,
         filled: true,
-        getFillColor: BBOX_FILL,
+        getFillColor: colors.bboxFill,
         stroked: true,
-        getLineColor: BBOX_LINE,
+        getLineColor: colors.bboxLine,
         lineWidthUnits: "pixels",
         getLineWidth: 2,
         pickable: true,
+        updateTriggers: {
+          getFillColor: colors.bboxFill,
+          getLineColor: colors.bboxLine,
+        },
       }),
       new ScatterplotLayer<LocatedCatalog>({
         id: "catalog-dots",
         data: dots,
         getPosition: (d) => d.centroid,
         getFillColor: (d) =>
-          d.catalog.id === selectedId ? DOT_FILL_SELECTED : DOT_FILL,
+          d.catalog.id === selectedId ? colors.dotSelected : colors.dotFill,
         filled: true,
         stroked: true,
-        getLineColor: [255, 255, 255, 255],
+        getLineColor: colors.dotStroke,
         lineWidthUnits: "pixels",
         getLineWidth: 1.5,
         getRadius: 1500,
         radiusMinPixels: 6,
         radiusMaxPixels: 10,
         pickable: true,
-        updateTriggers: { getFillColor: selectedId },
+        updateTriggers: {
+          getFillColor: [selectedId, colors.dotFill, colors.dotSelected],
+          getLineColor: colors.dotStroke,
+        },
       }),
     ],
-    [dots, rects, selectedId],
+    [dots, rects, selectedId, colors],
   );
 
-  const flyTo = useCallback((target: { longitude: number; latitude: number; zoom: number }) => {
-    setViewState({
-      ...target,
-      transitionDuration: 700,
-      transitionInterpolator: new FlyToInterpolator(),
+  const flyTo = useCallback((target: Coords, ms = 700) => {
+    setView({
+      longitude: target.longitude,
+      latitude: target.latitude,
+      zoom: clampZoom(target.zoom),
     });
+    setTransitionMs(ms);
   }, []);
 
   const handleZoom = useCallback(
     (delta: number) => {
-      setViewState((prev) => ({
-        longitude: prev.longitude,
-        latitude: prev.latitude,
-        zoom: clampZoom(prev.zoom + delta),
-        transitionDuration: 250,
-        transitionInterpolator: new LinearInterpolator(),
-      }));
+      setView((prev) => ({ ...prev, zoom: clampZoom(prev.zoom + delta) }));
+      setTransitionMs(300);
     },
     [],
   );
 
-  const handleGeocode = useCallback(
-    (s: GeocodeSuggestion) => {
-      const el = containerRef.current;
-      if (s.bbox && el) {
-        const [west, south, east, north] = s.bbox;
-        const vp = new WebMercatorViewport({
-          width: el.clientWidth,
-          height: el.clientHeight,
-        });
-        const { longitude, latitude, zoom } = vp.fitBounds(
-          [
-            [west, south],
-            [east, north],
-          ],
-          { padding: 60 },
-        );
-        flyTo({ longitude, latitude, zoom: clampZoom(zoom, 14) });
-      } else {
-        flyTo({ longitude: s.lng, latitude: s.lat, zoom: 10 });
-      }
-    },
-    [flyTo],
-  );
-
-  // Auto-fit to the union of located bboxes once, on mount.
-  useEffect(() => {
-    if (didFit.current || located.length === 0) return;
-    const el = containerRef.current;
-    if (!el || el.clientWidth === 0) return;
+  // Fit view to the union of all located bboxes (null if nothing to fit).
+  const computeFitView = useCallback(
+    (el: HTMLElement | null): Coords | null => {
+    if (!el || el.clientWidth === 0 || located.length === 0) return null;
 
     let w = 180;
     let s = 90;
@@ -275,39 +282,102 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
         [w, s],
         [e, n],
       ],
-      { padding: 60 },
+      { padding: FIT_PADDING },
     );
-    setViewState({
-      longitude,
-      latitude,
-      zoom: Math.min(Math.max(zoom, 1.3), 6),
-    });
-    didFit.current = true;
-  }, [located]);
+      return {
+        longitude,
+        latitude,
+        zoom: Math.min(Math.max(zoom, 1.3), FIT_MAX_ZOOM),
+      };
+    },
+    [located],
+  );
+
+  // Callback ref: measure the container and auto-fit once, on mount. Doing this
+  // here (not in an effect) avoids set-state-in-effect and the layout flash.
+  const setContainer = useCallback(
+    (node: HTMLDivElement | null) => {
+      containerRef.current = node;
+      if (node && !didFit.current) {
+        const fit = computeFitView(node);
+        if (fit) {
+          setView(fit);
+          didFit.current = true;
+        }
+      }
+    },
+    [computeFitView],
+  );
+
+  const handleReset = useCallback(() => {
+    flyTo(computeFitView(containerRef.current) ?? INITIAL_VIEW, 600);
+  }, [flyTo, computeFitView]);
+
+  const handleGeocode = useCallback(
+    (sug: GeocodeSuggestion) => {
+      const el = containerRef.current;
+      if (sug.bbox && el && el.clientWidth > 0) {
+        const [west, south, east, north] = sug.bbox;
+        const vp = new WebMercatorViewport({
+          width: el.clientWidth,
+          height: el.clientHeight,
+        });
+        const { longitude, latitude, zoom } = vp.fitBounds(
+          [
+            [west, south],
+            [east, north],
+          ],
+          { padding: FIT_PADDING },
+        );
+        flyTo({ longitude, latitude, zoom: clampZoom(zoom, 14) });
+      } else {
+        flyTo({ longitude: sug.lng, latitude: sug.lat, zoom: 10 });
+      }
+    },
+    [flyTo],
+  );
+
+  const deckViewState = useMemo(
+    () =>
+      transitionMs != null
+        ? { ...view, transitionDuration: transitionMs, transitionInterpolator: FLY }
+        : view,
+    [view, transitionMs],
+  );
 
   const mapStyle = theme === "dark" ? CARTO_STYLE.dark : CARTO_STYLE.light;
 
   return (
     <>
       <div
-        ref={containerRef}
+        ref={setContainer}
         dir="ltr"
         className="relative h-[520px] md:h-[600px] rounded-[var(--p-r-lg)] border border-p-line overflow-hidden"
         role="application"
         aria-label={t("map.searchLabel")}
       >
         <DeckGL
-          viewState={viewState}
-          onViewStateChange={({ viewState: vs }) => {
-            // Strip transition props so stored state never retriggers a flyTo.
-            const v = vs as { longitude: number; latitude: number; zoom: number };
-            setViewState({
-              longitude: v.longitude,
-              latitude: v.latitude,
-              zoom: v.zoom,
-            });
+          viewState={deckViewState}
+          onViewStateChange={({ viewState: vs, interactionState }) => {
+            const v = vs as Coords;
+            // While a programmatic transition runs, leave `view` at its target
+            // and only commit/clear when the animation finishes — committing
+            // intermediate frames would cancel deck's own transition.
+            if (transitionMs != null) {
+              if (interactionState && !interactionState.inTransition) {
+                setView({ longitude: v.longitude, latitude: v.latitude, zoom: v.zoom });
+                setTransitionMs(null);
+              }
+              return;
+            }
+            setView({ longitude: v.longitude, latitude: v.latitude, zoom: v.zoom });
           }}
-          controller={{ dragRotate: false, touchRotate: false }}
+          controller={{
+            dragRotate: false,
+            touchRotate: false,
+            scrollZoom: { smooth: true },
+            inertia: 250,
+          }}
           layers={layers}
           getCursor={({ isDragging, isHovering }) =>
             isDragging ? "grabbing" : isHovering ? "pointer" : "grab"
@@ -342,7 +412,7 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
           <MapGeocoder onSelect={handleGeocode} />
         </div>
 
-        {/* Zoom stack (top-right) */}
+        {/* Zoom + reset stack (top-right) */}
         <div className="absolute top-3 end-3 z-10 flex flex-col rounded-[var(--p-r-md)] overflow-hidden border border-p-line shadow-[var(--p-shadow-md)]">
           <button
             type="button"
@@ -359,10 +429,24 @@ export default function CatalogMap({ catalogs }: CatalogMapProps) {
             type="button"
             onClick={() => handleZoom(-1)}
             aria-label={t("map.zoomOut")}
-            className="flex items-center justify-center w-9 h-9 bg-p-paper text-p-ink-2 hover:text-p-ink hover:bg-p-bg-soft transition-colors"
+            className="flex items-center justify-center w-9 h-9 bg-p-paper text-p-ink-2 hover:text-p-ink hover:bg-p-bg-soft transition-colors border-b border-p-line"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={handleReset}
+            aria-label={t("map.reset")}
+            className="flex items-center justify-center w-9 h-9 bg-p-paper text-p-ink-2 hover:text-p-ink hover:bg-p-bg-soft transition-colors"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3" />
+              <line x1="12" y1="2" x2="12" y2="5" />
+              <line x1="12" y1="19" x2="12" y2="22" />
+              <line x1="2" y1="12" x2="5" y2="12" />
+              <line x1="19" y1="12" x2="22" y2="12" />
             </svg>
           </button>
         </div>

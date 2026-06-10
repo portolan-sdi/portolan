@@ -65,7 +65,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
     west: "", south: "", east: "", north: ""
   });
   const [showBboxFilter, setShowBboxFilter] = useState(false);
-  const [registryView, setRegistryView] = useState<"cards" | "map">("cards");
+  const [registryView, setRegistryView] = useState<"cards" | "map">("map");
 
   const [submitUrl, setSubmitUrl] = useState("");
   const [submitState, setSubmitState] = useState<SubmitState>("idle");
@@ -443,8 +443,8 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                 </button>
 
                 {/* Cards | Map view toggle */}
-                <div className="flex items-center gap-1 p-1 bg-p-paper border border-p-line rounded-[var(--p-r-md)] self-start sm:ms-auto">
-                  {(["cards", "map"] as const).map((view) => {
+                <div className="flex items-stretch border border-p-line rounded-[var(--p-r-md)] overflow-hidden self-start sm:ms-auto">
+                  {(["cards", "map"] as const).map((view, i) => {
                     const isActive = registryView === view;
                     return (
                       <button
@@ -452,10 +452,12 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                         type="button"
                         onClick={() => setRegistryView(view)}
                         aria-pressed={isActive}
-                        className={`font-mono text-micro px-3 py-1.5 rounded-[var(--p-r-sm)] transition-colors ${
+                        className={`font-mono text-small px-4 py-2.5 transition-colors ${
+                          i > 0 ? "border-s border-p-line" : ""
+                        } ${
                           isActive
                             ? "bg-[color-mix(in_oklab,var(--p-primary)_12%,transparent)] text-p-primary-ink"
-                            : "text-p-ink-3 hover:text-p-ink-2"
+                            : "bg-p-paper text-p-ink-3 hover:text-p-ink-2"
                         }`}
                       >
                         {t(`registry.view.${view}`)}

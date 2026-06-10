@@ -226,6 +226,7 @@
       "zoomIn": "Zoom in",
       "zoomOut": "Zoom out",
       "info": "Map information",
+      "reset": "Reset view",
       "infoBody": "Basemap © CARTO, © OpenStreetMap contributors. Search powered by Nominatim. Catalogs appear as dots; zoom in to see their coverage areas.",
       "closeDetails": "Close details",
       "noLocation": "{count, plural, one {# catalog has no location data} other {# catalogs have no location data}}",
