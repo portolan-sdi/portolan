@@ -1,17 +1,14 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { Card, DirArrow, Ltr } from "./ui";
+import { DirArrow, Ltr } from "./ui";
 
-const resources = [
+// Exactly two talks. The demos, the cost calculator, and the example catalogs
+// are linked elsewhere on the page or from inside these decks — resist adding
+// more entries here.
+const talks = [
   { key: "holmesTalk", href: "https://cholmes.github.io/open-geodag-presentation/" },
-  { key: "calculator", href: "https://cholmes.github.io/open-geodag-presentation/calculator.html" },
-  { key: "parksBuildings", href: "https://cholmes.github.io/open-geodag-presentation/parks_buildings.html" },
-  { key: "monuments", href: "https://cholmes.github.io/open-geodag-presentation/monuments.html" },
   { key: "nextSdi", href: "https://jatorre.github.io/carto-ogc-helsinki/" },
-  { key: "finlandAgent", href: "https://jatorre.github.io/carto-ogc-helsinki/webapp/" },
-  { key: "nlDemo", href: "https://portolan-sdi.github.io/portolan-nl-demo" },
-  { key: "github", href: "https://github.com/portolan-sdi" },
 ] as const;
 
 export function ResourcesSection() {
@@ -20,7 +17,7 @@ export function ResourcesSection() {
   return (
     <section
       id="resources"
-      className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] bg-p-bg-soft border-t border-p-line-soft"
+      className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] border-y border-p-line-soft"
     >
       <div className="max-w-[1240px] mx-auto">
         <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
@@ -29,32 +26,34 @@ export function ResourcesSection() {
         <h2 className="text-section mt-1.5 mb-3 font-semibold tracking-[-0.02em]">
           {t("title")}
         </h2>
-        <p className="text-body-lg leading-relaxed max-w-[720px] mb-10">
+        <p className="text-body-lg leading-relaxed max-w-[720px] mb-12">
           {t("subtitle")}
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {resources.map((resource) => (
+        <div>
+          {talks.map((talk) => (
             <a
-              key={resource.key}
-              href={resource.href}
+              key={talk.key}
+              href={talk.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="contents"
+              className="group block py-10 border-t border-p-line"
             >
-              <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
-                <div className="font-mono text-eyebrow text-p-primary-ink">
-                  <Ltr>{t(`items.${resource.key}.attribution`)}</Ltr>
+              <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-6 lg:gap-12 items-start">
+                <div>
+                  <div className="font-mono text-eyebrow text-p-primary-ink mb-3">
+                    <Ltr>{t(`items.${talk.key}.attribution`)}</Ltr>
+                  </div>
+                  <h3 className="text-feature font-semibold tracking-[-0.02em] mb-3 transition-colors group-hover:text-p-primary">
+                    <Ltr>{t(`items.${talk.key}.title`)}</Ltr> <DirArrow kind="external" />
+                  </h3>
+                  <p className="text-body-lg leading-relaxed max-w-[640px]">
+                    {t(`items.${talk.key}.description`)}
+                  </p>
                 </div>
-                <h3 className="text-card-title font-semibold">
-                  <Ltr>{t(`items.${resource.key}.title`)}</Ltr>
-                </h3>
-                <p className="text-body leading-relaxed">
-                  {t(`items.${resource.key}.description`)}
-                </p>
-                <span className="mt-auto text-small text-p-primary">
-                  <DirArrow kind="external" />
-                </span>
-              </Card>
+                <blockquote className="border-s-2 border-p-accent ps-5 text-card-title-lg leading-snug text-p-ink-2">
+                  {t(`items.${talk.key}.quote`)}
+                </blockquote>
+              </div>
             </a>
           ))}
         </div>

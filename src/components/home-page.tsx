@@ -2,10 +2,11 @@
 
 import { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
 import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
+import { HeroRotator } from "./hero-rotator";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
 import { QuickstartSection } from "./quickstart-section";
@@ -60,12 +61,17 @@ const terminalLines = [
 // External references linked inline from the "why" cards. Keyed by card key;
 // cards without an entry render their description as plain text.
 const whyCardLinks: Record<string, string> = {
-  aiReady: "https://jatorre.github.io/carto-ogc-helsinki/webapp/",
-  cheap: "https://cholmes.github.io/open-geodag-presentation/calculator.html",
+  aiFirst: "https://jatorre.github.io/carto-ogc-helsinki/webapp/",
+  lowCost: "https://cholmes.github.io/open-geodag-presentation/calculator.html",
 };
+
+// Order matters: the first phrase is the SSR default and the one the headline
+// settles on after the rotation finishes.
+const heroPhraseKeys = ["files", "servers", "agents", "scalable", "sovereign"] as const;
 
 export function HomePage({ catalogs = [] }: HomePageProps) {
   const t = useTranslations();
+  const locale = useLocale();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
@@ -82,6 +88,27 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isValidSubmitUrl = submitUrl.trim().endsWith("catalog.json");
+
+  // Live registry totals shown in the hero stats row. Latin digits in every
+  // locale per the translation contract.
+  const heroStats = useMemo(() => {
+    if (catalogs.length === 0) return null;
+    const format = new Intl.NumberFormat(locale === "ar" ? "ar-u-nu-latn" : locale, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+    return [
+      { key: "catalogs", value: format.format(catalogs.length) },
+      {
+        key: "collections",
+        value: format.format(catalogs.reduce((sum, c) => sum + (c.collection_count ?? 0), 0)),
+      },
+      {
+        key: "features",
+        value: format.format(catalogs.reduce((sum, c) => sum + (c.feature_count ?? 0), 0)),
+      },
+    ];
+  }, [catalogs, locale]);
 
   // Centroids of located registry catalogs, drawn as dots on the hero map.
   const heroPoints = useMemo(() => {
@@ -197,11 +224,11 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
 
   const whyCards = [
     { key: "open", id: "01" },
-    { key: "aiReady", id: "02" },
-    { key: "cheap", id: "03" },
-    { key: "sovereign", id: "04" },
-    { key: "scales", id: "05" },
-    { key: "breaks", id: "06" },
+    { key: "aiFirst", id: "02" },
+    { key: "easy", id: "03" },
+    { key: "scalable", id: "04" },
+    { key: "lowCost", id: "05" },
+    { key: "sovereign", id: "06" },
   ] as const;
 
   const howSteps = [
@@ -223,14 +250,9 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
         <div className="relative z-10 px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] w-full">
           <div className="max-w-[1240px] mx-auto">
             <div className="max-w-[640px]">
-              <Tag tone="primary" className="mb-6">
-                {t("hero.tagline")}
-              </Tag>
               <h1 className="text-hero font-semibold tracking-[-0.03em] mb-6">
                 {t("hero.title")} <br />
-                <span className="bg-gradient-to-r from-p-grad-a to-p-grad-b bg-clip-text text-transparent">
-                  {t("hero.titleHighlight")}
-                </span>
+                <HeroRotator phrases={heroPhraseKeys.map((key) => t(`hero.phrases.${key}`))} />
               </h1>
               <p className="text-lead leading-relaxed mb-10">
                 {t("hero.description")}
@@ -247,6 +269,20 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                   </Btn>
                 </a>
               </div>
+              {heroStats && (
+                <div className="grid grid-cols-3 gap-7 mt-10 pt-5 border-t border-dashed border-p-line max-w-[440px]">
+                  {heroStats.map((stat) => (
+                    <div key={stat.key}>
+                      <div className="text-feature font-semibold tracking-[-0.02em]">
+                        <Ltr>{stat.value}</Ltr>
+                      </div>
+                      <div className="font-mono text-micro text-p-ink-3">
+                        {t(`hero.stats.${stat.key}`)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -255,16 +291,15 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       {/* Why Portolan */}
       <section id="why" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)]">
         <div className="max-w-[1240px] mx-auto">
-          <div className="flex items-baseline justify-between mb-8">
-            <div>
-              <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
-                {t("why.eyebrow")}
-              </span>
-              <h2 className="text-section mt-1.5 font-semibold tracking-[-0.02em]">
-                {t("why.title")}
-              </h2>
-            </div>
-          </div>
+          <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
+            {t("why.eyebrow")}
+          </span>
+          <h2 className="text-section mt-1.5 mb-3 font-semibold tracking-[-0.02em]">
+            {t("why.title")}
+          </h2>
+          <p className="text-body-lg leading-relaxed max-w-[720px] mb-10">
+            {t("why.subtitle")}
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-p-line border border-p-line rounded-[var(--p-r-lg)] overflow-hidden">
             {whyCards.map((card) => (
               <div
@@ -424,7 +459,10 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       {/* Quickstart */}
       <QuickstartSection />
 
-      {/* Registry */}
+      {/* Talks & demos */}
+      <ResourcesSection />
+
+      {/* Registry — the living proof, deliberately the last section */}
       {catalogs.length > 0 && (
         <section id="registry" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)]">
           <div className="max-w-[1240px] mx-auto">
@@ -657,9 +695,6 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
           </div>
         </section>
       )}
-
-      {/* Talks & demos */}
-      <ResourcesSection />
 
       {/* Footer */}
       <SiteFooter />

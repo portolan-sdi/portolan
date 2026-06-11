@@ -40,6 +40,10 @@ any user-facing string, follow this table and keep all three locale files in syn
 | sovereign | soberano | سيادي |
 | AI-native | nativo de IA | مصمّم للذكاء الاصطناعي |
 | AI-ready | listo para IA | جاهز للذكاء الاصطناعي |
+| AI-first | la IA primero | الذكاء الاصطناعي أولًا |
+| agent | agente | وكيل |
+| feature (GIS) | entidad | معلم (ج. معالم) |
+| de-intermediation | desintermediación | تراجع الوساطة |
 | browser-native | nativo del navegador | يعمل داخل المتصفح |
 | cheap | económico | اقتصادي |
 | egress | transferencia de salida | نقل البيانات الصادرة |
