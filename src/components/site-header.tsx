@@ -33,7 +33,7 @@ export function SiteHeader() {
   }, []);
 
   return (
-    <header className="relative border-b border-p-line-soft">
+    <header className="sticky top-0 z-30 border-b border-p-line bg-[color-mix(in_srgb,var(--p-bg)_88%,transparent)] backdrop-blur-md backdrop-saturate-150">
       <div className="flex items-center justify-between px-[var(--p-pad-section-x)] py-4">
         <Link href="/" aria-label={t("nav.homeAria")}>
           <PortolanLogo size={28} />

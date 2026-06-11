@@ -66,7 +66,7 @@ export function CatalogCard({ catalog, onTagClick }: CatalogCardProps) {
               key={keyword}
               type="button"
               onClick={() => onTagClick?.(keyword)}
-              className="text-micro font-mono px-2 py-1 rounded-full bg-p-bg-soft border border-p-line-soft text-p-ink-3 hover:text-p-ink-2 hover:bg-p-line transition-colors"
+              className="text-micro font-mono px-2 py-1 rounded-[var(--p-r-sm)] bg-p-bg-soft border border-p-line-soft text-p-ink-3 hover:text-p-ink-2 hover:bg-p-line transition-colors"
             >
               {keyword}
             </button>

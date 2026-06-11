@@ -32,7 +32,7 @@
     }
   },
   "why": {
-    "eyebrow": "// POR QUÉ PORTOLAN",
+    "eyebrow": "Por qué Portolan",
     "title": "Una actualización nativa de la nube para la infraestructura de datos espaciales.",
     "subtitle": "Las SDI son más relevantes que nunca, pero sus requisitos están cambiando.",
     "cards": {
@@ -69,7 +69,7 @@
     }
   },
   "howItWorks": {
-    "eyebrow": "// CÓMO FUNCIONA",
+    "eyebrow": "Cómo funciona",
     "title": "Apunta, convierte, publica.",
     "subtitle": "Un conjunto de formatos creado por la comunidad elimina la necesidad de un servidor y escala con la potencia del almacenamiento en la nube. Sin base de datos, sin servidor de teselas y sin software de portal. Los navegadores, los motores de consulta y los agentes de IA leen los archivos directamente.",
     "steps": {
@@ -96,8 +96,8 @@
     }
   },
   "toolkit": {
-    "eyebrow": "// EL KIT DE HERRAMIENTAS",
-    "title": "El ecosistema viene incluido.",
+    "eyebrow": "El kit de herramientas",
+    "title": "Abierto por defecto.",
     "allProjects": "Todos los proyectos",
     "cli": {
       "name": "portolan-cli",
@@ -126,7 +126,7 @@
     "repo": "portolan-sdi/portolan"
   },
   "quickstart": {
-    "eyebrow": "// INICIO RÁPIDO",
+    "eyebrow": "Inicio rápido",
     "title": "Inicio rápido",
     "intro": "Explora un catálogo existente y luego publica tus propios datos con la CLI o con un agente de IA.",
     "browse": {
@@ -144,7 +144,7 @@
     }
   },
   "registry": {
-    "eyebrow": "// REGISTRO DE CATÁLOGOS",
+    "eyebrow": "Registro de catálogos",
     "title": "Explora {count} catálogos",
     "description": "Descubre y conecta con catálogos Portolan de todo el mundo.",
     "search": {
@@ -220,7 +220,7 @@
     "generated": "Última actualización {date}"
   },
   "resources": {
-    "eyebrow": "// CHARLAS Y DEMOS",
+    "eyebrow": "Charlas y demos",
     "title": "Dos charlas que defienden la idea.",
     "subtitle": "Portolan está en una etapa temprana y se desarrolla en abierto. Empieza por aquí. Las demos, la calculadora de costos y los catálogos de ejemplo están enlazados dentro de las charlas.",
     "items": {

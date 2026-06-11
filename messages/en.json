@@ -32,7 +32,7 @@
     }
   },
   "why": {
-    "eyebrow": "// WHY PORTOLAN",
+    "eyebrow": "Why Portolan",
     "title": "A cloud-native upgrade for spatial data infrastructure.",
     "subtitle": "SDIs are becoming more relevant than ever — but their requirements are changing.",
     "cards": {
@@ -69,7 +69,7 @@
     }
   },
   "howItWorks": {
-    "eyebrow": "// HOW IT WORKS",
+    "eyebrow": "How it works",
     "title": "Point, convert, push.",
     "subtitle": "A community-built set of formats eliminates the need for a server — and scales through the power of cloud storage. No database, no tile server, no portal software: browsers, query engines, and AI agents read the files directly.",
     "steps": {
@@ -96,8 +96,8 @@
     }
   },
   "toolkit": {
-    "eyebrow": "// THE TOOLKIT",
-    "title": "Ecosystem for free.",
+    "eyebrow": "The toolkit",
+    "title": "Open by default.",
     "allProjects": "All projects",
     "cli": {
       "name": "portolan-cli",
@@ -126,7 +126,7 @@
     "repo": "portolan-sdi/portolan"
   },
   "quickstart": {
-    "eyebrow": "// QUICKSTART",
+    "eyebrow": "Quickstart",
     "title": "Quickstart",
     "intro": "Browse an existing catalog, then publish your own data with the CLI or with an AI agent.",
     "browse": {
@@ -144,7 +144,7 @@
     }
   },
   "registry": {
-    "eyebrow": "// CATALOG REGISTRY",
+    "eyebrow": "Catalog registry",
     "title": "Browse {count} catalogs",
     "description": "Discover and connect to Portolan catalogs from around the world.",
     "search": {
@@ -220,7 +220,7 @@
     "generated": "Last updated: {date}"
   },
   "resources": {
-    "eyebrow": "// TALKS & DEMOS",
+    "eyebrow": "Talks & demos",
     "title": "Two talks that make the case.",
     "subtitle": "Portolan is early-stage and developed in the open. Start here — the demos, the cost calculator, and the example catalogs are all linked from inside the talks.",
     "items": {

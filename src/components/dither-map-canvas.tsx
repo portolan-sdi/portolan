@@ -22,48 +22,21 @@ import { DitherShader } from "./dither-shader";
 interface DitherMapCanvasProps {
   className?: string;
   panSpeed?: number;
-  points?: { lat: number; lon: number }[];
 }
 
-function latLonToXY(lat: number, lon: number): { x: number; y: number } {
-  return {
-    x: ((lon + 180) / 360) * 100,
-    y: ((90 - lat) / 180) * 100,
-  };
-}
-
-const LIGHT_MODE_COLOR = new Color(0x848bd8);
-const DARK_MODE_COLOR = new Color(0xd8def0);
-
-// Fallback dots (anonymous city centroids) shown when no located registry
-// catalogs are available.
-const FALLBACK_NODES = [
-  latLonToXY(40.4168, -3.7038), // Madrid
-  latLonToXY(55.6761, 12.5683), // Copenhagen
-  latLonToXY(24.4539, 54.3773), // Abu Dhabi
-  latLonToXY(1.3521, 103.8198), // Singapore
-  latLonToXY(-23.5505, -46.6333), // São Paulo
-  latLonToXY(38.9072, -77.0369), // Washington DC
-  latLonToXY(-33.8688, 151.2093), // Sydney
-  latLonToXY(35.6762, 139.6503), // Tokyo
-  latLonToXY(-1.2921, 36.8219), // Nairobi
-];
+// Monochrome dither: a quiet textural backdrop, not a colored feature. Warm
+// near-black on cream (light) and warm near-white on the warm-dark bg (dark).
+const LIGHT_MODE_COLOR = new Color(0x2c2b22);
+const DARK_MODE_COLOR = new Color(0xdcdacd);
 
 export default function DitherMapCanvas({
   className = "",
   panSpeed = 0.00008,
-  points,
 }: DitherMapCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const dotsRef = useRef<HTMLDivElement>(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
-
-  const nodes =
-    points && points.length > 0
-      ? points.map((p) => latLonToXY(p.lat, p.lon))
-      : FALLBACK_NODES;
 
   useEffect(() => {
     const container = containerRef.current;
@@ -116,7 +89,6 @@ export default function DitherMapCanvas({
 
       function updateColor() {
         const dark = isDarkMode();
-        console.log("[DitherMap] Theme:", dark ? "dark" : "light");
         ditherPass.uniforms.ditherColor.value.copy(
           dark ? DARK_MODE_COLOR : LIGHT_MODE_COLOR
         );
@@ -194,10 +166,6 @@ export default function DitherMapCanvas({
           offsetX += panSpeed;
           if (offsetX > 1) offsetX -= 1;
           (plane.material as MeshBasicMaterial).map!.offset.x = offsetX;
-
-          if (dotsRef.current) {
-            dotsRef.current.style.transform = `translateX(${-offsetX * 100}%)`;
-          }
         }
 
         composer.render();
@@ -242,36 +210,6 @@ export default function DitherMapCanvas({
           ready ? "opacity-100" : "opacity-0"
         }`}
       />
-
-      {ready && (
-        <div
-          ref={dotsRef}
-          className="absolute inset-0 w-[200%] will-change-transform"
-          style={{ left: 0 }}
-        >
-          {[0, 100].map((offsetPct) =>
-            nodes.map((node, i) => (
-              <div
-                key={`${offsetPct}-${i}`}
-                className="absolute pointer-events-none"
-                style={{
-                  left: `${(node.x + offsetPct) / 2}%`,
-                  top: `${node.y}%`,
-                  transform: "translate(-50%, -50%)",
-                }}
-              >
-                <span
-                  className="absolute w-3 h-3 -translate-x-1/2 -translate-y-1/2 rounded-full bg-p-accent"
-                  style={{
-                    animation: `dither-pulse-ring 2.6s ease-out ${i * 0.3}s infinite`,
-                  }}
-                />
-                <span className="relative block w-2 h-2 rounded-full bg-p-accent shadow-[0_0_12px_var(--p-accent)]" />
-              </div>
-            ))
-          )}
-        </div>
-      )}
     </div>
   );
 }
