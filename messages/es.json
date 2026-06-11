@@ -1,7 +1,7 @@
 {
   "meta": {
-    "title": "Portolan, publica datos geoespaciales sin portal",
-    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos de la nube en almacenamiento de objetos. STAC + GeoParquet + COG, como debe ser."
+    "title": "Portolan, infraestructura de datos espaciales nativa de la nube",
+    "description": "Portolan es una nueva base para compartir datos geoespaciales. Archivos nativos de la nube en almacenamiento de objetos, sin servidores, sin bases de datos y sin licencias propietarias. Gracias a los metadatos estructurados y los formatos abiertos, un agente puede leer un catálogo, entenderlo y analizarlo directamente. Abierto, con la IA primero, fácil de implementar, escalable, de bajo costo y soberano."
   },
   "nav": {
     "why": "Por qué",
@@ -14,98 +14,109 @@
     "languageAria": "Cambiar idioma"
   },
   "hero": {
-    "tagline": "Una mejor infraestructura de datos espaciales",
-    "title": "Publica datos geoespaciales",
-    "titleHighlight": "sin portal.",
-    "description": "Portolan es un kit de herramientas y convenciones para publicar datos geoespaciales como archivos nativos de la nube en almacenamiento de objetos. STAC + GeoParquet + COG, como debe ser, para gobiernos y editores de datos abiertos.",
+    "title": "El futuro de los datos espaciales",
+    "phrases": {
+      "files": "son solo archivos.",
+      "servers": "no necesita servidores.",
+      "agents": "está hecho para agentes.",
+      "scalable": "escala sin límites.",
+      "sovereign": "es totalmente soberano."
+    },
+    "description": "Portolan es una nueva base para compartir datos geoespaciales. Archivos nativos de la nube en almacenamiento de objetos, sin servidores, sin bases de datos y sin licencias propietarias. Gracias a los metadatos estructurados y los formatos abiertos, un agente puede leer un catálogo, entenderlo y analizarlo directamente. Abierto, con la IA primero, fácil de implementar, escalable, de bajo costo y soberano.",
     "quickstart": "Inicio rápido",
-    "browseCatalogs": "Explorar catálogos"
+    "browseCatalogs": "Explorar catálogos",
+    "stats": {
+      "catalogs": "catálogos",
+      "collections": "colecciones",
+      "features": "entidades"
+    }
   },
   "why": {
-    "eyebrow": "// POR QUÉ PORTOLAN",
-    "title": "Abierto, económico, soberano, nativo de IA.",
+    "eyebrow": "Por qué Portolan",
+    "title": "Una actualización nativa de la nube para la infraestructura de datos espaciales.",
+    "subtitle": "Las SDI son más relevantes que nunca, pero sus requisitos están cambiando.",
     "cards": {
       "open": {
         "title": "Abierto",
-        "description": "100% código abierto, formatos abiertos. Licencia Apache-2.0, gobernanza abierta, especificaciones abiertas. Si Portolan desapareciera mañana, tus datos seguirían funcionando en todas partes.",
+        "description": "100% código abierto bajo Apache-2.0, formatos abiertos y gobernanza abierta. Los datos geoespaciales son datos. DuckDB, BigQuery y Pandas leen los mismos bytes que las herramientas SIG de escritorio. Si Portolan desapareciera mañana, tus datos seguirían funcionando en todas partes.",
         "tag": "GeoParquet · COG · STAC"
       },
-      "aiReady": {
-        "title": "Listo para IA",
-        "description": "Los metadatos STAC están estructurados para su recuperación. Los catálogos se pueden consultar con agentes LLM y están listos para la búsqueda semántica, no solo para personas que navegan por un portal.",
-        "tag": "STAC + compatible con RAG"
+      "aiFirst": {
+        "title": "La IA primero",
+        "description": "Las SDI actuales no se construyeron para la IA. Portolan explica a los agentes en archivos de texto sencillos cómo acceder a los datos, sin llamadas a API, y los metadatos estructurados les dicen qué significan. La <link>demo Finland.SDI</link> muestra a un agente respondiendo preguntas sobre una SDI nacional.",
+        "tag": "la IA como ciudadana de primera"
       },
-      "cheap": {
-        "title": "Económico",
-        "description": "Paga solo por almacenamiento y transferencia de salida. Sin servidores que mantener, sin base de datos que licenciar, sin licencias de portal que comprar. Un catálogo gubernamental pequeño, unos dólares al mes.",
-        "tag": "almacenamiento + salida, eso es todo"
+      "easy": {
+        "title": "Fácil de implementar",
+        "description": "Una SDI tradicional necesita bases de datos, servicios y personal especializado, una barrera que la mayoría de las organizaciones no puede superar. Un nodo Portolan son archivos en un bucket. Apunta, convierte, publica.",
+        "tag": "apunta · convierte · publica"
+      },
+      "scalable": {
+        "title": "Escala sin límites",
+        "description": "Los agentes recorren conjuntos de datos completos, no consultas sueltas. Sin servidores, el almacenamiento de objetos se encarga de toda la escala, la capa más robusta y probada que ofrece cualquier nube.",
+        "tag": "0 servidores · ∞ solicitudes"
+      },
+      "lowCost": {
+        "title": "Bajo costo",
+        "description": "Solo dos costos, almacenamiento y transferencia de salida. Compartir datos públicos no debería ser una carga para la organización, y los conjuntos de datos populares no deberían causar déficits presupuestarios. La <link>calculadora de costos</link> muestra lo que costarían tus datos.",
+        "tag": "almacenamiento + salida"
       },
       "sovereign": {
-        "title": "Soberano",
-        "description": "Tus datos residen en tu bucket, en tu nube, en tu jurisdicción. Alójalos en AWS, GCS, Azure, MinIO, Cloudflare R2, en cualquier lugar compatible con S3.",
+        "title": "Totalmente soberano",
+        "description": "Controla toda la pila dentro de tu propia jurisdicción, sin proveedores extranjeros. Alójala en AWS, GCS, Azure, MinIO, Hetzner, Scaleway o cualquier almacenamiento compatible con S3.",
         "tag": "usa tu propio bucket"
-      },
-      "scales": {
-        "title": "Escala a petabytes",
-        "description": "El almacenamiento de objetos en la nube gestiona la escala. Los formatos nativos de la nube responden a solicitudes por rango, un COG de 100 GB se abre en ~80 ms, más rápido que la mayoría de los servidores de teselas.",
-        "tag": "p95 < 120 ms · global"
-      },
-      "breaks": {
-        "title": "Acaba con el silo SIG",
-        "description": "Consulta con DuckDB, Snowflake, BigQuery, Databricks o Pandas, no solo con herramientas SIG. Cada capa es un archivo en una URL estable, los mismos bytes para todos.",
-        "tag": "una URL · todas las herramientas"
       }
     }
   },
   "howItWorks": {
-    "eyebrow": "// CÓMO FUNCIONA",
-    "title": "Archivos en almacenamiento, no servidores.",
-    "subtitle": "Portolan reemplaza los servidores SDI tradicionales con archivos nativos de la nube en almacenamiento de objetos. Sin bases de datos, sin servidores de teselas, sin software de portales, solo archivos que los navegadores y los agentes de IA leen directamente.",
+    "eyebrow": "Cómo funciona",
+    "title": "Apunta, convierte, publica.",
+    "subtitle": "Un conjunto de formatos creado por la comunidad elimina la necesidad de un servidor y escala con la potencia del almacenamiento en la nube. Sin base de datos, sin servidor de teselas y sin software de portal. Los navegadores, los motores de consulta y los agentes de IA leen los archivos directamente.",
     "steps": {
       "convert": {
         "id": "01",
         "title": "Convertir",
-        "description": "Transforma shapefiles, GeoTIFF y otros formatos en equivalentes nativos de la nube, GeoParquet para vectores, COG para rásteres, PMTiles para teselas de mapa."
+        "description": "Transforma shapefiles, GeoTIFF, WFS, GeoPackage y ArcGIS Feature Services en formatos nativos de la nube. GeoParquet para vectores, COG para rásteres, PMTiles para teselas de mapa."
       },
       "catalog": {
         "id": "02",
         "title": "Catalogar",
-        "description": "Genera un catálogo STAC que describe cada activo con metadatos estructurados, descripciones enriquecidas y enlaces que los agentes de IA y las herramientas pueden seguir."
+        "description": "Genera un catálogo Portolan que describe cada activo con metadatos estructurados. Se construye sobre STAC, así que cualquier herramienta STAC puede leerlo."
       },
       "publish": {
         "id": "03",
         "title": "Publicar",
-        "description": "Envía archivos a cualquier almacenamiento de objetos compatible con S3, AWS, GCS, Azure, R2, MinIO o Source Cooperative para alojamiento gratuito de datos abiertos."
+        "description": "Envía los archivos a cualquier almacenamiento de objetos compatible con S3. AWS, GCS, Azure, R2, MinIO o Source Cooperative para alojamiento gratuito de datos abiertos."
       },
       "browse": {
         "id": "04",
         "title": "Explorar",
-        "description": "Los datos son accesibles al instante a través de cualquier visor compatible con STAC, consultables mediante DuckDB y listos para agentes de IA, sin servidores que ejecutar."
+        "description": "Abre el resultado en el navegador de Portolan o en cualquier visor STAC, consúltalo con DuckDB o dirige un agente a la URL del catálogo. Los datos responden preguntas directamente."
       }
     }
   },
   "toolkit": {
-    "eyebrow": "// EL KIT DE HERRAMIENTAS",
-    "title": "El kit de herramientas.",
+    "eyebrow": "El kit de herramientas",
+    "title": "Abierto por defecto.",
     "allProjects": "Todos los proyectos",
     "cli": {
       "name": "portolan-cli",
       "title": "La CLI",
-      "version": "v0.7.0",
-      "description": "Convierte, valida y sincroniza. Un comando desde una carpeta de shapefiles hasta un catálogo STAC activo en S3.",
+      "version": "v1.0.0a0 · alpha",
+      "description": "Convierte, valida y sincroniza. Un comando lleva una carpeta de shapefiles a un catálogo navegable en S3.",
       "compatibility": "Funciona con AWS · GCS · Azure · R2 · MinIO · Source.coop"
     },
     "viewer": {
       "name": "portolan-viewer",
       "tag": "En diseño",
       "title": "Visor que se ejecuta en el navegador",
-      "description": "Un visor ligero que lee STAC y archivos nativos de la nube directamente."
+      "description": "Un visor ligero que lee catálogos Portolan y archivos nativos de la nube directamente, sin servidor detrás."
     },
     "skills": {
       "name": "portolan-skills",
-      "tag": "Estable",
+      "tag": "En desarrollo",
       "title": "Skills para agentes de IA",
-      "description": "Skills listas para usar que permiten a los agentes Claude, Gemini y Codex publicar catálogos y consultar datos geoespaciales nativos de la nube."
+      "description": "Skills que permiten a los agentes Claude, Gemini y Codex publicar catálogos y consultar datos geoespaciales nativos de la nube."
     },
     "readMore": "Leer más"
   },
@@ -114,65 +125,28 @@
     "license": "Apache-2.0",
     "repo": "portolan-sdi/portolan"
   },
-  "publishMap": {
-    "header": "// CATÁLOGOS PUBLICADOS · MUNDO",
-    "live": "activo · actualizado hace 4 min",
-    "nodes": {
-      "pacificNw": "LiDAR del Pacífico Noroeste",
-      "andean": "Glaciares andinos",
-      "madrid": "Datos abiertos de Madrid",
-      "nordic": "Hidrología nórdica",
-      "redSea": "Arrecifes del mar Rojo",
-      "taiwan": "Batimetría costera"
-    }
-  },
   "quickstart": {
+    "eyebrow": "Inicio rápido",
     "title": "Inicio rápido",
-    "intro": "Empieza con Portolan en minutos. Explora catálogos existentes y luego publica tus propios datos.",
+    "intro": "Explora un catálogo existente y luego publica tus propios datos con la CLI o con un agente de IA.",
     "browse": {
-      "eyebrow": "// PASO 1",
       "title": "Explora un catálogo",
-      "description": "Los catálogos de Portolan están publicados en la web. Abre el Portolan Browser para explorar conjuntos de datos publicados, ver metadatos, previsualizar mapas e inspeccionar tablas de datos. Todo lo que ves se sirve directamente desde archivos nativos de la nube en almacenamiento de objetos, sin ningún servidor.",
-      "cta": "Abrir el navegador",
-      "duckdb": {
-        "title": "Consulta con DuckDB",
-        "description": "Cualquier archivo GeoParquet de un catálogo Portolan se puede consultar directamente con DuckDB, sin descargar nada. Solo apunta a la URL."
-      }
-    },
-    "publish": {
-      "eyebrow": "// PASO 2",
-      "title": "Publica tus datos",
-      "description": "Dos formas de llevar tus datos a un catálogo Portolan."
+      "description": "Los catálogos Portolan están publicados en la web. Abre el navegador para explorar conjuntos de datos publicados, o dirige DuckDB a cualquier URL de GeoParquet y consúltala en el momento.",
+      "cta": "Abrir el navegador"
     },
     "cli": {
       "title": "Con la CLI",
-      "description": "Instala portolan-cli, luego init, add, convert y push.",
-      "install": "Instalar",
-      "steps": {
-        "init": "Inicializa un nuevo catálogo en tu directorio de datos",
-        "add": "Añade tus archivos de datos al catálogo",
-        "check": "Convierte a formatos nativos de la nube (GeoParquet, COG)",
-        "push": "Envía a cualquier almacenamiento compatible con S3"
-      }
+      "description": "Instala portolan-cli y luego init, add, check y push. La CLI convierte tus archivos y genera el catálogo."
     },
     "claude": {
       "title": "Con Claude",
-      "description": "Si tienes Claude Code, instala la skill de Portolan y dirige Claude a tus datos. Se encarga de la conversión de formatos, la generación de metadatos y la publicación.",
-      "steps": {
-        "install": "Instala la skill de la CLI de Portolan",
-        "run": "Luego pide a Claude que publique tus datos"
-      }
-    },
-    "next": {
-      "title": "Qué sigue",
-      "docs": "Lee la documentación completa de la CLI",
-      "github": "Explora el código en GitHub"
+      "description": "Instala la skill de Portolan en Claude Code y dirígela a tus datos. Se encarga de la conversión, los metadatos y la publicación. Las herramientas de IA destacan con CLI y archivos de texto, así que incluso quienes no son expertos pueden publicar."
     }
   },
   "registry": {
-    "eyebrow": "// REGISTRO DE CATÁLOGOS",
+    "eyebrow": "Registro de catálogos",
     "title": "Explora {count} catálogos",
-    "description": "Descubre y conecta con catálogos STAC compatibles con Portolan de todo el mundo.",
+    "description": "Descubre y conecta con catálogos Portolan de todo el mundo.",
     "search": {
       "placeholder": "Buscar catálogos...",
       "noResults": "Ningún catálogo coincide con tu búsqueda",
@@ -184,7 +158,15 @@
       "validation": "Validación",
       "all": "Todos",
       "bbox": "Región",
-      "bboxLabel": "Caja delimitadora (WGS84)"
+      "bboxLabel": "Caja delimitadora (WGS84)",
+      "lonPlaceholder": "lon",
+      "latPlaceholder": "lat"
+    },
+    "compass": {
+      "north": "N",
+      "south": "S",
+      "east": "E",
+      "west": "O"
     },
     "access": {
       "public": "Público",
@@ -198,11 +180,12 @@
     "card": {
       "maintainer": "Mantenido por",
       "submitted": "Enviado",
-      "viewCatalog": "Ver catálogo"
+      "viewCatalog": "Ver catálogo",
+      "collections": "{count, plural, one {# colección} other {# colecciones}}"
     },
     "cta": {
       "title": "¿Tienes un catálogo para compartir?",
-      "description": "Envía tu catálogo compatible con Portolan al registro.",
+      "description": "Envía tu catálogo Portolan al registro.",
       "button": "Enviar tu catálogo"
     },
     "submit": {
@@ -213,7 +196,9 @@
       "successTitle": "¡Enviado!",
       "successDescription": "Tu catálogo aparecerá después de la revisión.",
       "viewPr": "Ver envío",
-      "submitAnother": "Enviar otro"
+      "submitAnother": "Enviar otro",
+      "failedError": "Error al enviar",
+      "genericError": "Algo salió mal"
     },
     "view": {
       "cards": "Tarjetas",
@@ -232,6 +217,25 @@
       "noLocation": "{count, plural, one {# catálogo sin datos de ubicación} other {# catálogos sin datos de ubicación}}",
       "loading": "Cargando mapa..."
     },
-    "generated": "Última actualización: {date}"
+    "generated": "Última actualización {date}"
+  },
+  "resources": {
+    "eyebrow": "Charlas y demos",
+    "title": "Dos charlas que defienden la idea.",
+    "subtitle": "Portolan está en una etapa temprana y se desarrolla en abierto. Empieza por aquí. Las demos, la calculadora de costos y los catálogos de ejemplo están enlazados dentro de las charlas.",
+    "items": {
+      "holmesTalk": {
+        "title": "A Cloud-Native Geo Upgrade for Spatial Data Infrastructure",
+        "attribution": "Chris Holmes · Open Geodag 2026",
+        "quote": "«Una SDI sin servidores.»",
+        "description": "Cinco requisitos para una SDI moderna, los formatos nativos de la nube que los cumplen y un portal sin servidores en vivo para los Países Bajos."
+      },
+      "nextSdi": {
+        "title": "The Next SDI",
+        "attribution": "Javier de la Torre · OGC Connect Helsinki",
+        "quote": "«Las SDI se construyeron para expertos. Ahora deben servir a los agentes.»",
+        "description": "Por qué la desintermediación hace a las SDI más importantes que nunca, y la arquitectura que necesitan, incluida la demo en vivo del agente Finland.SDI."
+      }
+    }
   }
 }

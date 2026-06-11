@@ -16,10 +16,10 @@ const sizeClasses: Record<BtnSize, string> = {
 };
 
 const variantClasses: Record<BtnVariant, string> = {
-  primary:
-    "bg-gradient-to-b from-p-grad-a to-p-primary text-white border border-p-primary-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.18),var(--p-shadow-sm)]",
-  secondary: "bg-p-paper text-p-ink border border-p-line",
-  ghost: "bg-transparent text-p-ink-2 border border-transparent",
+  primary: "bg-p-primary text-p-on-primary hover:bg-p-primary-ink",
+  secondary: "bg-p-paper text-p-ink border border-p-line hover:bg-p-bg-soft",
+  ghost:
+    "bg-transparent text-p-ink rounded-none border-b-2 border-transparent hover:border-p-ink",
 };
 
 export const Btn = forwardRef<HTMLButtonElement, BtnProps>(
@@ -29,10 +29,9 @@ export const Btn = forwardRef<HTMLButtonElement, BtnProps>(
         ref={ref}
         className={`
           inline-flex items-center justify-center gap-2
-          rounded-[var(--p-r-md)] font-medium font-sans
+          rounded-[var(--p-r-md)] font-semibold font-sans
           cursor-pointer whitespace-nowrap
-          transition-[transform,box-shadow] duration-100
-          hover:opacity-90 active:scale-[0.98]
+          transition-[background-color,border-color,color] duration-150
           ${sizeClasses[size]}
           ${variantClasses[variant]}
           ${className ?? ""}

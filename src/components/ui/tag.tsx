@@ -25,7 +25,7 @@ export function Tag({
       className={`
         inline-flex items-center gap-2
         text-eyebrow font-mono
-        px-3 py-1.5 rounded-full
+        px-2.5 py-1 rounded-[var(--p-r-sm)]
         tracking-[0.02em] uppercase
         border
         ${toneClasses[tone]}

@@ -15,7 +15,10 @@ interface DitherMapProps {
 export function DitherMap({ className = "", panSpeed = 0.00008 }: DitherMapProps) {
   return (
     <div className={className}>
-      <DitherMapCanvas className="absolute inset-0 w-full h-full" panSpeed={panSpeed} />
+      <DitherMapCanvas
+        className="absolute inset-0 w-full h-full"
+        panSpeed={panSpeed}
+      />
     </div>
   );
 }

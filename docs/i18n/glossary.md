@@ -40,6 +40,10 @@ any user-facing string, follow this table and keep all three locale files in syn
 | sovereign | soberano | سيادي |
 | AI-native | nativo de IA | مصمّم للذكاء الاصطناعي |
 | AI-ready | listo para IA | جاهز للذكاء الاصطناعي |
+| AI-first | la IA primero | الذكاء الاصطناعي أولًا |
+| agent | agente | وكيل |
+| feature (GIS) | entidad | معلم (ج. معالم) |
+| de-intermediation | desintermediación | تراجع الوساطة |
 | browser-native | nativo del navegador | يعمل داخل المتصفح |
 | cheap | económico | اقتصادي |
 | egress | transferencia de salida | نقل البيانات الصادرة |
@@ -58,4 +62,4 @@ any user-facing string, follow this table and keep all three locale files in syn
 
 - Spanish "SDI" is standardized as "IDE", which collides with "code editor". Keep the
   Latin "SDI" in body copy to avoid confusion.
-- Keep `portolan-cli`, `portolan-viewer`, `portolan-skills`, `v0.7.0` Latin everywhere.
+- Keep `portolan-cli`, `portolan-viewer`, `portolan-skills`, `v1.0.0a0` Latin everywhere.

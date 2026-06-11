@@ -9,8 +9,6 @@ export function PortolanLogo({
   withWordmark = true,
   className,
 }: PortolanLogoProps) {
-  const gradientId = `pg-${size}`;
-
   return (
     <span
       className={`inline-flex items-center gap-2.5 text-p-ink ${className ?? ""}`}
@@ -22,20 +20,7 @@ export function PortolanLogo({
         aria-hidden="true"
         className="block"
       >
-        <defs>
-          <linearGradient
-            id={gradientId}
-            gradientTransform="rotate(25)"
-            x1="0%"
-            y1="0%"
-            x2="100%"
-            y2="0%"
-          >
-            <stop offset="0%" stopColor="var(--p-grad-a)" />
-            <stop offset="100%" stopColor="var(--p-grad-b)" />
-          </linearGradient>
-        </defs>
-        <g fill={`url(#${gradientId})`}>
+        <g fill="var(--p-primary)">
           <path d="M2.83 18.247l26.34-9.124L2.83 0z" />
           <path d="M29.17 32V13.753L2.83 22.877z" />
         </g>

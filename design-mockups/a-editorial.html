@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Portolan — A · Utility / Editorial</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,400;0,500;0,600;0,700;0,800;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --paper: #fcfcfa;
+    --paper-2: #f5f5f1;
+    --ink: #16170f;
+    --ink-2: #3d3f33;
+    --ink-3: #74766a;
+    --line: #e1e1d8;
+    --line-strong: #c9c9bd;
+    --accent: #1b4dd1;       /* single, disciplined blue */
+    --accent-ink: #1640ad;
+    --sans: "Hanken Grotesk", system-ui, sans-serif;
+    --mono: "JetBrains Mono", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: var(--sans);
+    background: var(--paper);
+    color: var(--ink);
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.5;
+  }
+  a { color: inherit; text-decoration: none; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 clamp(20px, 5vw, 64px); }
+
+  /* ---------- header ---------- */
+  header {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--paper) 88%, transparent);
+    backdrop-filter: saturate(160%) blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav {
+    display: flex; align-items: center; gap: 32px;
+    height: 64px;
+  }
+  .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.02em; font-size: 18px; }
+  .brand svg { display: block; }
+  nav.links { display: none; gap: 28px; margin-inline-start: auto; }
+  nav.links a { font-size: 14px; color: var(--ink-2); font-weight: 500; }
+  nav.links a:hover { color: var(--ink); }
+  .cta-sm {
+    margin-inline-start: 8px; font-size: 14px; font-weight: 600;
+    border: 1px solid var(--ink); padding: 7px 16px; color: var(--ink);
+    transition: background .15s, color .15s;
+  }
+  .cta-sm:hover { background: var(--ink); color: var(--paper); }
+  @media (min-width: 900px) { nav.links { display: flex; } }
+
+  /* ---------- hero ---------- */
+  .hero { padding: clamp(56px, 9vw, 120px) 0 clamp(40px, 6vw, 72px); }
+  .hero-grid { display: grid; grid-template-columns: 1fr; gap: clamp(32px,5vw,72px); }
+  @media (min-width: 980px) { .hero-grid { grid-template-columns: 1.35fr 1fr; align-items: end; } }
+
+  .kicker {
+    font-family: var(--mono); font-size: 12px; letter-spacing: .04em;
+    color: var(--ink-3); text-transform: uppercase; margin-bottom: 28px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .kicker::before { content:""; width: 28px; height: 1px; background: var(--ink-3); display:inline-block; }
+
+  h1.hero-title {
+    font-weight: 800; letter-spacing: -0.035em; line-height: 1.02;
+    font-size: clamp(40px, 7vw, 84px);
+    color: var(--ink);
+  }
+  /* rotating phrase */
+  .rot { display: block; position: relative; height: 1.05em; margin-top: .05em; }
+  .rot span {
+    position: absolute; inset: 0; color: var(--accent);
+    opacity: 0; animation: rot 14s infinite;
+  }
+  .rot span:nth-child(1){ animation-delay: 0s; }
+  .rot span:nth-child(2){ animation-delay: 2.8s; }
+  .rot span:nth-child(3){ animation-delay: 5.6s; }
+  .rot span:nth-child(4){ animation-delay: 8.4s; }
+  .rot span:nth-child(5){ animation-delay: 11.2s; }
+  @keyframes rot {
+    0%   { opacity: 0; transform: translateY(14px); }
+    3%   { opacity: 1; transform: translateY(0); }
+    18%  { opacity: 1; transform: translateY(0); }
+    21%  { opacity: 0; transform: translateY(-14px); }
+    100% { opacity: 0; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .rot span { animation: none; opacity: 0; }
+    .rot span:nth-child(1){ opacity: 1; }
+  }
+
+  .lede {
+    margin-top: 30px; font-size: clamp(16px, 1.3vw, 19px); line-height: 1.6;
+    color: var(--ink-2); max-width: 56ch;
+  }
+  .lede b { color: var(--ink); font-weight: 600; }
+  .hero-actions { margin-top: 36px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; }
+  .btn-primary {
+    background: var(--accent); color: #fff; font-weight: 600; font-size: 15px;
+    padding: 13px 26px; display: inline-flex; align-items: center; gap: 10px;
+    transition: background .15s;
+  }
+  .btn-primary:hover { background: var(--accent-ink); }
+  .btn-ghost {
+    font-weight: 600; font-size: 15px; padding: 13px 4px; color: var(--ink);
+    border-bottom: 2px solid transparent; transition: border-color .15s;
+    display: inline-flex; gap: 8px; align-items: center;
+  }
+  .btn-ghost:hover { border-color: var(--ink); }
+
+  /* stats — editorial ledger, hairline-ruled, not cards */
+  .stats { border-top: 1px solid var(--line-strong); }
+  .stat { padding: 18px 0; border-bottom: 1px solid var(--line); display: flex; align-items: baseline; gap: 16px; }
+  .stat .n { font-weight: 800; font-size: clamp(30px, 4vw, 44px); letter-spacing: -0.03em; line-height: 1; }
+  .stat .l { font-family: var(--mono); font-size: 12px; letter-spacing: .03em; text-transform: uppercase; color: var(--ink-3); }
+  .stat .meta { margin-inline-start: auto; font-size: 13px; color: var(--ink-3); text-align: end; }
+
+  /* ---------- why ---------- */
+  section { padding: clamp(56px, 8vw, 104px) 0; }
+  .sec-head { display: grid; gap: 20px; grid-template-columns: 1fr; margin-bottom: clamp(40px, 5vw, 64px); }
+  @media (min-width: 900px){ .sec-head { grid-template-columns: minmax(0,1fr) minmax(0,46ch); align-items: end; } }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--ink-3); letter-spacing: .06em; }
+  h2.sec-title { font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; font-size: clamp(28px, 3.6vw, 46px); max-width: 18ch; }
+  .sec-sub { font-size: 16px; color: var(--ink-2); line-height: 1.6; }
+
+  .pillars { border-top: 1px solid var(--line-strong); }
+  .pgrid { display: grid; grid-template-columns: 1fr; }
+  @media (min-width: 760px){ .pgrid { grid-template-columns: 1fr 1fr; } }
+  @media (min-width: 1080px){ .pgrid { grid-template-columns: 1fr 1fr 1fr; } }
+  .pillar {
+    border-bottom: 1px solid var(--line); padding: 30px 0;
+    display: grid; gap: 12px; align-content: start;
+  }
+  /* vertical rules between columns on wide screens */
+  @media (min-width: 760px){
+    .pgrid .pillar { padding-inline: clamp(0px, 2vw, 32px); border-inline-end: 1px solid var(--line); }
+    .pgrid .pillar:nth-child(2n){ border-inline-end: none; }
+    .pgrid .pillar:first-child { padding-inline-start: 0; }
+  }
+  @media (min-width: 1080px){
+    .pgrid .pillar:nth-child(2n){ border-inline-end: 1px solid var(--line); }
+    .pgrid .pillar:nth-child(3n){ border-inline-end: none; }
+    .pgrid .pillar:nth-child(3n+1){ padding-inline-start: 0; }
+  }
+  .p-idx { font-family: var(--mono); font-size: 12px; color: var(--accent); letter-spacing: .04em; }
+  .pillar h3 { font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .pillar p { font-size: 14.5px; line-height: 1.6; color: var(--ink-2); }
+  .pillar p a { color: var(--accent); border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+  .p-tag { font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-top: 4px; }
+
+  /* ---------- talks ---------- */
+  .talks-sec { background: var(--paper-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .talk {
+    display: grid; grid-template-columns: 1fr; gap: 24px;
+    padding: clamp(36px, 5vw, 56px) 0; border-bottom: 1px solid var(--line);
+  }
+  .talk:last-child { border-bottom: none; }
+  @media (min-width: 900px){ .talk { grid-template-columns: 1fr 1.1fr; gap: clamp(40px,5vw,80px); align-items: center; } }
+  .quote {
+    font-size: clamp(26px, 3.4vw, 40px); font-weight: 700; letter-spacing: -0.03em;
+    line-height: 1.12; color: var(--ink);
+  }
+  .quote .mark { color: var(--accent); }
+  .talk-body h3 { font-size: clamp(19px,1.6vw,23px); font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
+  .attrib { font-family: var(--mono); font-size: 12.5px; color: var(--ink-3); margin: 12px 0 16px; letter-spacing: .02em; }
+  .talk-body p { font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+  .watch { margin-top: 18px; font-weight: 600; font-size: 14px; color: var(--accent); display: inline-flex; gap: 8px; border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+
+  footer { padding: 48px 0; }
+  .foot { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; justify-content: space-between; font-size: 13px; color: var(--ink-3); font-family: var(--mono); }
+
+  /* staggered load */
+  .reveal { opacity: 0; transform: translateY(16px); animation: reveal .7s cubic-bezier(.2,.7,.2,1) forwards; }
+  @keyframes reveal { to { opacity: 1; transform: none; } }
+  .d1{animation-delay:.05s}.d2{animation-delay:.13s}.d3{animation-delay:.22s}.d4{animation-delay:.32s}
+  @media (prefers-reduced-motion: reduce){ .reveal{ animation:none; opacity:1; transform:none; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap nav">
+    <a class="brand" href="#">
+      <svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">
+        <g fill="#1b4dd1">
+          <path d="M2.83 18.247l26.34-9.124L2.83 0z" />
+          <path d="M29.17 32V13.753L2.83 22.877z" />
+        </g>
+      </svg>
+      Portolan
+    </a>
+    <nav class="links">
+      <a href="#why">Why</a>
+      <a href="#how">How it works</a>
+      <a href="#">Tools</a>
+      <a href="#">Docs</a>
+    </nav>
+    <a class="cta-sm" href="#">Quickstart</a>
+  </div>
+</header>
+
+<main>
+  <!-- HERO -->
+  <section class="hero">
+    <div class="wrap hero-grid">
+      <div>
+        <div class="kicker reveal d1">Spatial data infrastructure</div>
+        <h1 class="hero-title reveal d1">
+          The future of<br />spatial data
+          <span class="rot">
+            <span>is just files.</span>
+            <span>has no servers.</span>
+            <span>is built for agents.</span>
+            <span>is infinitely scalable.</span>
+            <span>is fully sovereign.</span>
+          </span>
+        </h1>
+        <p class="lede reveal d2">
+          Portolan is a new foundation for sharing geospatial data:
+          cloud-native files on object storage — <b>no servers, no databases,
+          no proprietary licenses</b>. Structured metadata and open formats mean
+          an agent can read a catalog, understand it, and analyze it directly.
+        </p>
+        <div class="hero-actions reveal d3">
+          <a class="btn-primary" href="#">Quickstart →</a>
+          <a class="btn-ghost" href="#">Browse catalogs →</a>
+        </div>
+      </div>
+      <div class="stats reveal d4">
+        <div class="stat">
+          <span class="n">12</span><span class="l">catalogs</span>
+          <span class="meta">live on the web</span>
+        </div>
+        <div class="stat">
+          <span class="n">47</span><span class="l">collections</span>
+          <span class="meta">STAC-described</span>
+        </div>
+        <div class="stat">
+          <span class="n">2.3M</span><span class="l">features</span>
+          <span class="meta">queryable in place</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WHY -->
+  <section id="why" class="why">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <div class="sec-num reveal d1">01 — Why Portolan</div>
+          <h2 class="sec-title reveal d1">A cloud-native upgrade for spatial data infrastructure.</h2>
+        </div>
+        <p class="sec-sub reveal d2">SDIs are becoming more relevant than ever — but their requirements are changing.</p>
+      </div>
+
+      <div class="pillars">
+        <div class="pgrid">
+          <div class="pillar">
+            <span class="p-idx">01</span>
+            <h3>Open</h3>
+            <p>100% open source under Apache-2.0, open formats, open governance. Geospatial data is data: DuckDB, BigQuery, and Pandas read the same bytes as desktop GIS. If Portolan disappeared tomorrow, your data would still work everywhere.</p>
+            <span class="p-tag">GeoParquet · COG · STAC</span>
+          </div>
+          <div class="pillar">
+            <span class="p-idx">02</span>
+            <h3>AI-first</h3>
+            <p>Today's SDIs weren't built for AI. Portolan explains to agents in plain text how to access the data — no API calls needed — and structured metadata tells them what it means. The <a href="#">Finland.SDI demo</a> shows an agent answering questions against a national SDI.</p>
+            <span class="p-tag">AI as a first-class citizen</span>
+          </div>
+          <div class="pillar">
+            <span class="p-idx">03</span>
+            <h3>Easy to implement</h3>
+            <p>A traditional SDI needs databases, services, and specialist staff — a barrier most organizations can't clear. A Portolan node is files in a bucket: point, convert, push.</p>
+            <span class="p-tag">point · convert · push</span>
+          </div>
+          <div class="pillar">
+            <span class="p-idx">04</span>
+            <h3>Infinitely scalable</h3>
+            <p>Agents crawl entire datasets, not single queries. With no servers, scaling is handled entirely by cloud storage — the most robust, proven layer any cloud offers.</p>
+            <span class="p-tag">0 servers · ∞ requests</span>
+          </div>
+          <div class="pillar">
+            <span class="p-idx">05</span>
+            <h3>Low cost</h3>
+            <p>Only two costs: storage and egress. Sharing public data shouldn't be an organizational burden, and popular datasets shouldn't cause budget shortfalls. The <a href="#">cost calculator</a> shows what your data would run.</p>
+            <span class="p-tag">storage + egress</span>
+          </div>
+          <div class="pillar">
+            <span class="p-idx">06</span>
+            <h3>Fully sovereign</h3>
+            <p>Control the full stack within your own jurisdiction — no foreign vendor in the stack. Host on AWS, GCS, Azure, MinIO, Hetzner, Scaleway, or any S3-compatible storage.</p>
+            <span class="p-tag">bring your own bucket</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- TALKS -->
+  <section class="talks-sec">
+    <div class="wrap">
+      <div class="sec-head">
+        <div>
+          <div class="sec-num">02 — Talks & demos</div>
+          <h2 class="sec-title">Two talks that make the case.</h2>
+        </div>
+        <p class="sec-sub">Portolan is early-stage and developed in the open. Start here — the demos, the cost calculator, and the example catalogs are all linked from inside the talks.</p>
+      </div>
+
+      <div class="talk">
+        <blockquote class="quote"><span class="mark">“</span>An SDI without servers.<span class="mark">”</span></blockquote>
+        <div class="talk-body">
+          <h3>A Cloud-Native Geo Upgrade for Spatial Data Infrastructure</h3>
+          <div class="attrib">Chris Holmes · Open Geodag 2026</div>
+          <p>Five requirements for a modern SDI, the cloud-native formats that meet them, and a live serverless portal for the Netherlands.</p>
+          <a class="watch" href="#">Watch the talk →</a>
+        </div>
+      </div>
+      <div class="talk">
+        <blockquote class="quote"><span class="mark">“</span>SDIs were built for experts; now they must serve agents.<span class="mark">”</span></blockquote>
+        <div class="talk-body">
+          <h3>The Next SDI</h3>
+          <div class="attrib">Javier de la Torre · OGC Connect Helsinki</div>
+          <p>Why de-intermediation makes SDIs more important than ever, and the architecture they need — including the live Finland.SDI agent demo.</p>
+          <a class="watch" href="#">Watch the talk →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap foot">
+      <span>Open governance · Apache-2.0</span>
+      <span>portolan-sdi/portolan ↗</span>
+    </div>
+  </footer>
+</main>
+</body>
+</html>

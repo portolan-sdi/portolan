@@ -2,13 +2,15 @@
 
 import { useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Link } from "@/i18n/navigation";
-import { RhumbBackdrop } from "./rhumb-backdrop";
 import { DitherMap } from "./dither-map";
+import { HeroRotator } from "./hero-rotator";
 import { SiteHeader } from "./site-header";
 import { SiteFooter } from "./site-footer";
-import { Btn, Tag, Card, Terminal, DirArrow, Ltr } from "./ui";
+import { QuickstartSection } from "./quickstart-section";
+import { ResourcesSection } from "./resources-section";
+import { Btn, Tag, Card, Terminal, DirArrow, Ltr, SectionHead } from "./ui";
 import { CatalogCard } from "./registry/catalog-card";
 import type { Catalog } from "@/lib/catalogs";
 import { getValidationTier } from "@/lib/catalogs";
@@ -37,26 +39,38 @@ interface HomePageProps {
 }
 
 const terminalLines = [
-  { text: "# Convert a folder of shapefiles + tiffs to a portable catalog", color: "#5775d6" },
-  { text: "$ portolan ingest ./gov-data --to s3://my-catalog", color: "#c5cce8" },
-  { text: "", color: "#c5cce8" },
-  { text: "  ✓ scanned 142 files (3.2 GB)", color: "#848bd8" },
-  { text: "  → land_parcels.shp        →  GeoParquet (412 MB)", color: "#c5cce8" },
-  { text: "  → ortho_2024.tif          →  COG (2.1 GB)", color: "#c5cce8" },
-  { text: "  → roads_centerlines.shp   →  GeoParquet (84 MB)", color: "#c5cce8" },
-  { text: "  → ... 11 more", color: "#8d96bd" },
-  { text: "", color: "#c5cce8" },
-  { text: "  ✓ STAC catalog generated  (catalog.json + 14 collections)", color: "#848bd8" },
-  { text: "  ✓ synced to s3://my-catalog (1.4 GB compressed)", color: "#848bd8" },
-  { text: "", color: "#c5cce8" },
-  { text: "  ▸ catalog.json: https://my-catalog.s3.amazonaws.com/catalog.json", color: "#f4b860" },
-  { text: "  ▸ STAC browser: https://radiantearth.github.io/stac-browser/...", color: "#f4b860" },
-  { text: "", color: "#c5cce8" },
-  { text: "  done · 0:48 elapsed", color: "#28c840" },
+  { text: "# Convert a folder of shapefiles + tiffs to a portable catalog", color: "var(--term-syntax-muted)" },
+  { text: "$ portolan ingest ./gov-data --to s3://my-catalog", color: "var(--term-syntax-text)" },
+  { text: "", color: "var(--term-syntax-text)" },
+  { text: "  ✓ scanned 142 files (3.2 GB)", color: "var(--term-syntax-accent)" },
+  { text: "  → land_parcels.shp        →  GeoParquet (412 MB)", color: "var(--term-syntax-text)" },
+  { text: "  → ortho_2024.tif          →  COG (2.1 GB)", color: "var(--term-syntax-text)" },
+  { text: "  → roads_centerlines.shp   →  GeoParquet (84 MB)", color: "var(--term-syntax-text)" },
+  { text: "  → ... 11 more", color: "var(--term-syntax-muted)" },
+  { text: "", color: "var(--term-syntax-text)" },
+  { text: "  ✓ STAC catalog generated  (catalog.json + 14 collections)", color: "var(--term-syntax-accent)" },
+  { text: "  ✓ synced to s3://my-catalog (1.4 GB compressed)", color: "var(--term-syntax-accent)" },
+  { text: "", color: "var(--term-syntax-text)" },
+  { text: "  ▸ catalog.json: https://my-catalog.s3.amazonaws.com/catalog.json", color: "var(--term-syntax-accent)" },
+  { text: "  ▸ STAC browser: https://radiantearth.github.io/stac-browser/...", color: "var(--term-syntax-accent)" },
+  { text: "", color: "var(--term-syntax-text)" },
+  { text: "  done · 0:48 elapsed", color: "var(--term-syntax-ok)" },
 ];
+
+// External references linked inline from the "why" cards. Keyed by card key;
+// cards without an entry render their description as plain text.
+const whyCardLinks: Record<string, string> = {
+  aiFirst: "https://jatorre.github.io/carto-ogc-helsinki/webapp/",
+  lowCost: "https://cholmes.github.io/open-geodag-presentation/calculator.html",
+};
+
+// Order matters: the first phrase is the SSR default and the one the headline
+// settles on after the rotation finishes.
+const heroPhraseKeys = ["files", "servers", "agents", "scalable", "sovereign"] as const;
 
 export function HomePage({ catalogs = [] }: HomePageProps) {
   const t = useTranslations();
+  const locale = useLocale();
 
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedTags, setSelectedTags] = useState<Set<string>>(new Set());
@@ -73,6 +87,27 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const isValidSubmitUrl = submitUrl.trim().endsWith("catalog.json");
+
+  // Live registry totals shown in the hero stats row. Latin digits in every
+  // locale per the translation contract.
+  const heroStats = useMemo(() => {
+    if (catalogs.length === 0) return null;
+    const format = new Intl.NumberFormat(locale === "ar" ? "ar-u-nu-latn" : locale, {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+    return [
+      { key: "catalogs", value: format.format(catalogs.length) },
+      {
+        key: "collections",
+        value: format.format(catalogs.reduce((sum, c) => sum + (c.collection_count ?? 0), 0)),
+      },
+      {
+        key: "features",
+        value: format.format(catalogs.reduce((sum, c) => sum + (c.feature_count ?? 0), 0)),
+      },
+    ];
+  }, [catalogs, locale]);
 
   const allTags = useMemo(() => {
     return Array.from(new Set(catalogs.flatMap((c) => c.keywords ?? []))).sort();
@@ -157,13 +192,13 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       const data = await res.json();
 
       if (!res.ok) {
-        throw new Error(data.error || "Submission failed");
+        throw new Error(data.error || t("registry.submit.failedError"));
       }
 
       setSubmitPrUrl(data.pr_url);
       setSubmitState("success");
     } catch (err) {
-      setSubmitError(err instanceof Error ? err.message : "Something went wrong");
+      setSubmitError(err instanceof Error ? err.message : t("registry.submit.genericError"));
       setSubmitState("error");
     }
   };
@@ -177,11 +212,11 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
 
   const whyCards = [
     { key: "open", id: "01" },
-    { key: "aiReady", id: "02" },
-    { key: "cheap", id: "03" },
-    { key: "sovereign", id: "04" },
-    { key: "scales", id: "05" },
-    { key: "breaks", id: "06" },
+    { key: "aiFirst", id: "02" },
+    { key: "easy", id: "03" },
+    { key: "scalable", id: "04" },
+    { key: "lowCost", id: "05" },
+    { key: "sovereign", id: "06" },
   ] as const;
 
   const howSteps = [
@@ -197,36 +232,50 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       <SiteHeader />
 
       {/* Hero */}
-      <section className="relative min-h-[88svh] md:min-h-[85vh] flex items-center border-b border-p-line-soft overflow-hidden">
+      <section className="relative border-b border-p-line overflow-hidden">
         <DitherMap className="absolute inset-0 w-full h-full opacity-80 dark:opacity-60" />
-        <div className="absolute inset-0 bg-gradient-to-r from-p-bg via-p-bg/85 via-50% to-p-bg/40" />
-        <div className="relative z-10 px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] w-full">
+        <div className="absolute inset-0" style={{ background: "var(--hero-scrim)" }} />
+        <div className="relative z-10 px-[var(--p-pad-section-x)] pt-[clamp(56px,9vw,120px)] pb-[clamp(40px,6vw,72px)]">
           <div className="max-w-[1240px] mx-auto">
-            <div className="max-w-[640px]">
-              <Tag tone="primary" className="mb-6">
-                {t("hero.tagline")}
-              </Tag>
-              <h1 className="text-hero font-semibold tracking-[-0.03em] mb-6">
-                {t("hero.title")} <br />
-                <span className="bg-gradient-to-r from-p-grad-a to-p-grad-b bg-clip-text text-transparent">
-                  {t("hero.titleHighlight")}
-                </span>
-              </h1>
-              <p className="text-lead leading-relaxed mb-10">
-                {t("hero.description")}
-              </p>
-              <div className="flex gap-4 items-center flex-wrap">
-                <Link href="/quickstart">
-                  <Btn variant="primary" size="lg">
-                    {t("hero.quickstart")} <DirArrow />
-                  </Btn>
-                </Link>
-                <a href="https://browser.portolan-sdi.org/">
-                  <Btn variant="secondary" size="lg">
-                    {t("hero.browseCatalogs")}
-                  </Btn>
-                </a>
+            <h1 className="text-hero font-extrabold tracking-[-0.035em] text-balance">
+              {t("hero.title")} <br />
+              <HeroRotator phrases={heroPhraseKeys.map((key) => t(`hero.phrases.${key}`))} />
+            </h1>
+            <div className="mt-[clamp(2rem,4vw,3rem)] grid grid-cols-1 lg:grid-cols-[1.35fr_1fr] gap-[clamp(2rem,5vw,4.5rem)] lg:items-end">
+              <div>
+                <p className="text-lead leading-relaxed max-w-[56ch]">
+                  {t("hero.description")}
+                </p>
+                <div className="flex gap-6 items-center flex-wrap mt-9">
+                  <Link href="/#quickstart">
+                    <Btn variant="primary" size="lg">
+                      {t("hero.quickstart")} <DirArrow />
+                    </Btn>
+                  </Link>
+                  <a href="https://browser.portolan-sdi.org/">
+                    <Btn variant="ghost" size="lg">
+                      {t("hero.browseCatalogs")} <DirArrow />
+                    </Btn>
+                  </a>
+                </div>
               </div>
+              {heroStats && (
+                <div className="border-t border-p-line-strong">
+                  {heroStats.map((stat) => (
+                    <div
+                      key={stat.key}
+                      className="flex items-baseline gap-4 py-4 border-b border-p-line"
+                    >
+                      <span className="text-section font-extrabold tracking-[-0.03em] leading-none">
+                        <Ltr>{stat.value}</Ltr>
+                      </span>
+                      <span className="font-mono text-micro text-p-ink-3 tracking-[0.03em]">
+                        {t(`hero.stats.${stat.key}`)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -235,70 +284,102 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       {/* Why Portolan */}
       <section id="why" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)]">
         <div className="max-w-[1240px] mx-auto">
-          <div className="flex items-baseline justify-between mb-8">
-            <div>
-              <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
-                {t("why.eyebrow")}
-              </span>
-              <h2 className="text-section mt-1.5 font-semibold tracking-[-0.02em]">
-                {t("why.title")}
-              </h2>
+          <SectionHead
+            index="01"
+            eyebrow={t("why.eyebrow")}
+            title={t("why.title")}
+            subtitle={t("why.subtitle")}
+          />
+          <div className="border-t border-p-line-strong">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
+              {whyCards.map((card) => (
+                <div
+                  key={card.key}
+                  className="grid content-start gap-3 py-7 border-b border-p-line
+                    sm:border-s sm:border-p-line
+                    sm:[&:nth-child(2n+1)]:border-s-0
+                    lg:[&:nth-child(3n+1)]:border-s-0
+                    lg:[&:nth-child(3n+2)]:border-s
+                    lg:[&:nth-child(3n)]:border-s
+                    sm:px-[clamp(1rem,2.5vw,2.5rem)]
+                    sm:[&:nth-child(2n+1)]:ps-0
+                    lg:[&:nth-child(3n+1)]:ps-0
+                    lg:[&:nth-child(3n+2)]:ps-[clamp(1rem,2.5vw,2.5rem)]
+                    lg:[&:nth-child(3n)]:ps-[clamp(1rem,2.5vw,2.5rem)]"
+                >
+                  <span className="font-mono text-eyebrow text-p-primary tracking-[0.04em]">
+                    {card.id}
+                  </span>
+                  <h3 className="text-card-title-lg font-bold tracking-[-0.02em]">
+                    {t(`why.cards.${card.key}.title`)}
+                  </h3>
+                  <p className="text-body leading-relaxed">
+                    {t.rich(`why.cards.${card.key}.description`, {
+                      link: (chunks) =>
+                        whyCardLinks[card.key] ? (
+                          <a
+                            href={whyCardLinks[card.key]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-p-primary border-b border-p-primary/35 hover:border-p-primary"
+                          >
+                            {chunks}
+                          </a>
+                        ) : (
+                          <>{chunks}</>
+                        ),
+                    })}
+                  </p>
+                  <span className="font-mono text-micro text-p-ink-3 mt-1">
+                    {t(`why.cards.${card.key}.tag`)}
+                  </span>
+                </div>
+              ))}
             </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-px bg-p-line border border-p-line rounded-[var(--p-r-lg)] overflow-hidden">
-            {whyCards.map((card) => (
-              <div
-                key={card.key}
-                className="bg-p-paper p-6 flex flex-col gap-3"
-              >
-                <div className="flex justify-between items-center">
-                  <span className="font-mono text-eyebrow text-p-ink-3">{card.id}</span>
-                  <span className="w-2 h-2 rounded-full bg-p-primary" />
-                </div>
-                <h3 className="text-card-title font-semibold">
-                  {t(`why.cards.${card.key}.title`)}
-                </h3>
-                <p className="text-body leading-relaxed">
-                  {t(`why.cards.${card.key}.description`)}
-                </p>
-                <div className="mt-auto font-mono text-micro text-p-primary-ink px-2.5 py-1.5 bg-p-bg-soft rounded-[var(--p-r-sm)] border border-p-line-soft self-start">
-                  {t(`why.cards.${card.key}.tag`)}
-                </div>
-              </div>
-            ))}
           </div>
         </div>
       </section>
 
       {/* How it works */}
-      <section id="how" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] bg-p-bg-soft border-y border-p-line-soft">
+      <section id="how" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] border-t border-p-line">
         <div className="max-w-[1240px] mx-auto">
-          <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
-            {t("howItWorks.eyebrow")}
-          </span>
-          <h2 className="text-section mt-1.5 mb-3 font-semibold tracking-[-0.02em]">
-            {t("howItWorks.title")}
-          </h2>
-          <p className="text-body-lg leading-relaxed max-w-[720px] mb-10">
-            {t("howItWorks.subtitle")}
-          </p>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-            {howSteps.map((step) => (
-              <Card key={step} className="flex flex-col gap-3">
-                <div className="flex justify-between items-center">
-                  <span className="font-mono text-eyebrow text-p-ink-3">
+          <SectionHead
+            index="02"
+            eyebrow={t("howItWorks.eyebrow")}
+            title={t("howItWorks.title")}
+            subtitle={t("howItWorks.subtitle")}
+          />
+          <div className="border-t border-p-line-strong">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4">
+              {howSteps.map((step) => (
+                <div
+                  key={step}
+                  className="grid content-start gap-3 py-7 border-b border-p-line
+                    sm:border-s sm:border-p-line
+                    sm:[&:nth-child(2n+1)]:border-s-0
+                    lg:[&:nth-child(4n+1)]:border-s-0
+                    lg:[&:nth-child(4n+2)]:border-s
+                    lg:[&:nth-child(4n+3)]:border-s
+                    lg:[&:nth-child(4n)]:border-s
+                    sm:px-[clamp(1rem,2.5vw,2rem)]
+                    sm:[&:nth-child(2n+1)]:ps-0
+                    lg:[&:nth-child(4n+1)]:ps-0
+                    lg:[&:nth-child(4n+2)]:ps-[clamp(1rem,2.5vw,2rem)]
+                    lg:[&:nth-child(4n+3)]:ps-[clamp(1rem,2.5vw,2rem)]
+                    lg:[&:nth-child(4n)]:ps-[clamp(1rem,2.5vw,2rem)]"
+                >
+                  <span className="font-mono text-eyebrow text-p-primary tracking-[0.04em]">
                     {t(`howItWorks.steps.${step}.id`)}
                   </span>
-                  <span className="w-2 h-2 rounded-full bg-p-accent" />
+                  <h3 className="text-card-title font-bold tracking-[-0.02em]">
+                    {t(`howItWorks.steps.${step}.title`)}
+                  </h3>
+                  <p className="text-body leading-relaxed">
+                    {t(`howItWorks.steps.${step}.description`)}
+                  </p>
                 </div>
-                <h3 className="text-card-title font-semibold">
-                  {t(`howItWorks.steps.${step}.title`)}
-                </h3>
-                <p className="text-body leading-relaxed">
-                  {t(`howItWorks.steps.${step}.description`)}
-                </p>
-              </Card>
-            ))}
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -306,32 +387,28 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
       {/* Toolkit */}
       <section
         id="tools"
-        className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] relative overflow-hidden"
+        className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] border-t border-p-line"
       >
-        <RhumbBackdrop opacity={0.08} originX={15} originY={50} />
-        <div className="max-w-[1240px] mx-auto relative">
-          <div className="flex flex-col gap-4 md:flex-row md:justify-between md:items-end mb-10">
-            <div>
-              <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
-                {t("toolkit.eyebrow")}
-              </span>
-              <h2 className="text-section mt-1.5 font-semibold leading-tight max-w-[720px] tracking-[-0.02em]">
-                {t("toolkit.title")}
-              </h2>
-            </div>
-            <a href="https://github.com/portolan-sdi/">
-              <Btn variant="secondary" size="md">
-                {t("toolkit.allProjects")} <DirArrow />
-              </Btn>
-            </a>
-          </div>
+        <div className="max-w-[1240px] mx-auto">
+          <SectionHead
+            index="03"
+            eyebrow={t("toolkit.eyebrow")}
+            title={t("toolkit.title")}
+            aside={
+              <a href="https://github.com/portolan-sdi/">
+                <Btn variant="secondary" size="md">
+                  {t("toolkit.allProjects")} <DirArrow />
+                </Btn>
+              </a>
+            }
+          />
           <div className="grid grid-cols-1 lg:grid-cols-[3fr_2fr] gap-5 items-stretch">
             {/* CLI Card */}
             <a href="https://cli.portolan-sdi.org/" className="contents">
-              <Card className="flex flex-col gap-4 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+              <Card className="flex flex-col gap-4 transition-colors hover:border-p-line-strong">
                 <div className="flex items-start justify-between">
                   <div>
-                    <div className="font-mono text-eyebrow text-p-primary-ink mb-1">
+                    <div className="font-mono text-eyebrow text-p-ink-3 mb-1">
                       <Ltr>{t("toolkit.cli.name")}</Ltr>
                     </div>
                     <h3 className="text-feature">{t("toolkit.cli.title")}</h3>
@@ -349,9 +426,9 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
             {/* Side Cards */}
             <div className="grid grid-rows-2 gap-5 min-h-0">
               <a href="https://github.com/portolan-sdi/portolan-browser" className="contents">
-                <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+                <Card className="flex flex-col gap-3 transition-colors hover:border-p-line-strong">
                   <div className="flex justify-between items-start">
-                    <div className="font-mono text-eyebrow text-p-primary-ink">
+                    <div className="font-mono text-eyebrow text-p-ink-3">
                       <Ltr>{t("toolkit.viewer.name")}</Ltr>
                     </div>
                     <Tag tone="default">{t("toolkit.viewer.tag")}</Tag>
@@ -366,9 +443,9 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                 </Card>
               </a>
               <a href="https://github.com/portolan-sdi/portolan-skills" className="contents">
-                <Card className="flex flex-col gap-3 transition-shadow hover:shadow-[var(--p-shadow-md)]">
+                <Card className="flex flex-col gap-3 transition-colors hover:border-p-line-strong">
                   <div className="flex justify-between items-start">
-                    <div className="font-mono text-eyebrow text-p-primary-ink">
+                    <div className="font-mono text-eyebrow text-p-ink-3">
                       <Ltr>{t("toolkit.skills.name")}</Ltr>
                     </div>
                     <Tag tone="default">{t("toolkit.skills.tag")}</Tag>
@@ -387,19 +464,22 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
         </div>
       </section>
 
-      {/* Registry */}
+      {/* Quickstart */}
+      <QuickstartSection />
+
+      {/* Talks & demos */}
+      <ResourcesSection />
+
+      {/* Registry — the living proof, deliberately the last section */}
       {catalogs.length > 0 && (
-        <section id="registry" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)] bg-p-bg-soft border-t border-p-line-soft">
+        <section id="registry" className="px-[var(--p-pad-section-x)] py-[var(--p-pad-section-y)]">
           <div className="max-w-[1240px] mx-auto">
-            <span className="font-mono text-eyebrow text-p-ink-3 tracking-[0.08em]">
-              {t("registry.eyebrow")}
-            </span>
-            <h2 className="text-section mt-1.5 mb-6 font-semibold tracking-[-0.02em]">
-              {t("registry.title", { count: catalogs.length })}
-            </h2>
-            <p className="text-body-lg text-p-ink-2 mb-8 max-w-2xl">
-              {t("registry.description")}
-            </p>
+            <SectionHead
+              index="06"
+              eyebrow={t("registry.eyebrow")}
+              title={t("registry.title", { count: catalogs.length })}
+              subtitle={t("registry.description")}
+            />
 
             {/* Filters */}
             <div className="space-y-4 mb-8">
@@ -443,7 +523,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                 </button>
 
                 {/* Cards | Map view toggle */}
-                <div className="flex items-stretch border border-p-line rounded-[var(--p-r-md)] overflow-hidden self-start sm:ms-auto">
+                <div className="flex items-stretch border border-p-line rounded-[var(--p-r-md)] overflow-hidden self-start sm:self-auto sm:ms-auto">
                   {(["cards", "map"] as const).map((view, i) => {
                     const isActive = registryView === view;
                     return (
@@ -452,7 +532,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                         type="button"
                         onClick={() => setRegistryView(view)}
                         aria-pressed={isActive}
-                        className={`font-mono text-small px-4 py-2.5 transition-colors ${
+                        className={`inline-flex items-center justify-center font-mono text-small px-4 py-2.5 transition-colors ${
                           i > 0 ? "border-s border-p-line" : ""
                         } ${
                           isActive
@@ -473,13 +553,13 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                   <div className="flex flex-wrap gap-2">
                     {(["west", "south", "east", "north"] as const).map((dir) => (
                       <div key={dir} className="flex items-center gap-1">
-                        <label className="text-micro text-p-ink-3 uppercase w-6">{dir[0]}</label>
+                        <label className="text-micro text-p-ink-3 uppercase w-6">{t(`registry.compass.${dir}`)}</label>
                         <input
                           type="number"
                           step="any"
                           value={bboxFilter[dir]}
                           onChange={(e) => setBboxFilter((prev) => ({ ...prev, [dir]: e.target.value }))}
-                          placeholder={dir === "west" || dir === "east" ? "lon" : "lat"}
+                          placeholder={dir === "west" || dir === "east" ? t("registry.filters.lonPlaceholder") : t("registry.filters.latPlaceholder")}
                           className="w-20 px-2 py-1.5 text-micro bg-p-bg border border-p-line rounded-[var(--p-r-sm)] text-p-ink placeholder:text-p-ink-3 focus:outline-none focus:border-p-primary"
                         />
                       </div>
@@ -497,7 +577,7 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                         key={tag}
                         type="button"
                         onClick={() => handleTagToggle(tag)}
-                        className={`text-micro font-mono px-3 py-1.5 rounded-full border transition-colors ${
+                        className={`text-micro font-mono px-3 py-1.5 rounded-[var(--p-r-sm)] border transition-colors ${
                           isSelected
                             ? "bg-[color-mix(in_oklab,var(--p-primary)_12%,transparent)] text-p-primary-ink border-[color-mix(in_oklab,var(--p-primary)_25%,transparent)]"
                             : "bg-p-bg text-p-ink-3 border-p-line hover:bg-p-line hover:text-p-ink-2"
@@ -605,9 +685,9 @@ export function HomePage({ catalogs = [] }: HomePageProps) {
                       type="button"
                       onClick={handleSubmitCatalog}
                       disabled={!isValidSubmitUrl || submitState === "submitting"}
-                      className={`px-5 py-2.5 rounded-[var(--p-r-md)] text-body font-medium transition-all whitespace-nowrap ${
+                      className={`px-5 py-2.5 rounded-[var(--p-r-md)] text-body font-semibold transition-colors whitespace-nowrap ${
                         isValidSubmitUrl && submitState !== "submitting"
-                          ? "bg-p-primary text-white hover:opacity-90"
+                          ? "bg-p-primary text-p-on-primary hover:bg-p-primary-ink"
                           : "bg-p-line text-p-ink-3 cursor-not-allowed"
                       }`}
                     >

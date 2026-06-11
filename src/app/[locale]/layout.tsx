@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Archivo, JetBrains_Mono, Cairo } from "next/font/google";
+import { Hanken_Grotesk, JetBrains_Mono, Cairo } from "next/font/google";
 import { NextIntlClientProvider, hasLocale } from "next-intl";
 import { getMessages, getTranslations, setRequestLocale } from "next-intl/server";
 import { notFound } from "next/navigation";
@@ -8,10 +8,10 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { routing } from "@/i18n/routing";
 import { getDirection } from "@/i18n/direction";
 
-const archivo = Archivo({
-  variable: "--font-archivo",
+const hanken = Hanken_Grotesk({
+  variable: "--font-hanken",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
+  weight: ["400", "500", "600", "700", "800"],
 });
 
 const jetbrainsMono = JetBrains_Mono({
@@ -63,7 +63,7 @@ export default async function LocaleLayout({
     <html
       lang={locale}
       dir={dir}
-      className={`${archivo.variable} ${jetbrainsMono.variable} ${cairo.variable}`}
+      className={`${hanken.variable} ${jetbrainsMono.variable} ${cairo.variable}`}
       suppressHydrationWarning
     >
       <body className="min-h-screen antialiased">

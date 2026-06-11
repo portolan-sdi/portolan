@@ -1,40 +1,51 @@
 @import "tailwindcss";
 
 :root {
-  /* Dither map: #848BD8 (light blue) in light mode */
-  --dither-filter: brightness(0.6) sepia(1) saturate(2) hue-rotate(190deg);
+  /* Dither map: rendered in the editorial blue accent on cream */
+  --dither-filter: brightness(0.55) sepia(1) saturate(3.2) hue-rotate(196deg);
 
-  /* Brand palette */
-  --p-bg: #eaedf9;
-  --p-bg-soft: #f4f6fc;
+  /* Hero legibility scrim over the dither map. Light mode keeps it light so the
+     map stays visible; dark mode (overridden below) is heavier. */
+  --hero-scrim: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--p-bg) 90%, transparent),
+    color-mix(in srgb, var(--p-bg) 50%, transparent) 42%,
+    color-mix(in srgb, var(--p-bg) 12%, transparent)
+  );
+
+  /* Editorial palette — warm paper + single disciplined blue accent */
+  --p-bg: #fcfcfa;
+  --p-bg-soft: #f5f5f1;
   --p-paper: #ffffff;
-  --p-ink: #202a4f;
-  --p-ink-2: #343e63;
-  --p-ink-3: #5a6585;
-  --p-line: #d8def0;
-  --p-line-soft: #e7ebf6;
+  --p-ink: #16170f;
+  --p-ink-2: #3d3f33;
+  --p-ink-3: #74766a;
+  --p-line: #e1e1d8;
+  --p-line-soft: #ececE5;
+  --p-line-strong: #c9c9bd;
   --p-primary: #4163cc;
   --p-primary-ink: #2d4aa8;
-  --p-grad-a: #395eca;
-  --p-grad-b: #848bd8;
-  --p-accent: #f4b860;
-  --p-accent-ink: #b67c1f;
-  --p-success: #2f8a6a;
-  --p-warn: #c97a2b;
+  --p-grad-a: #4163cc;
+  --p-grad-b: #4163cc;
+  --p-accent: #4163cc;
+  --p-accent-ink: #2d4aa8;
+  --p-on-primary: #ffffff;
+  --p-success: #2f7d63;
+  --p-warn: #b06e2a;
 
   /* Type */
-  --p-sans: var(--font-archivo), var(--font-cairo), ui-sans-serif, system-ui,
+  --p-sans: var(--font-hanken), var(--font-cairo), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, sans-serif;
   --p-mono: var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, Menlo,
     monospace;
   --p-arabic: var(--font-cairo), "Segoe UI", Tahoma, sans-serif;
 
-  /* Radii */
-  --p-r-xs: 4px;
-  --p-r-sm: 6px;
-  --p-r-md: 10px;
-  --p-r-lg: 16px;
-  --p-r-xl: 24px;
+  /* Radii — near-square editorial */
+  --p-r-xs: 0px;
+  --p-r-sm: 2px;
+  --p-r-md: 3px;
+  --p-r-lg: 4px;
+  --p-r-xl: 6px;
 
   /* Spacing */
   --p-pad-xs: 8px;
@@ -43,50 +54,71 @@
   --p-pad-lg: 32px;
   --p-pad-xl: 56px;
 
-  /* Shadows */
-  --p-shadow-sm: 0 1px 2px rgba(32, 42, 79, 0.06),
-    0 1px 0 rgba(32, 42, 79, 0.04);
-  --p-shadow-md: 0 6px 24px -8px rgba(32, 42, 79, 0.18),
-    0 1px 2px rgba(32, 42, 79, 0.06);
-  --p-shadow-lg: 0 24px 60px -20px rgba(32, 42, 79, 0.25),
-    0 2px 6px rgba(32, 42, 79, 0.08);
+  /* Shadows — flat editorial: no drop shadows, hairlines only */
+  --p-shadow-sm: none;
+  --p-shadow-md: 0 1px 0 var(--p-line);
+  --p-shadow-lg: 0 1px 0 var(--p-line);
 
-  /* Fluid section padding (mobile-first) */
-  --p-pad-section-x: clamp(20px, 5vw, 56px);
-  --p-pad-section-y: clamp(40px, 6vw, 80px);
+  /* Fluid section padding (mobile-first) — generous editorial whitespace */
+  --p-pad-section-x: clamp(20px, 5vw, 64px);
+  --p-pad-section-y: clamp(56px, 8vw, 104px);
 
-  /* Terminal (fixed-dark block, centralized) */
-  --term-bg: #0e1230;
-  --term-header: #161c44;
-  --term-border: #1c2452;
-  --term-title: #8d96bd;
-  --term-text: #c5cce8;
+  /* Terminal — theme-aware. Light mode: warm paper code block. */
+  --term-bg: #f7f7f2;
+  --term-header: #eeeee8;
+  --term-border: #e1e1d8;
+  --term-title: #74766a;
+  --term-text: #3d3f33;
+  --term-syntax-text: #3d3f33;
+  --term-syntax-muted: #8a8a7c;
+  --term-syntax-accent: #4163cc;
+  --term-syntax-ok: #2f7d63;
   --term-dot-red: #ff5f57;
   --term-dot-yellow: #febc2e;
   --term-dot-green: #28c840;
 }
 
 [data-theme="dark"] {
-  /* Dither map: #202A4F (dark blue) in dark mode - higher contrast */
-  --dither-filter: brightness(0.4) sepia(1) saturate(3) hue-rotate(200deg);
+  /* Dither map: muted warm-blue on warm-dark */
+  --dither-filter: brightness(0.45) sepia(1) saturate(2.2) hue-rotate(198deg);
 
-  --p-bg: #0d1230;
-  --p-bg-soft: #131a3d;
-  --p-paper: #161e47;
-  --p-ink: #eaedf9;
-  --p-ink-2: #c5cce8;
-  --p-ink-3: #8d96bd;
-  --p-line: #29336a;
-  --p-line-soft: #1f2858;
+  --hero-scrim: linear-gradient(
+    to right,
+    var(--p-bg),
+    color-mix(in srgb, var(--p-bg) 82%, transparent) 45%,
+    color-mix(in srgb, var(--p-bg) 45%, transparent)
+  );
+
+  --p-bg: #141410;
+  --p-bg-soft: #1b1b15;
+  --p-paper: #1f1f18;
+  --p-ink: #f3f2ea;
+  --p-ink-2: #cbcabd;
+  --p-ink-3: #908f80;
+  --p-line: #2f2f26;
+  --p-line-soft: #26261e;
+  --p-line-strong: #3a3a2f;
   --p-primary: #8b9eee;
-  --p-primary-ink: #b6c2f4;
-  --p-grad-a: #5775d6;
-  --p-grad-b: #a4abe6;
-  --p-accent: #f4c98a;
-  --p-accent-ink: #f4c98a;
-  --p-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2), 0 1px 0 rgba(0, 0, 0, 0.1);
-  --p-shadow-md: 0 6px 24px -8px rgba(0, 0, 0, 0.5);
-  --p-shadow-lg: 0 24px 60px -20px rgba(0, 0, 0, 0.6);
+  --p-primary-ink: #aab6f2;
+  --p-grad-a: #8b9eee;
+  --p-grad-b: #8b9eee;
+  --p-accent: #8b9eee;
+  --p-accent-ink: #aab6f2;
+  --p-on-primary: #15160f;
+  --p-shadow-sm: none;
+  --p-shadow-md: 0 1px 0 var(--p-line);
+  --p-shadow-lg: 0 1px 0 var(--p-line);
+
+  /* Terminal — dark mode: warm near-black code block */
+  --term-bg: #16170f;
+  --term-header: #1f1f18;
+  --term-border: #2f2f26;
+  --term-title: #908f80;
+  --term-text: #cbcabd;
+  --term-syntax-text: #cbcabd;
+  --term-syntax-muted: #908f80;
+  --term-syntax-accent: #8b9eee;
+  --term-syntax-ok: #3fcf5f;
 }
 
 @theme inline {
@@ -98,8 +130,10 @@
   --color-p-ink-3: var(--p-ink-3);
   --color-p-line: var(--p-line);
   --color-p-line-soft: var(--p-line-soft);
+  --color-p-line-strong: var(--p-line-strong);
   --color-p-primary: var(--p-primary);
   --color-p-primary-ink: var(--p-primary-ink);
+  --color-p-on-primary: var(--p-on-primary);
   --color-p-grad-a: var(--p-grad-a);
   --color-p-grad-b: var(--p-grad-b);
   --color-p-accent: var(--p-accent);
@@ -131,7 +165,7 @@
   --text-body--line-height: 1.6;
   --text-body-lg: clamp(14px, 0.4vw + 13px, 15px);
   --text-body-lg--line-height: 1.6;
-  --text-lead: clamp(15px, 0.6vw + 13.5px, 17px);
+  --text-lead: clamp(16px, 0.6vw + 14px, 19px);
   --text-lead--line-height: 1.6;
   --text-card-title: 18px;
   --text-card-title--line-height: 1.3;
@@ -143,8 +177,8 @@
   --text-section-sm--line-height: 1.15;
   --text-section: clamp(28px, 4vw + 8px, 44px);
   --text-section--line-height: 1.1;
-  --text-hero: clamp(32px, 5vw + 10px, 64px);
-  --text-hero--line-height: 1.1;
+  --text-hero: clamp(40px, 7vw, 84px);
+  --text-hero--line-height: 1.02;
   --text-hero-sm: clamp(30px, 4vw + 10px, 52px);
   --text-hero-sm--line-height: 1.1;
 }
@@ -166,7 +200,6 @@ body {
   background: var(--p-bg);
   color: var(--p-ink);
   -webkit-font-smoothing: antialiased;
-  font-feature-settings: "ss01", "cv11";
 }
 
 h1,
@@ -216,13 +249,13 @@ button {
   font-family: var(--p-mono);
 }
 
-@keyframes dither-pulse-ring {
-  0% {
-    transform: scale(1);
-    opacity: 0.6;
+@keyframes caret-blink {
+  0%,
+  49% {
+    opacity: 1;
   }
+  50%,
   100% {
-    transform: scale(2.5);
     opacity: 0;
   }
 }
