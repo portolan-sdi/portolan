@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SignJWT } from "jose";
 import { createPrivateKey } from "crypto";
+import {
+  registryEntryExists,
+  registryIdFromCatalog,
+} from "@/lib/catalog-submission";
 
 const GITHUB_APP_ID = process.env.GITHUB_APP_ID;
 const GITHUB_INSTALLATION_ID = process.env.GITHUB_INSTALLATION_ID;
@@ -19,23 +23,6 @@ interface SubmitRequest {
 // then out of reach. Rejecting whitespace matters beyond shape: this value is
 // interpolated into YAML, and a newline in it would inject a second key.
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-function deriveSlug(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const pathParts = parsed.pathname.split("/").filter(Boolean);
-    const catalogIndex = pathParts.findIndex((p) => p === "catalog.json");
-    if (catalogIndex > 0) {
-      return pathParts[catalogIndex - 1];
-    }
-    if (pathParts.length >= 2) {
-      return pathParts[pathParts.length - 2];
-    }
-    return `catalog-${Date.now()}`;
-  } catch {
-    return `catalog-${Date.now()}`;
-  }
-}
 
 async function getInstallationToken(): Promise<string> {
   if (!GITHUB_APP_ID || !GITHUB_INSTALLATION_ID || !GITHUB_PRIVATE_KEY) {
@@ -100,6 +87,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let slug: string;
+    try {
+      slug = await registryIdFromCatalog(url);
+    } catch (err) {
+      console.error("Catalog identity error:", err);
+      return NextResponse.json({}, { status: 422 });
+    }
+
     let token: string;
     try {
       token = await getInstallationToken();
@@ -111,7 +106,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const slug = deriveSlug(url);
+    const entryUrl =
+      `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}` +
+      `/contents/catalogs/${slug}.yaml?ref=main`;
+    if (await registryEntryExists(entryUrl, token)) {
+      return NextResponse.json({}, { status: 409 });
+    }
+
     const branchName = `add-${slug}-${Date.now()}`;
 
     const mainRef = await fetch(

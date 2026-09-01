@@ -236,6 +236,7 @@
       "successTitle": "Submitted!",
       "viewPr": "View submission",
       "submitAnother": "Submit another",
+      "alreadyExistsError": "A catalog with this ID is already registered",
       "failedError": "Submission failed",
       "genericError": "Something went wrong"
     },

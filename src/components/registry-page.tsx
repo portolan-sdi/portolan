@@ -306,6 +306,9 @@ export function RegistryPage({
       const data = await res.json();
 
       if (!res.ok) {
+        if (res.status === 409) {
+          throw new Error(t("registry.submit.alreadyExistsError"));
+        }
         throw new Error(data.error || t("registry.submit.failedError"));
       }
 

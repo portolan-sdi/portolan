@@ -236,6 +236,7 @@
       "successTitle": "¡Enviado!",
       "viewPr": "Ver envío",
       "submitAnother": "Enviar otro",
+      "alreadyExistsError": "Ya existe un catálogo con este ID",
       "failedError": "Error al enviar",
       "genericError": "Algo salió mal"
     },

@@ -236,6 +236,7 @@
       "successTitle": "تم الإرسال!",
       "viewPr": "عرض الإرسال",
       "submitAnother": "إرسال آخر",
+      "alreadyExistsError": "يوجد كتالوج مسجل بهذا المعرّف",
       "failedError": "تعذّر الإرسال",
       "genericError": "حدث خطأ ما"
     },

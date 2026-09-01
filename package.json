@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:unit": "tsx --test tests/coverage-contract.test.ts",
+    "test:unit": "tsx --test tests/*.test.ts",
     "test:a11y": "playwright test"
   },
   "dependencies": {
