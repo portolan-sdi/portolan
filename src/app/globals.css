@@ -450,8 +450,10 @@ body {
 
 /* --- Hero glyph map drift ----------------------------------------------
    The map rasterizes once, then drifts as a ticker, on the same principle
-   as the logo marquee below it. Identical tiles sit side by side and the
-   track translates by exactly one tile, so the loop has no seam.
+   as the logo marquee below it. One raster holds the frame width plus one
+   extra world, and the track translates by exactly one world, so the loop
+   has no seam. The world is a whole number of glyph cells, so the raster
+   repeats on a cell boundary and no join sits at the antimeridian.
 
    The transform runs on the compositor. Re-rendering the glyph grid each
    frame cannot look smooth at this speed: the drift covers about 33 px per

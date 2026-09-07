@@ -66,7 +66,6 @@ const BAND_COLORS = [
  */
 const ROT_X = 40;
 const ROT_Y = 0;
-const ZOOM = 550;
 const RELIEF = 0.2;
 const DENSITY = 2;
 const LIGHT_AZ = 50;
@@ -74,26 +73,18 @@ const LIGHT_EL = 50;
 const LIGHT_INTENSITY = 1.15;
 const AMBIENT_INTENSITY = 0.4;
 
+/**
+ * Nominal width of one world unit, in CSS pixels.
+ *
+ * The orthographic camera projects one world unit to `zoom` pixels and the
+ * plane spans -1 to 1, so a whole world is twice this figure. The value is a
+ * target. `build` rounds the world to a whole number of glyph cells and derives
+ * the camera zoom from that count, so the raster repeats on a cell boundary.
+ */
+const ZOOM = 550;
+
 /** Glyph cell size in pixels before the density divisor. */
 const BASE_FONT_PX = 13;
-
-/**
- * Width of one world, in CSS pixels.
- *
- * The orthographic camera projects one world unit to exactly `zoom` pixels,
- * and the plane spans -1 to 1, so a whole world is twice the zoom. Measured
- * against the renderer at three configurations (host 1200 px, host 2400 px,
- * and a 6.5 px cell) the projected width held at 534 to 539 px per unit, so
- * the figure does not depend on the host size or the type metrics.
- *
- * Rendering into a host of exactly this width therefore fills the raster with
- * one world and no margin, which is what lets a copy of it tile.
- *
- * Rounded to a whole pixel. Flex lays out fractional widths inconsistently and
- * leaves a hairline between tiles. The rounding shifts the join by less than
- * half a pixel, which no join can show.
- */
-const WORLD_PX = Math.round(ZOOM * 2);
 
 /**
  * Drift speed.
@@ -118,25 +109,77 @@ function lightDirection(azDeg: number, elDeg: number): Vec3 {
   ];
 }
 
-/** Expand the grid into one quad per cell. */
-function buildPolygons(grid: WorldRelief) {
+/**
+ * Expand the grid into one quad per cell.
+ *
+ * The `y` axis carries longitude from -1 to 1. `lonOffset` shifts a copy of
+ * the world along it, so a whole number of worlds sit side by side in one
+ * scene. The elevation at -1 equals the elevation at 1 to the last digit, so
+ * two copies meet with no step.
+ */
+function buildPolygons(grid: WorldRelief, lonOffset = 0) {
   const { n, x, y, z, b } = grid;
   const w = n + 1;
   const polygons = new Array(n * n);
   for (let iy = 0; iy < n; iy++) {
+    const y0 = y[iy] + lonOffset;
+    const y1 = y[iy + 1] + lonOffset;
     for (let ix = 0; ix < n; ix++) {
       polygons[iy * n + ix] = {
         vertices: [
-          [x[ix], y[iy], z[iy * w + ix]],
-          [x[ix + 1], y[iy], z[iy * w + ix + 1]],
-          [x[ix + 1], y[iy + 1], z[(iy + 1) * w + ix + 1]],
-          [x[ix], y[iy + 1], z[(iy + 1) * w + ix]],
+          [x[ix], y0, z[iy * w + ix]],
+          [x[ix + 1], y0, z[iy * w + ix + 1]],
+          [x[ix + 1], y1, z[(iy + 1) * w + ix + 1]],
+          [x[ix], y1, z[(iy + 1) * w + ix]],
         ] as Vec3[],
         color: BAND_COLORS[b[iy * n + ix]] ?? BAND_COLORS[0],
       };
     }
   }
   return polygons;
+}
+
+/** Type settings of the glyph raster. The cell probe carries the same ones. */
+function styleOutput(el: HTMLElement) {
+  el.style.fontSize = `${BASE_FONT_PX / DENSITY}px`;
+  el.style.fontFamily = "var(--p-mono)";
+  // Cells butt against each other, so any leading between rows shows up as
+  // banding across the map.
+  el.style.lineHeight = "1";
+}
+
+/** One glyph cell, in CSS pixels. */
+interface CellMetrics {
+  w: number;
+  h: number;
+}
+
+/**
+ * Measure one glyph cell the way glyphcss does: a hidden `pre` of twenty `M`
+ * rows, one per line, in the raster's own type settings.
+ *
+ * The probe is the first text on the page in the mono web font at this size,
+ * so it starts the font request. The first box read forces layout, which puts
+ * that request in flight, and `fonts.ready` then waits for it. A cell measured
+ * in the fallback font would set a column count that the real font renders at
+ * a different width, and the raster would no longer fill its tile.
+ */
+async function measureCell(host: HTMLElement): Promise<CellMetrics> {
+  const probe = document.createElement("pre");
+  probe.textContent = Array(20).fill("M").join("\n");
+  styleOutput(probe);
+  probe.style.cssText +=
+    ";position:absolute;visibility:hidden;white-space:pre;" +
+    "padding:0;margin:0;pointer-events:none";
+  host.appendChild(probe);
+  try {
+    probe.getBoundingClientRect();
+    await document.fonts?.ready;
+    const rect = probe.getBoundingClientRect();
+    return { w: rect.width || 8, h: rect.height ? rect.height / 20 : 16 };
+  } finally {
+    probe.remove();
+  }
 }
 
 export default function GlyphMapCanvas({
@@ -157,6 +200,7 @@ export default function GlyphMapCanvas({
     let disposed = false;
     let scene: ReturnType<typeof createGlyphScene> | null = null;
     let resizeTimer: number | undefined;
+    let buildToken = 0;
     let stopObserving = () => {};
 
     const reducedMotion = window.matchMedia(
@@ -164,34 +208,61 @@ export default function GlyphMapCanvas({
     ).matches;
 
     /**
-     * Rasterize one world, then repeat it across the track.
+     * Rasterize one continuous strip of worlds, then drift it by one world.
      *
      * The map never re-rasterizes while it drifts. A character cell is about
-     * 6.5 px wide and the drift covers about 33 px per second, so a re-render
-     * loop would advance the image only five times a second whatever the frame
-     * rate. Translating the finished raster keeps the motion on the compositor
-     * and off the main thread.
+     * 3.9 px wide and the drift covers about 13 px per second, so a re-render
+     * loop would advance the image only a few times a second whatever the
+     * frame rate. Translating the finished raster keeps the motion on the
+     * compositor and off the main thread.
      *
-     * A tile carries the world from one antimeridian to the other, so abutting
-     * two tiles joins the map along the same meridian and the seam closes.
+     * The strip holds the frame width plus one extra world, and the worlds in
+     * it are one mesh, so no join exists between them. The loop then moves the
+     * strip by exactly one world and snaps back. One world is a whole number
+     * of columns by construction, so the glyph under any pixel is the same
+     * before and after the snap.
+     *
+     * An earlier version tiled copies of a one-world raster in boxes that were
+     * `2 * zoom` pixels wide. The raster was a whole number of cells and the
+     * box was not, so every join left a blank column at the antimeridian.
      */
-    function build(grid: WorldRelief) {
+    async function build(grid: WorldRelief, token: number) {
       if (disposed || !frame || !track) return;
 
       scene?.destroy();
+      scene = null;
       track.replaceChildren();
 
-      const height = frame.getBoundingClientRect().height || 1;
+      const box = frame.getBoundingClientRect();
+      const frameWidth = box.width || 1;
+      const height = box.height || 1;
+
+      const cell = await measureCell(frame);
+      if (disposed || token !== buildToken) return;
+
+      // One world is a whole number of columns. The camera projects with the
+      // same measured cell, so the zoom below lands each world edge on a cell
+      // boundary.
+      const worldCols = Math.max(1, Math.round((ZOOM * 2) / cell.w));
+      const zoom = (worldCols * cell.w) / 2;
+
+      // Columns the strip needs: the frame, plus one world to travel through.
+      // glyphcss floors the integer host width over the cell, so the stage is
+      // one pixel wider than the need to keep the floor at or above it.
+      const frameCols = Math.ceil(frameWidth / cell.w);
+      const neededCols = frameCols + (still ? 0 : worldCols);
+      const stageWidth = Math.ceil(neededCols * cell.w) + 1;
+
       const stage = document.createElement("div");
       stage.style.cssText =
-        `position:absolute;left:0;top:0;width:${WORLD_PX}px;` +
+        `position:absolute;left:0;top:0;width:${stageWidth}px;` +
         `height:${height}px;visibility:hidden`;
       frame.appendChild(stage);
 
       const camera = createGlyphOrthographicCamera({
         rotX: ROT_X,
         rotY: ROT_Y,
-        zoom: ZOOM,
+        zoom,
       });
       camera.target = [0, 0, 0];
 
@@ -212,35 +283,37 @@ export default function GlyphMapCanvas({
         },
         ambientLight: { intensity: AMBIENT_INTENSITY },
       });
-      scene.output.style.fontSize = `${BASE_FONT_PX / DENSITY}px`;
-      scene.output.style.fontFamily = "var(--p-mono)";
-      // Cells butt against each other, so any leading between rows shows up as
-      // banding across the map.
-      scene.output.style.lineHeight = "1";
+      styleOutput(scene.output);
       scene.fit();
-      scene.add(buildPolygons(grid), { scale: [1, 1, RELIEF] });
+      const cols = scene.getOptions().cols ?? neededCols;
+
+      // World copy `j` is centred on column `centre + j * worldCols`. Add the
+      // copies that touch the raster, with a one column margin on each side.
+      const centre = cols / 2;
+      const margin = 1;
+      const first = Math.floor((-margin - centre) / worldCols - 0.5) + 1;
+      const last = Math.ceil((cols + margin - centre) / worldCols + 0.5) - 1;
+      const polygons = [];
+      for (let j = first; j <= last; j++) {
+        polygons.push(...buildPolygons(grid, 2 * j));
+      }
+      scene.add(polygons, { scale: [1, 1, RELIEF] });
       scene.rerender();
 
-      // One tile per world, plus one so the trailing edge never enters view
-      // at the end of a loop.
-      const width = frame.getBoundingClientRect().width || WORLD_PX;
-      const tiles = Math.ceil(width / WORLD_PX) + (still ? 0 : 1);
+      // The rendered cell can differ from the measured one by a fraction of a
+      // pixel, so the drift distance comes from the raster itself.
       const source = scene.output;
-      source.style.margin = "0";
+      const renderedWidth = source.getBoundingClientRect().width;
+      const worldPx = (renderedWidth / cols) * worldCols;
 
       stage.remove();
-      for (let i = 0; i < tiles; i++) {
-        const tile = document.createElement("div");
-        tile.style.cssText =
-          `flex:0 0 auto;width:${WORLD_PX}px;height:100%;overflow:hidden`;
-        tile.appendChild(i === 0 ? source : (source.cloneNode(true) as Node));
-        track.appendChild(tile);
-      }
+      source.style.margin = "0";
+      track.appendChild(source);
 
-      track.style.setProperty("--glyph-drift-distance", `${WORLD_PX}px`);
+      track.style.setProperty("--glyph-drift-distance", `${worldPx}px`);
       track.style.setProperty(
         "--glyph-drift-duration",
-        `${(WORLD_PX / pxPerSecond).toFixed(2)}s`
+        `${(worldPx / pxPerSecond).toFixed(2)}s`
       );
       track.dataset.drifting = reducedMotion || still ? "false" : "true";
     }
@@ -259,7 +332,7 @@ export default function GlyphMapCanvas({
       if (disposed || !frame) return;
 
       try {
-        build(grid);
+        await build(grid, ++buildToken);
       } catch (err) {
         console.error("Glyph map failed to start:", err);
         if (!disposed) setFailed(true);
@@ -268,7 +341,7 @@ export default function GlyphMapCanvas({
       if (!disposed) setReady(true);
 
       // The rail collapse resizes the column without a window resize event, so
-      // the frame is observed directly. Only the tile count and the raster
+      // the frame is observed directly. Only the column count and the raster
       // height depend on the frame, so a rebuild is cheap and rare.
       let last = frame.getBoundingClientRect();
       const observer = new ResizeObserver(() => {
@@ -283,11 +356,9 @@ export default function GlyphMapCanvas({
         window.clearTimeout(resizeTimer);
         resizeTimer = window.setTimeout(() => {
           if (disposed) return;
-          try {
-            build(grid);
-          } catch (err) {
+          build(grid, ++buildToken).catch((err) => {
             console.error("Glyph map failed to rebuild:", err);
-          }
+          });
         }, 220);
       });
       observer.observe(frame);
@@ -298,6 +369,7 @@ export default function GlyphMapCanvas({
 
     return () => {
       disposed = true;
+      buildToken++;
       window.clearTimeout(resizeTimer);
       stopObserving();
       scene?.destroy();
