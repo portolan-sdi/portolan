@@ -1,0 +1,27 @@
+# Synced from portolan-sdi/portolan-ops (ci/registry-bot-automerge.yml).
+# The workflow checks the PR author and does not run PR code.
+name: Registry bot auto-merge
+
+on:
+  # Bot pull_request runs receive a read-only token. This trusted-base event
+  # keeps the requested write permissions. The workflow checks out no pull
+  # request code.
+  pull_request_target: # zizmor: ignore[dangerous-triggers]
+
+permissions:
+  contents: read
+
+jobs:
+  registry-bot:
+    if: github.event.pull_request.user.login == 'portolan-registry-bot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Enable auto-merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
