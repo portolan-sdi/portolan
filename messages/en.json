@@ -349,10 +349,16 @@
   "talks": {
     "meta": {
       "title": "Talks & demos",
-      "description": "Conference talks and live demos that show Portolan in use. Slides from Cloud Native Geospatial Japan, Open Geodag, and OGC Connect Helsinki, plus an agent demo and a storage cost calculator."
+      "description": "Conference talks and live demos that show Portolan in use. Slides from the OGC Metadata Summit, Cloud Native Geospatial Japan, Open Geodag, and OGC Connect Helsinki, plus an agent demo and a storage cost calculator."
     },
     "title": "Talks & demos",
     "items": {
+      "bolzanoTalk": {
+        "title": "AI-Ready Metadata in Practice",
+        "attribution": "Cayetano Benavent · OGC Metadata Summit 2026",
+        "description": "Lessons from building Portolan, with a demo of an agent that joins hazard zones, hospitals, and population from one catalog.",
+        "alt": "Opening slide of the talk, with the title above the venue, the dates, and the speaker."
+      },
       "yharbyTalk": {
         "title": "Portolan: An SDI Without Servers",
         "attribution": "Youssef Harby · Cloud Native Geospatial Japan 2026",
