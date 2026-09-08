@@ -356,7 +356,7 @@
       "bolzanoTalk": {
         "title": "AI-Ready Metadata in Practice",
         "attribution": "Cayetano Benavent · OGC Metadata Summit 2026",
-        "description": "Lessons from building Portolan, with a demo of an agent answering a question no single layer answers.",
+        "description": "Lessons from building Portolan, with a demo of an agent that joins hazard zones, hospitals, and population from one catalog.",
         "alt": "Opening slide of the talk, with the title above the venue, the dates, and the speaker."
       },
       "yharbyTalk": {

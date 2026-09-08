@@ -356,7 +356,7 @@
       "bolzanoTalk": {
         "title": "Metadatos listos para la IA en la práctica",
         "attribution": "Cayetano Benavent · OGC Metadata Summit 2026",
-        "description": "Lecciones de la construcción de Portolan, con una demo de un agente que responde una pregunta que ninguna capa responde por sí sola.",
+        "description": "Lecciones de la construcción de Portolan, con una demo de un agente que combina zonas de riesgo, hospitales y población de un mismo catálogo.",
         "alt": "Diapositiva inicial de la charla, con el título sobre la sede, las fechas y el ponente."
       },
       "yharbyTalk": {
