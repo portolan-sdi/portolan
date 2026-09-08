@@ -349,10 +349,16 @@
   "talks": {
     "meta": {
       "title": "محاضرات وتجارب",
-      "description": "محاضرات من المؤتمرات وعروض حية تُظهر Portolan أثناء الاستخدام. شرائح من Cloud Native Geospatial Japan و Open Geodag و OGC Connect Helsinki، إضافة إلى عرض بالوكلاء وحاسبة تكلفة التخزين."
+      "description": "محاضرات من المؤتمرات وعروض حية تُظهر Portolan أثناء الاستخدام. شرائح من OGC Metadata Summit و Cloud Native Geospatial Japan و Open Geodag و OGC Connect Helsinki، إضافة إلى عرض بالوكلاء وحاسبة تكلفة التخزين."
     },
     "title": "محاضرات وتجارب",
     "items": {
+      "bolzanoTalk": {
+        "title": "بيانات وصفية جاهزة للذكاء الاصطناعي في الممارسة",
+        "attribution": "Cayetano Benavent · OGC Metadata Summit 2026",
+        "description": "ثلاثة دروس من بناء المواصفة، على نسخة من البيانات المكانية المفتوحة لجنوب تيرول يقرأها وكيل مباشرة من كتالوج <m>STAC</m>.",
+        "alt": "الشريحة الافتتاحية للمحاضرة، وفيها العنوان فوق اسم المكان والتاريخ والمتحدّث."
+      },
       "yharbyTalk": {
         "title": "بنية تحتية مكانية دون خوادم مع Portolan",
         "attribution": "Youssef Harby · Cloud Native Geospatial Japan 2026",

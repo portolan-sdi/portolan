@@ -349,10 +349,16 @@
   "talks": {
     "meta": {
       "title": "Charlas y demos",
-      "description": "Charlas de conferencias y demos en vivo que muestran Portolan en uso. Diapositivas de Cloud Native Geospatial Japan, Open Geodag y OGC Connect Helsinki, además de una demo con agentes y una calculadora de costes de almacenamiento."
+      "description": "Charlas de conferencias y demos en vivo que muestran Portolan en uso. Diapositivas del OGC Metadata Summit, Cloud Native Geospatial Japan, Open Geodag y OGC Connect Helsinki, además de una demo con agentes y una calculadora de costes de almacenamiento."
     },
     "title": "Charlas y demos",
     "items": {
+      "bolzanoTalk": {
+        "title": "Metadatos listos para la IA en la práctica",
+        "attribution": "Cayetano Benavent · OGC Metadata Summit 2026",
+        "description": "Tres lecciones de la construcción de la especificación, sobre un espejo de los datos abiertos del Tirol del Sur que un agente lee directamente del catálogo <m>STAC</m>.",
+        "alt": "Diapositiva inicial de la charla, con el título sobre la sede, las fechas y el ponente."
+      },
       "yharbyTalk": {
         "title": "Portolan, una IDE sin servidores",
         "attribution": "Youssef Harby · Cloud Native Geospatial Japan 2026",
